@@ -58,6 +58,14 @@ Playwright often packages test traces (network logs, DOM snapshots) into `.zip` 
 
 _The extraction is smart and idempotent—if a trace has already been extracted, it instantly skips it to save time and disk space._
 
+### Instantly Archiving Reports
+
+To keep your "Current" workspace clean, you can instantly move any individual test report to your historically separated Archive folder entirely from the UI!
+
+- **Archive a run:** Click the **Archive** button natively integrated into any row inside the _Current Test Reports_ table.
+- **Safety first:** You must configure an Archive path in Preferences first via the top-right gear icon.
+- **Collision-proof:** When moved, the application automatically renames the underlying folder using a precise timestamp (e.g. `playwright-report-174000...`) to guarantee no older reports are accidentally overwritten.
+
 ## Starting the Server (Background)
 
 Use NPM scripts (which call PM2) to start the server in the background so you don't have to keep the terminal window open:

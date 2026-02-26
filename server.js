@@ -213,6 +213,58 @@ app.post('/api/extract', (req, res) => {
   }
 });
 
+// Auto-archive report endpoint
+app.post('/api/archive', (req, res) => {
+  const { reportPath } = req.body;
+  
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+  if (!paths.archivePath) return res.status(400).json({ error: "Archive directory is not configured! Please open Preferences and set an archive path first." });
+
+  try {
+    // Determine source directory
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    if (isArchive) return res.status(400).json({ error: "Report is already in the archive" });
+    
+    if (!paths.currentPath) return res.status(400).json({ error: "Current directory not configured" });
+
+    // Extract the actual report folder name from the URL path
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    
+    const folderName = urlParts[3]; 
+
+    // Construct the absolute physical source path
+    const sourcePhysicalFolder = path.join(paths.currentPath, folderName);
+    
+    if (!fs.existsSync(sourcePhysicalFolder)) {
+      return res.status(404).json({ error: "Report folder not found on disk" });
+    }
+
+    // Construct unique destination physical path
+    const uniqueArchivedName = `playwright-report-${Date.now()}`;
+    const destinationPhysicalFolder = path.join(paths.archivePath, uniqueArchivedName);
+
+    try {
+      // Fast path: same drive move
+      fs.renameSync(sourcePhysicalFolder, destinationPhysicalFolder);
+    } catch (renameErr) {
+      if (renameErr.code === 'EXDEV') {
+        // Slow path: cross drive move (copy then delete)
+        fs.cpSync(sourcePhysicalFolder, destinationPhysicalFolder, { recursive: true });
+        fs.rmSync(sourcePhysicalFolder, { recursive: true, force: true });
+      } else {
+        throw renameErr; // Bubble up other I/O errors
+      }
+    }
+
+    res.json({ success: true, newName: uniqueArchivedName });
+    
+  } catch (error) {
+    console.error("Archive error:", error);
+    res.status(500).json({ error: "Failed to archive report: " + error.message });
+  }
+});
+
 // Fallback to dashboard for any missing routes
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

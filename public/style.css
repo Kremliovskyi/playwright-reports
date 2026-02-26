@@ -173,6 +173,31 @@ p {
   background: rgba(248, 81, 73, 0.1);
 }
 
+.btn-archive {
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.btn-archive:hover {
+  border-color: #d29922;
+  color: #d29922;
+}
+
+.btn-archive.success {
+  border-color: #238636;
+  color: #238636;
+  background: rgba(35, 134, 54, 0.1);
+}
+
+.btn-archive.error {
+  border-color: #f85149;
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+}
+
 .extract-all-btn {
   font-size: 0.8rem;
   padding: 6px 10px;

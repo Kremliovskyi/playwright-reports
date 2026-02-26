@@ -76,6 +76,58 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
+  const pathInput = document.getElementById('report-path-input');
+  const updatePathBtn = document.getElementById('update-path-btn');
+  const pathError = document.getElementById('path-error');
+
+  const fetchCurrentPath = async () => {
+      try {
+          const response = await fetch('/api/current-path');
+          const data = await response.json();
+          if (data.path) {
+              pathInput.value = data.path;
+          }
+      } catch (err) {
+          console.error("Failed to load current path:", err);
+      }
+  };
+
+  updatePathBtn.addEventListener('click', async () => {
+      const newPath = pathInput.value.trim();
+      if (!newPath) return;
+
+      pathError.classList.add('hidden');
+      updatePathBtn.disabled = true;
+      updatePathBtn.textContent = 'Saving...';
+
+      try {
+          const response = await fetch('/api/set-path', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ newPath })
+          });
+          
+          const data = await response.json();
+          
+          if (!response.ok) {
+              throw new Error(data.error || 'Failed to update path');
+          }
+          
+          // Successfully updated, refresh reports!
+          updatePathBtn.textContent = 'Saved!';
+          await fetchReports();
+          
+      } catch (err) {
+          pathError.textContent = err.message;
+          pathError.classList.remove('hidden');
+      } finally {
+          setTimeout(() => {
+              updatePathBtn.disabled = false;
+              updatePathBtn.textContent = 'Set Path';
+          }, 2000);
+      }
+  });
+
   refreshBtn.addEventListener('click', () => {
       // Add subtle spin animation on click
       const icon = refreshBtn.querySelector('svg');
@@ -91,5 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initial fetch
+  fetchCurrentPath();
   fetchReports();
 });

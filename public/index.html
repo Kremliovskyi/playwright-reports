@@ -40,6 +40,15 @@
             <h1>Test Reports Central</h1>
           </div>
           <div class="actions">
+            <!-- Dynamic Path Controls -->
+            <div class="path-controls">
+              <label for="report-path-input" class="visually-hidden">Reports Directory Path</label>
+              <input type="text" id="report-path-input" class="path-input" placeholder="e.g., C:\Playwright\reports or /Users/name/reports">
+              <button id="update-path-btn" class="btn secondary-btn">Set Path</button>
+            </div>
+            <!-- Error message container -->
+            <div id="path-error" class="path-error hidden"></div>
+
             <button id="refresh-btn" class="btn primary-btn">
               <svg
                 xmlns="http://www.w3.org/2000/svg"

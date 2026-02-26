@@ -73,9 +73,21 @@
             </p>
           </div>
 
-          <!-- Dynamic Grid container for Reports -->
-          <div id="reports-grid" class="reports-grid">
-            <!-- Reports will be injected here via JS -->
+          <!-- Table container for Reports -->
+          <div class="table-container">
+            <table class="reports-table hidden" id="reports-table">
+              <thead>
+                <tr>
+                  <th>Date Created</th>
+                  <th>Report Origin</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="reports-tbody">
+                <!-- Reports injected here -->
+              </tbody>
+            </table>
+
             <div id="loading" class="loading-state">
               <div class="spinner"></div>
               <p>Loading reports...</p>

@@ -238,9 +238,15 @@ p {
   text-align: right;
 }
 
-.reports-table th:last-child,
+.reports-table th:last-child {
+  text-align: left;
+  /* Align the header exactly with the start of the button text 
+     (Button has 1rem padding + 1px transparent border) */
+  padding-left: calc(var(--space-4) + 1rem + 1px);
+}
+
 .reports-table td:last-child {
-  text-align: right;
+  text-align: left;
 }
 
 .btn-open {

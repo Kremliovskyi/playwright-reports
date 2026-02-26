@@ -49,7 +49,7 @@ npm start
 ```
 
 Once started, open your browser and navigate to:
-**👉 http://localhost:3000**
+**👉 http://localhost:9333**
 
 ## Essential npm Commands
 
@@ -119,4 +119,4 @@ Here are the most common commands you'll need to manage the viewer:
 ## Troubleshooting
 
 - **No reports appearing?** Make sure the inner folders inside `/reports` actually contain an `index.html` file right at the top level of that folder.
-- **Port in use?** If port `3000` is already taken, you can change the port in `ecosystem.config.js`.
+- **Port in use?** If port `9333` is already taken, you can change the port in `ecosystem.config.js`.

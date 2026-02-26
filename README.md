@@ -49,6 +49,15 @@ The dashboard is highly resilient. When you point it to a folder, it:
 
 _(Note: If you do not set a path, it will fall back to reading from a local `reports/` folder inside this project's directory)._
 
+### Extracting Playwright Traces
+
+Playwright often packages test traces (network logs, DOM snapshots) into `.zip` files inside the report's `data/` folder. The dashboard includes a built-in unzipping utility so you don't have to extract them manually!
+
+- **Extract a single run:** Click the **Extract** button next to any report in the table.
+- **Extract all runs:** Click **Extract All Traces** at the top of a table to sequentially extract all trace zips for every visible report in that section.
+
+_The extraction is smart and idempotent—if a trace has already been extracted, it instantly skips it to save time and disk space._
+
 ## Starting the Server (Background)
 
 Use NPM scripts (which call PM2) to start the server in the background so you don't have to keep the terminal window open:

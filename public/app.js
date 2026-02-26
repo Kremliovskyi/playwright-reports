@@ -36,7 +36,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const createReportRow = (report) => {
       const tr = document.createElement('tr');
       tr.className = 'report-row';
-      tr.addEventListener('click', () => {
+      tr.dataset.path = report.path; // Store path for table-level extraction
+      
+      tr.addEventListener('click', (e) => {
+          // Don't open report if clicking the extract button
+          if (e.target.closest('.btn-extract')) return;
           window.open(report.path, '_blank', 'noopener,noreferrer');
       });
 
@@ -51,13 +55,58 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="origin-label">${report.name}</span>
           </td>
           <td class="col-action">
-              <a href="${report.path}" target="_blank" rel="noopener noreferrer" class="btn-open" aria-label="Open Report">
-                  View Report
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-              </a>
+              <div style="display: flex; gap: 8px;">
+                  <button class="btn btn-extract" aria-label="Extract Traces">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
+                      Extract
+                  </button>
+                  <a href="${report.path}" target="_blank" rel="noopener noreferrer" class="btn-open" aria-label="Open Report">
+                      View Report
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+                  </a>
+              </div>
           </td>
       `;
+
+      // Wire up single extract button
+      const extractBtn = tr.querySelector('.btn-extract');
+      extractBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await handleExtract(report.path, extractBtn);
+      });
+
       return tr;
+  };
+
+  // Logic to handle individual extraction
+  const handleExtract = async (reportPath, btnElement) => {
+      const originalHtml = btnElement.innerHTML;
+      btnElement.disabled = true;
+      btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Extracting...`;
+      
+      try {
+          const response = await fetch('/api/extract', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath })
+          });
+          const data = await response.json();
+          
+          if (!response.ok) throw new Error(data.error);
+          
+          btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Extracted`;
+          btnElement.classList.add('success');
+      } catch (err) {
+          console.error("Extraction failed API call:", err);
+          btnElement.innerHTML = `Error`;
+          btnElement.classList.add('error');
+      } finally {
+          setTimeout(() => {
+              btnElement.disabled = false;
+              btnElement.innerHTML = originalHtml;
+              btnElement.classList.remove('success', 'error');
+          }, 3000);
+      }
   };
 
   const renderTable = (reports, tbody, section, table) => {
@@ -163,6 +212,41 @@ document.addEventListener('DOMContentLoaded', () => {
           saveModalBtn.disabled = false;
           saveModalBtn.textContent = 'Save Changes';
       }
+  });
+
+  // --- Toolbars & Globals ---
+
+  const extractAllBtns = document.querySelectorAll('.extract-all-btn');
+  extractAllBtns.forEach(btn => {
+      btn.addEventListener('click', async () => {
+          const target = btn.dataset.target; // "current" or "archive"
+          const tbody = document.getElementById(`${target}-tbody`);
+          const rows = tbody.querySelectorAll('.report-row');
+          
+          if (rows.length === 0) return;
+
+          const originalHtml = btn.innerHTML;
+          btn.disabled = true;
+          btn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px;"></div> Extracting All...`;
+
+          // Process sequentially to not overload Node.js/Disk
+          for (const row of Array.from(rows)) {
+              const extractBtn = row.querySelector('.btn-extract');
+              // Only extract if not already extracted (in UI state)
+              if (!extractBtn.disabled && !extractBtn.classList.contains('success')) {
+                  await handleExtract(row.dataset.path, extractBtn);
+              }
+          }
+
+          btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> All Extracted`;
+          btn.classList.add('success');
+          
+          setTimeout(() => {
+              btn.disabled = false;
+              btn.classList.remove('success');
+              btn.innerHTML = originalHtml;
+          }, 4000);
+      });
   });
 
   refreshBtn.addEventListener('click', () => {

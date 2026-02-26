@@ -15,6 +15,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "pm2": "^6.0.14"

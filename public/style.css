@@ -148,6 +148,42 @@ p {
   color: #fff;
 }
 
+.btn-extract {
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.btn-extract:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.btn-extract.success {
+  border-color: #238636;
+  color: #238636;
+  background: rgba(35, 134, 54, 0.1);
+}
+
+.btn-extract.error {
+  border-color: #f85149;
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.extract-all-btn {
+  font-size: 0.8rem;
+  padding: 6px 10px;
+}
+
+.extract-all-btn.success {
+  background: #238636;
+  color: white;
+  border-color: #2ea043;
+}
+
 /* Path Controls & Settings */
 .actions {
   display: flex;

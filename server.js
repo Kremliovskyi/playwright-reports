@@ -150,6 +150,69 @@ app.get('/api/reports', (req, res) => {
   });
 });
 
+// Auto-extract traces endpoint
+app.post('/api/extract', (req, res) => {
+  const { reportPath } = req.body;
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+
+  try {
+    // 1. Determine which base directory this is from (current vs archive)
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? paths.archivePath : paths.currentPath;
+    
+    if (!basePath) {
+      return res.status(400).json({ error: "Base directory not configured" });
+    }
+
+    // 2. Extract the actual report folder name from the URL path
+    // e.g., /reports/current/my-test-run/index.html -> my-test-run
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    
+    const folderName = urlParts[3]; 
+
+    // 3. Construct the absolute physical path to the report's data folder
+    const physicalDataFolder = path.join(basePath, folderName, 'data');
+    
+    if (!fs.existsSync(physicalDataFolder)) {
+      return res.json({ success: true, extractedCount: 0, message: "No data folder found, nothing to extract." });
+    }
+
+    // 4. Scan the data folder for .zip files
+    let extractedCount = 0;
+    const entries = fs.readdirSync(physicalDataFolder, { withFileTypes: true });
+    
+    for (const dirent of entries) {
+      if (dirent.isFile() && dirent.name.endsWith('.zip')) {
+        const zipFile = path.join(physicalDataFolder, dirent.name);
+        
+        // Target extraction folder: drop the '.zip' extension
+        const targetFolderName = dirent.name.replace('.zip', '');
+        const targetExtractionPath = path.join(physicalDataFolder, targetFolderName);
+        
+        // Idempotency check: Skip if the unzipped folder already exists!
+        if (fs.existsSync(targetExtractionPath)) {
+          continue; 
+        }
+
+        // Lazy load AdmZip only when actually extracting to save memory globally
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip(zipFile);
+        
+        // Extract everything into the newly named folder
+        zip.extractAllTo(targetExtractionPath, true); // true = overwrite
+        extractedCount++;
+      }
+    }
+
+    res.json({ success: true, extractedCount });
+    
+  } catch (error) {
+    console.error("Extraction error:", error);
+    res.status(500).json({ error: "Failed to extract trace files: " + error.message });
+  }
+});
+
 // Fallback to dashboard for any missing routes
 app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

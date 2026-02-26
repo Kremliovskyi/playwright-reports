@@ -42,56 +42,72 @@ To view actual Playwright reports:
 
 ## Starting the Server (Background)
 
-Use PM2 to start the server in the background so you don't have to keep the terminal window open:
+Use NPM scripts (which call PM2) to start the server in the background so you don't have to keep the terminal window open:
 
 ```cmd
-pm2 start ecosystem.config.js
+npm start
 ```
 
 Once started, open your browser and navigate to:
 **👉 http://localhost:3000**
 
-## Essential PM2 Commands
+## Essential npm Commands
 
-Here are the most common PM2 commands you'll need to manage the viewer:
+Here are the most common commands you'll need to manage the viewer:
 
 - **Check Status / See if it's running:**
 
   ```cmd
-  pm2 status
+  npx pm2 status
   ```
 
 - **View Live Logs:**
 
   ```cmd
-  pm2 logs playwright-reports
+  npm run logs
   ```
 
 - **Restart the Server:**
   _(Use this if the server ever crashes or you manually changed the `server.js` file)_
 
   ```cmd
-  pm2 restart playwright-reports
+  npm run restart
   ```
 
 - **Stop the Server:**
   _(Stops the server but keeps it in the PM2 list)_
 
   ```cmd
-  pm2 stop playwright-reports
+  npm run stop
   ```
 
 - **Remove the Server from PM2 entirely:**
 
   ```cmd
-  pm2 delete playwright-reports
+  npm run delete
   ```
 
 - **Make PM2 auto-start the server on Windows Reboot:**
   To ensure the dashboard boots up automatically when your Windows machine restarts, you can install the `pm2-windows-startup` package:
+
   ```cmd
   npm install pm2-windows-startup -g
   pm2-startup install
+  pm2 save
+  ```
+
+- **Make PM2 auto-start the server on macOS / Linux Reboot:**
+  PM2 has built-in support for generating startup scripts in macOS and Linux. Run this command:
+
+  ```bash
+  pm2 startup
+  ```
+
+  _Note: PM2 will output a specific `sudo` command on the screen. **You must copy and run that exact command** to configure your system's init daemon._
+
+  Once configured, save your current process list so they launch on boot:
+
+  ```bash
   pm2 save
   ```
 

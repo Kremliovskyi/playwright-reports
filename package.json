@@ -4,6 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "start": "pm2 start ecosystem.config.js",
+    "stop": "pm2 stop playwright-reports",
+    "restart": "pm2 restart playwright-reports",
+    "logs": "pm2 logs playwright-reports",
+    "delete": "pm2 delete playwright-reports",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

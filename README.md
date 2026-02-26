@@ -116,6 +116,21 @@ Here are the most common commands you'll need to manage the viewer:
      pm2 save
      ```
 
+- **Disable PM2 auto-start (Any OS):**
+  If you no longer want the dashboard (or any PM2 process) to start automatically when your computer boots up:
+
+  **On Windows:**
+
+  ```cmd
+  pm2-startup uninstall
+  ```
+
+  **On macOS / Linux:**
+
+  ```bash
+  pm2 unstartup
+  ```
+
 ## Troubleshooting
 
 - **No reports appearing?** Make sure the inner folders inside `/reports` actually contain an `index.html` file right at the top level of that folder.

@@ -1,18 +1,33 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const table = document.getElementById('reports-table');
-  const tbody = document.getElementById('reports-tbody');
+  // DOM Elements
+  const currentSection = document.getElementById('current-section');
+  const currentTable = currentSection.querySelector('.reports-table');
+  const currentTbody = document.getElementById('current-tbody');
+  
+  const archiveSection = document.getElementById('archive-section');
+  const archiveTable = archiveSection.querySelector('.reports-table');
+  const archiveTbody = document.getElementById('archive-tbody');
+
   const loading = document.getElementById('loading');
   const emptyState = document.getElementById('empty-state');
   const refreshBtn = document.getElementById('refresh-btn');
 
+  // Modal Elements
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsModal = document.getElementById('settings-modal');
+  const closeModalBtn = document.getElementById('close-modal-btn');
+  const cancelModalBtn = document.getElementById('cancel-modal-btn');
+  const saveModalBtn = document.getElementById('save-modal-btn');
+  
+  const currentPathInput = document.getElementById('current-path-input');
+  const archivePathInput = document.getElementById('archive-path-input');
+  const modalError = document.getElementById('modal-error');
+
   // Format date nicely
   const formatDate = (dateString) => {
       const options = { 
-          year: 'numeric', 
-          month: 'short', 
-          day: 'numeric',
-          hour: '2-digit', 
-          minute: '2-digit'
+          year: 'numeric', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit'
       };
       return new Date(dateString).toLocaleDateString(undefined, options);
   };
@@ -45,28 +60,40 @@ document.addEventListener('DOMContentLoaded', () => {
       return tr;
   };
 
-  const fetchReports = async () => {
-      // Show loading
+  const renderTable = (reports, tbody, section, table) => {
       tbody.innerHTML = '';
-      table.classList.add('hidden');
+      if (!reports || reports.length === 0) {
+          section.classList.add('hidden');
+          return 0;
+      }
+      
+      section.classList.remove('hidden');
+      table.classList.remove('hidden');
+      reports.forEach(report => tbody.appendChild(createReportRow(report)));
+      return reports.length;
+  };
+
+  const fetchReports = async () => {
+      // Reset State
+      currentSection.classList.add('hidden');
+      archiveSection.classList.add('hidden');
       loading.classList.remove('hidden');
       emptyState.classList.add('hidden');
 
       try {
           const response = await fetch('/api/reports');
-          const reports = await response.json();
+          const data = await response.json();
 
           loading.classList.add('hidden');
 
-          if (reports.length === 0) {
+          const currentCount = renderTable(data.current, currentTbody, currentSection, currentTable);
+          const archiveCount = renderTable(data.archive, archiveTbody, archiveSection, archiveTable);
+
+          // If BOTH sections are completely empty structurally
+          if (currentCount === 0 && archiveCount === 0) {
               emptyState.classList.remove('hidden');
-              return;
           }
 
-          table.classList.remove('hidden');
-          reports.forEach(report => {
-              tbody.appendChild(createReportRow(report));
-          });
       } catch (error) {
           console.error("Failed to fetch reports:", error);
           loading.classList.add('hidden');
@@ -76,60 +103,69 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
-  const pathInput = document.getElementById('report-path-input');
-  const updatePathBtn = document.getElementById('update-path-btn');
-  const pathError = document.getElementById('path-error');
+  // --- Modal Logic ---
 
-  const fetchCurrentPath = async () => {
+  const openModal = async () => {
+      modalError.classList.add('hidden');
+      settingsModal.classList.remove('hidden');
+      
       try {
-          const response = await fetch('/api/current-path');
+          const response = await fetch('/api/current-paths');
           const data = await response.json();
-          if (data.path) {
-              pathInput.value = data.path;
-          }
+          currentPathInput.value = data.currentPath || '';
+          archivePathInput.value = data.archivePath || '';
       } catch (err) {
-          console.error("Failed to load current path:", err);
+          console.error("Failed to load paths:", err);
       }
   };
 
-  updatePathBtn.addEventListener('click', async () => {
-      const newPath = pathInput.value.trim();
-      if (!newPath) return;
+  const closeModal = () => {
+      settingsModal.classList.add('hidden');
+  };
 
-      pathError.classList.add('hidden');
-      updatePathBtn.disabled = true;
-      updatePathBtn.textContent = 'Saving...';
+  settingsBtn.addEventListener('click', openModal);
+  closeModalBtn.addEventListener('click', closeModal);
+  cancelModalBtn.addEventListener('click', closeModal);
+
+  // Close when clicking outside modal content
+  settingsModal.addEventListener('click', (e) => {
+      if (e.target === settingsModal) closeModal();
+  });
+
+  saveModalBtn.addEventListener('click', async () => {
+      const currentPath = currentPathInput.value.trim();
+      const archivePath = archivePathInput.value.trim();
+
+      modalError.classList.add('hidden');
+      saveModalBtn.disabled = true;
+      saveModalBtn.textContent = 'Saving...';
 
       try {
-          const response = await fetch('/api/set-path', {
+          const response = await fetch('/api/set-paths', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ newPath })
+              body: JSON.stringify({ currentPath, archivePath })
           });
           
           const data = await response.json();
           
           if (!response.ok) {
-              throw new Error(data.error || 'Failed to update path');
+              throw new Error(data.error || 'Failed to update paths');
           }
           
-          // Successfully updated, refresh reports!
-          updatePathBtn.textContent = 'Saved!';
+          closeModal();
           await fetchReports();
           
       } catch (err) {
-          pathError.textContent = err.message;
-          pathError.classList.remove('hidden');
+          modalError.textContent = err.message;
+          modalError.classList.remove('hidden');
       } finally {
-          setTimeout(() => {
-              updatePathBtn.disabled = false;
-              updatePathBtn.textContent = 'Set Path';
-          }, 2000);
+          saveModalBtn.disabled = false;
+          saveModalBtn.textContent = 'Save Changes';
       }
   });
 
   refreshBtn.addEventListener('click', () => {
-      // Add subtle spin animation on click
       const icon = refreshBtn.querySelector('svg');
       icon.style.transition = 'transform 0.5s ease';
       icon.style.transform = `rotate(360deg)`;
@@ -143,6 +179,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initial fetch
-  fetchCurrentPath();
   fetchReports();
 });

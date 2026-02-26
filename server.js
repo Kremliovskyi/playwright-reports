@@ -14,86 +14,109 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const CONFIG_FILE = path.join(__dirname, 'config.json');
 
-// Helper to load saved path
-const getSavedPath = () => {
+// Helper to load saved paths
+const getSavedPaths = () => {
+  const defaultPaths = { currentPath: "", archivePath: "" };
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      if (config.reportsPath && fs.existsSync(config.reportsPath)) {
-        return config.reportsPath;
+      
+      // Migrate old config if it exists
+      if (config.reportsPath && !config.currentPath) {
+        config.currentPath = config.reportsPath;
       }
+      
+      return {
+        currentPath: config.currentPath || "",
+        archivePath: config.archivePath || ""
+      };
     }
   } catch (error) {
     console.error("Failed to read config:", error);
   }
-  // Default fallback
-  return path.join(__dirname, 'reports');
+  return defaultPaths;
 };
 
-let currentReportsDir = getSavedPath();
+let paths = getSavedPaths();
 
 // Enable JSON body parsing for our API
 app.use(express.json());
 
-// Serve the reports dynamically from the strictly current directory
-app.use('/reports', (req, res, next) => {
-  express.static(currentReportsDir)(req, res, next);
+// Serve the reports dynamically using isolated mount points
+app.use('/reports/current', (req, res, next) => {
+  if (paths.currentPath && fs.existsSync(paths.currentPath)) {
+    express.static(paths.currentPath)(req, res, next);
+  } else {
+    next();
+  }
 });
 
-// API Endpoint to get the current configured path
-app.get('/api/current-path', (req, res) => {
-  res.json({ path: currentReportsDir });
+app.use('/reports/archive', (req, res, next) => {
+  if (paths.archivePath && fs.existsSync(paths.archivePath)) {
+    express.static(paths.archivePath)(req, res, next);
+  } else {
+    next();
+  }
 });
 
-// API Endpoint to update the reports path
-app.post('/api/set-path', (req, res) => {
-  const { newPath } = req.body;
+// API Endpoint to get the current configured paths
+app.get('/api/current-paths', (req, res) => {
+  res.json(paths);
+});
+
+// Helper to validate a path
+const validatePath = (dirPath) => {
+  if (!dirPath) return true; // Empty path is valid (clearing it)
+  if (!fs.existsSync(dirPath)) throw new Error(`Directory does not exist: ${dirPath}`);
+  if (!fs.statSync(dirPath).isDirectory()) throw new Error(`Path is not a directory: ${dirPath}`);
+  return true;
+};
+
+// API Endpoint to update the reports paths
+app.post('/api/set-paths', (req, res) => {
+  const { currentPath, archivePath } = req.body;
   
-  if (!newPath) {
-    return res.status(400).json({ error: "No path provided." });
-  }
-
-  // Basic validation that it's an existing directory
-  if (!fs.existsSync(newPath)) {
-    return res.status(400).json({ error: "The provided directory does not exist on the server." });
-  }
-
-  if (!fs.statSync(newPath).isDirectory()) {
-    return res.status(400).json({ error: "The provided path is a file, not a directory." });
-  }
-
   try {
+    // Validate both
+    if (currentPath) validatePath(currentPath);
+    if (archivePath) validatePath(archivePath);
+
+    // Clean paths
+    const newPaths = {
+      currentPath: currentPath ? currentPath.trim() : "",
+      archivePath: archivePath ? archivePath.trim() : ""
+    };
+
     // Save to file persistently
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify({ reportsPath: newPath }, null, 2));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newPaths, null, 2));
     
     // Update active runtime variable
-    currentReportsDir = newPath;
-    res.json({ success: true, path: currentReportsDir });
+    paths = newPaths;
+    res.json({ success: true, paths });
   } catch (error) {
-    console.error("Failed to save new path:", error);
-    res.status(500).json({ error: "Failed to save configuration." });
+    console.error("Validation/Save error:", error.message);
+    res.status(400).json({ error: error.message });
   }
 });
 
-// API Endpoint to get the list of available reports
-app.get('/api/reports', (req, res) => {
-  if (!fs.existsSync(currentReportsDir)) {
-    return res.json([]);
+// Helper to scan a directory for valid reports
+const scanDirectory = (dirPath, prefix) => {
+  if (!dirPath || !fs.existsSync(dirPath)) {
+    return [];
   }
 
   let entries;
   try {
-    // Read all directories inside the active reports dir
-    entries = fs.readdirSync(currentReportsDir, { withFileTypes: true });
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
   } catch (error) {
-    console.error("Could not read directory:", currentReportsDir);
-    return res.json([]);
+    console.error("Could not read directory:", dirPath);
+    return [];
   }
   
-  const reports = entries
+  return entries
     .filter(dirent => dirent.isDirectory())
     .map(dirent => {
-      const folderPath = path.join(currentReportsDir, dirent.name);
+      const folderPath = path.join(dirPath, dirent.name);
       
       try {
           const stat = fs.statSync(folderPath);
@@ -105,7 +128,7 @@ app.get('/api/reports', (req, res) => {
           return {
             id: dirent.name,
             name: dirent.name.replace(/[-_]/g, ' '), // Prettify folder name
-            path: `/reports/${dirent.name}/index.html`,
+            path: `/reports/${prefix}/${dirent.name}/index.html`,
             createdAt: stat.birthtime,
             modifiedAt: stat.mtime
           };
@@ -117,8 +140,14 @@ app.get('/api/reports', (req, res) => {
     .filter(Boolean) // Remove invalid folders
     // Sort by modified date descending (newest first)
     .sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+};
 
-  res.json(reports);
+// API Endpoint to get the list of available reports
+app.get('/api/reports', (req, res) => {
+  res.json({
+    current: scanDirectory(paths.currentPath, 'current'),
+    archive: scanDirectory(paths.archivePath, 'archive')
+  });
 });
 
 // Fallback to dashboard for any missing routes

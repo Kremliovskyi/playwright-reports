@@ -22,15 +22,23 @@ This project is fully compatible with **Windows, macOS, and Linux**.
    npm install -g pm2
    ```
 
-## Setting Your Reports Directory
+## Setting Your Report Directories
 
-You can now point the dashboard to **any folder on your computer** that contains Playwright reports!
+You can point the dashboard to **any folders on your computer** to securely view your Playwright reports.
+
+We support two distinct directory types to keep your active work separate from your history:
+
+- **Current Test Reports**: The active folder where your Playwright project outputs new runs (e.g., `./playwright-report`).
+- **Archived Reports**: A separate folder where you store older test runs for historical comparison.
+
+To configure these:
 
 1. Open the dashboard in your browser.
-2. At the top right, paste the **absolute path** to your reports folder.
+2. Click the **Preferences (Gear icon)** button at the top right.
+3. Paste the **absolute path** to your respective folders.
    - Example (Windows): `C:\Users\Name\Projects\my-tests\playwright-report`
    - Example (Mac/Linux): `/Users/name/projects/my-tests/playwright-report`
-3. Click **Set Path**. The dashboard will securely save this preference configuration and instantly reload your reports.
+4. Click **Save Changes**. The dashboard will securely save this configuration and instantly display your reports in two separate tables.
 
 **How the folder scanning works:**
 The dashboard is highly resilient. When you point it to a folder, it:

@@ -148,17 +148,11 @@ p {
   color: #fff;
 }
 
-/* Path Controls */
+/* Path Controls & Settings */
 .actions {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-}
-
-.path-controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .path-input {
@@ -171,6 +165,11 @@ p {
   font-size: 0.85rem;
   width: 320px;
   transition: all 0.2s ease;
+}
+
+.path-input.full-width {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .path-input:focus {
@@ -186,14 +185,105 @@ p {
 .path-error {
   color: #f85149;
   font-size: 0.8rem;
-  position: absolute;
-  top: 100%;
-  right: var(--space-4);
   background: rgba(248, 81, 73, 0.1);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--space-2);
   border-radius: var(--radius-sm);
-  margin-top: var(--space-1);
-  white-space: nowrap;
+  margin-top: var(--space-2);
+}
+
+/* Modal Overlay */
+.modal-backdrop {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.modal-backdrop.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  transform: translateY(0);
+  transition: transform 0.2s ease;
+}
+
+.modal-backdrop.hidden .modal-content {
+  transform: translateY(10px);
+}
+
+.modal-header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: var(--space-1);
+  border-radius: var(--radius-md);
+  display: flex;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: var(--space-5);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-group label {
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+.form-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0;
+  margin-bottom: var(--space-2);
+}
+
+.modal-footer {
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  background: var(--bg-surface-hover);
+  border-bottom-left-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-lg);
 }
 
 /* Main Content */

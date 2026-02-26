@@ -88,28 +88,33 @@ Here are the most common commands you'll need to manage the viewer:
   ```
 
 - **Make PM2 auto-start the server on Windows Reboot:**
-  To ensure the dashboard boots up automatically when your Windows machine restarts, you can install the `pm2-windows-startup` package:
-
-  ```cmd
-  npm install pm2-windows-startup -g
-  pm2-startup install
-  pm2 save
-  ```
+  To ensure the dashboard boots up automatically when your Windows machine restarts:
+  1. **First, make sure your server is running** (e.g., you have already run `npm start`).
+  2. Install the `pm2-windows-startup` package globally:
+     ```cmd
+     npm install pm2-windows-startup -g
+     ```
+  3. Install the startup script:
+     ```cmd
+     pm2-startup install
+     ```
+  4. Save the currently running PM2 processes so they launch on boot:
+     ```cmd
+     pm2 save
+     ```
 
 - **Make PM2 auto-start the server on macOS / Linux Reboot:**
-  PM2 has built-in support for generating startup scripts in macOS and Linux. Run this command:
-
-  ```bash
-  pm2 startup
-  ```
-
-  _Note: PM2 will output a specific `sudo` command on the screen. **You must copy and run that exact command** to configure your system's init daemon._
-
-  Once configured, save your current process list so they launch on boot:
-
-  ```bash
-  pm2 save
-  ```
+  PM2 has built-in support for generating startup scripts in macOS and Linux.
+  1. **First, make sure your server is running** (e.g., you have already run `npm start`).
+  2. Generate the startup script:
+     ```bash
+     pm2 startup
+     ```
+  3. _Note: PM2 will output a specific command (often starting with `sudo`) on the screen. **You must copy and run that exact command** to configure your system's init daemon._
+  4. Once configured, save the currently running PM2 processes so they launch on boot:
+     ```bash
+     pm2 save
+     ```
 
 ## Troubleshooting
 

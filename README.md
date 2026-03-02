@@ -53,6 +53,15 @@ The dashboard is highly resilient. When you point it to a folder, it:
 
 Playwright often packages test traces (network logs, DOM snapshots) into `.zip` files inside the report's `data/` folder. The dashboard includes a built-in unzipping utility so you don't have to extract them manually!
 
+**Why extract traces?**
+Having extracted traces as raw files allows AI agents to easily read and interact with your test run data. You can feed these extracted network logs and details to an AI to:
+
+- Automatically generate and file precise Jira defects
+- Create API response assertions for your tests based on real network captures
+- Analyze application performance and errors
+
+_(Note: The actual prompts or scripts used to instruct AI agents on how to process these trace files are outside the scope of this project.)_
+
 - **Extract a single run:** Click the **Extract** button next to any report in the table.
 - **Extract all runs:** Click **Extract All Traces** at the top of a table to sequentially extract all trace zips for every visible report in that section.
 

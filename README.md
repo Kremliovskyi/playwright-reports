@@ -38,8 +38,8 @@ To configure these:
 1. Open the dashboard in your browser.
 2. Click the **Preferences (Gear icon)** button at the top right.
 3. Paste the **absolute path** to your respective folders.
-   - Example (Windows): `C:\Users\Name\Projects\my-tests\playwright-report`
-   - Example (Mac/Linux): `/Users/name/projects/my-tests/playwright-report`
+   - Example (Windows): `C:\Users\Name\Projects\my-tests\`
+   - Example (Mac/Linux): `/Users/name/projects/my-tests/`
 4. Click **Save Changes**. The dashboard will securely save this configuration and instantly display your reports in two separate tables.
 
 **How the folder scanning works:**

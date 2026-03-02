@@ -246,10 +246,8 @@ document.addEventListener('DOMContentLoaded', () => {
   closeModalBtn.addEventListener('click', closeModal);
   cancelModalBtn.addEventListener('click', closeModal);
 
-  // Close when clicking outside modal content
-  settingsModal.addEventListener('click', (e) => {
-      if (e.target === settingsModal) closeModal();
-  });
+  // Intentionally not closing on backdrop click as requested
+  // User must use standard close/cancel/save buttons
 
   saveModalBtn.addEventListener('click', async () => {
       const currentPath = currentPathInput.value.trim();

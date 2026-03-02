@@ -122,8 +122,13 @@ const scanDirectory = (dirPath, prefix) => {
           const stat = fs.statSync(folderPath);
           
           // Check if index.html exists in this folder to confirm it's a valid report
-          const hasIndex = fs.existsSync(path.join(folderPath, 'index.html'));
+          const indexPath = path.join(folderPath, 'index.html');
+          const hasIndex = fs.existsSync(indexPath);
           if (!hasIndex) return null;
+
+          // Deep inspection: verify it's actually a Playwright report
+          const indexContent = fs.readFileSync(indexPath, 'utf8');
+          if (!indexContent.includes('<title>Playwright Test Report</title>')) return null;
 
           return {
             id: dirent.name,

@@ -1,5 +1,7 @@
 # Playwright Report Viewer
 
+![Dashboard Screenshot](./dashboard.png)
+
 A lightweight, modern Node.js dashboard to view your Playwright test reports (with full trace functionality) without needing a local Playwright installation. It runs reliably in the background using PM2.
 
 This project is fully compatible with **Windows, macOS, and Linux**.

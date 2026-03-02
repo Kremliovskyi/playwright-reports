@@ -145,8 +145,12 @@ const scanDirectory = (dirPath, prefix) => {
 // API Endpoint to get the list of available reports
 app.get('/api/reports', (req, res) => {
   res.json({
-    current: scanDirectory(paths.currentPath, 'current'),
-    archive: scanDirectory(paths.archivePath, 'archive')
+    current: paths.currentPath ? scanDirectory(paths.currentPath, 'current') : [],
+    archive: paths.archivePath ? scanDirectory(paths.archivePath, 'archive') : [],
+    configStatus: {
+      hasCurrent: !!paths.currentPath,
+      hasArchive: !!paths.archivePath
+    }
   });
 });
 

@@ -199,9 +199,18 @@ document.addEventListener('DOMContentLoaded', () => {
           const currentCount = renderTable(data.current, currentTbody, currentSection, currentTable);
           const archiveCount = renderTable(data.archive, archiveTbody, archiveSection, archiveTable);
 
-          // If BOTH sections are completely empty structurally
-          if (currentCount === 0 && archiveCount === 0) {
+          const { configStatus } = data;
+          
+          // Check if user set the configuration paths
+          if (!configStatus || (!configStatus.hasCurrent && !configStatus.hasArchive)) {
               emptyState.classList.remove('hidden');
+              emptyState.querySelector('h3').textContent = "Configuration Required";
+              emptyState.querySelector('p').textContent = "Please open Preferences and configure your report directories to view them here.";
+          } else if (currentCount === 0 && archiveCount === 0) {
+              // Directories configured, but no reports inside them
+              emptyState.classList.remove('hidden');
+              emptyState.querySelector('h3').textContent = "No Reports Found";
+              emptyState.querySelector('p').innerHTML = "No valid Playwright HTML reports could be found in your configured directories.<br><br>Make sure the selected folders actually contain test runs and the innermost folders contain an <code>index.html</code> right at their root.";
           }
 
       } catch (error) {

@@ -47,8 +47,6 @@ The dashboard is highly resilient. When you point it to a folder, it:
 - Safely skips any subdirectory that does not contain a Playwright `index.html` file right at its root.
 - This means you can point it to a messy/shared folder (like `Downloads`), and it will safely filter and display _only_ valid Playwright reports!
 
-_(Note: If you do not set a path, it will fall back to reading from a local `reports/` folder inside this project's directory)._
-
 ### Extracting Playwright Traces
 
 Playwright often packages test traces (network logs, DOM snapshots) into `.zip` files inside the report's `data/` folder. The dashboard includes a built-in unzipping utility so you don't have to extract them manually!
@@ -159,7 +157,7 @@ Here are the most common commands you'll need to manage the viewer:
 
 ## Troubleshooting
 
-- **No reports appearing?** Make sure the inner folders inside `/reports` actually contain an `index.html` file right at the top level of that folder.
+- **No reports appearing?** Make sure you have configured your paths in the Preferences. Also verify the folders contain an `index.html` file right at the top level of that folder.
 - **Port in use?** If port `9333` is already taken, you can change the port in `ecosystem.config.js`.
 
 ---

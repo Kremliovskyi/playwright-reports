@@ -6,6 +6,14 @@ A lightweight, modern Node.js dashboard to view your Playwright test reports (wi
 
 This project is fully compatible with **Windows, macOS, and Linux**.
 
+## 🚀 Technologies Used
+
+- **[TypeScript](https://www.typescriptlang.org/)**: Strongly-typed foundation for both frontend and backend reliability.
+- **[Express.js](https://expressjs.com/)**: Fast, unopinionated web framework for serving APIs and isolated static assets.
+- **[Vanilla JS/DOM](https://developer.mozilla.org/en-US/docs/Web/API/Document_Object_Model)**: Zero-dependency, blazing fast frontend interface.
+- **[adm-zip](https://github.com/cthackers/adm-zip)**: Native, cross-platform trace extraction without external dependencies.
+- **[PM2](https://pm2.keymetrics.io/)**: Advanced production process manager for running the viewer silently in the background.
+
 ## Prerequisites
 
 - **Node.js**: Ensure Node.js is installed on your Windows machine (download from [nodejs.org](https://nodejs.org/)).

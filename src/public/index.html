@@ -41,6 +41,10 @@
           </div>
           <div class="actions">
           <div class="actions">
+            <button id="run-tests-btn" class="btn primary-btn" style="background-color: #10b981; border-color: #10b981; color: white;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+              Run Tests
+            </button>
             <!-- Settings Modal Trigger -->
             <button id="settings-btn" class="btn secondary-btn" aria-label="Preferences">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-settings"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -144,6 +148,12 @@
             <label for="archive-path-input">Archived Reports Directory Path</label>
             <p class="form-hint">Absolute path to your historical/archived reports folder.</p>
             <input type="text" id="archive-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\archive">
+          </div>
+          
+          <div class="form-group" style="margin-top: 1.5rem;">
+            <label for="project-path-input">Playwright Project Path</label>
+            <p class="form-hint">Absolute path to your Playwright project containing playwright.config.ts.</p>
+            <input type="text" id="project-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\my-project">
           </div>
           
           <div id="modal-error" class="path-error static-error hidden"></div>

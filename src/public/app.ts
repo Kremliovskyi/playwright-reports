@@ -37,7 +37,41 @@ document.addEventListener('DOMContentLoaded', () => {
   
   const currentPathInput = document.getElementById('current-path-input') as HTMLInputElement;
   const archivePathInput = document.getElementById('archive-path-input') as HTMLInputElement;
+  const projectPathInput = document.getElementById('project-path-input') as HTMLInputElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
+
+  const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
+
+  if (runTestsBtn) {
+      const channel = new BroadcastChannel('runner_state');
+      
+      channel.onmessage = (event) => {
+          if (event.data.state === 'open') {
+              runTestsBtn.disabled = true;
+              runTestsBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-terminal"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
+                Runner Active
+              `;
+              runTestsBtn.style.opacity = '0.7';
+          } else if (event.data.state === 'closed') {
+              runTestsBtn.disabled = false;
+              runTestsBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+                Run Tests
+              `;
+              runTestsBtn.style.opacity = '1';
+          }
+      };
+
+      // Ask if runner is already open upon load
+      channel.postMessage({ type: 'ping' });
+
+      runTestsBtn.addEventListener('click', () => {
+          // Temporarily disable to prevent double clicks before tab loads
+          runTestsBtn.disabled = true;
+          window.open('/runner.html', '_blank', 'noopener,noreferrer');
+      });
+  }
 
   // Format date nicely
   const formatDate = (dateString: string) => {
@@ -257,12 +291,13 @@ document.addEventListener('DOMContentLoaded', () => {
       settingsModal.classList.remove('hidden');
       
       try {
-          const response = await fetch('/api/current-paths');
+          const response = await fetch('/api/config');
           const data = await response.json();
           currentPathInput.value = data.currentPath || '';
           archivePathInput.value = data.archivePath || '';
+          projectPathInput.value = data.projectPath || '';
       } catch (err) {
-          console.error("Failed to load paths:", err);
+          console.error("Failed to load config:", err);
       }
   };
 
@@ -280,16 +315,17 @@ document.addEventListener('DOMContentLoaded', () => {
   saveModalBtn.addEventListener('click', async () => {
       const currentPath = currentPathInput.value.trim();
       const archivePath = archivePathInput.value.trim();
+      const projectPath = projectPathInput.value.trim();
 
       modalError.classList.add('hidden');
       saveModalBtn.disabled = true;
       saveModalBtn.textContent = 'Saving...';
 
       try {
-          const response = await fetch('/api/set-paths', {
+          const response = await fetch('/api/config', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ currentPath, archivePath })
+              body: JSON.stringify({ currentPath, archivePath, projectPath })
           });
           
           const data = await response.json();

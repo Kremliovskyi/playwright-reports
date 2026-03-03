@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "concurrently \"tsc -p tsconfig.server.json\" \"tsc -p tsconfig.client.json\" && npm run copy-assets",
-    "copy-assets": "cp -r src/public/index.html src/public/style.css dist/public/ && cp config.json dist/ || true",
+    "copy-assets": "cp -r src/public/index.html src/public/runner.html src/public/style.css dist/public/ && cp config.json dist/ || true",
     "start": "npm run build && pm2 start ecosystem.config.js",
     "stop": "pm2 stop playwright-reports",
     "restart": "pm2 restart playwright-reports",
@@ -17,10 +17,14 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "adm-zip": "^0.5.16",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "pm2": "^6.0.14"
+    "jiti": "^2.6.1",
+    "pm2": "^6.0.14",
+    "tree-kill": "^1.2.2"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",

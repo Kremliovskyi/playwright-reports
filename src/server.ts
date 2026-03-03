@@ -2,6 +2,11 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
+import { spawn, ChildProcess } from 'child_process';
+import { createJiti } from 'jiti';
+import treeKill from 'tree-kill';
+
+const jiti = createJiti(__filename, { moduleCache: false });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -18,14 +23,44 @@ app.use(express.static(publicDir));
 
 const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
 
-interface ConfigPaths {
+interface AppConfig {
   currentPath: string;
   archivePath: string;
+  projectPath: string;
+  runnerOptions: {
+    headed: boolean;
+    ui: boolean;
+    debug: boolean;
+    updateSnapshots: boolean;
+    grep: string;
+    repeatEach: string;
+    workers: string;
+    envVariables: string;
+  };
+  selectedProjects: string[];
 }
 
+const DEFAULT_RUNNER_OPTIONS = {
+  headed: false,
+  ui: false,
+  debug: false,
+  updateSnapshots: false,
+  grep: '',
+  repeatEach: '',
+  workers: '',
+  envVariables: ''
+};
+
 // Helper to load saved paths
-const getSavedPaths = (): ConfigPaths => {
-  const defaultPaths: ConfigPaths = { currentPath: "", archivePath: "" };
+const getSavedPaths = (): AppConfig => {
+  const defaultConfig: AppConfig = { 
+    currentPath: "", 
+    archivePath: "", 
+    projectPath: "",
+    runnerOptions: { ...DEFAULT_RUNNER_OPTIONS },
+    selectedProjects: []
+  };
+  
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
@@ -37,40 +72,43 @@ const getSavedPaths = (): ConfigPaths => {
       
       return {
         currentPath: config.currentPath || "",
-        archivePath: config.archivePath || ""
+        archivePath: config.archivePath || "",
+        projectPath: config.projectPath || "",
+        runnerOptions: { ...DEFAULT_RUNNER_OPTIONS, ...(config.runnerOptions || {}) },
+        selectedProjects: Array.isArray(config.selectedProjects) ? config.selectedProjects : []
       };
     }
   } catch (error) {
     console.error("Failed to read config:", error);
   }
-  return defaultPaths;
+  return defaultConfig;
 };
 
-let paths = getSavedPaths();
+let appConfig = getSavedPaths();
 
 // Enable JSON body parsing for our API
 app.use(express.json());
 
 // Serve the reports dynamically using isolated mount points
 app.use('/reports/current', (req: Request, res: Response, next: NextFunction) => {
-  if (paths.currentPath && fs.existsSync(paths.currentPath)) {
-    express.static(paths.currentPath)(req, res, next);
+  if (appConfig.currentPath && fs.existsSync(appConfig.currentPath)) {
+    express.static(appConfig.currentPath)(req, res, next);
   } else {
     next();
   }
 });
 
 app.use('/reports/archive', (req: Request, res: Response, next: NextFunction) => {
-  if (paths.archivePath && fs.existsSync(paths.archivePath)) {
-    express.static(paths.archivePath)(req, res, next);
+  if (appConfig.archivePath && fs.existsSync(appConfig.archivePath)) {
+    express.static(appConfig.archivePath)(req, res, next);
   } else {
     next();
   }
 });
 
-// API Endpoint to get the current configured paths
-app.get('/api/current-paths', (req: Request, res: Response) => {
-  res.json(paths);
+// API Endpoint to get the current configured paths and options
+app.get('/api/config', (req: Request, res: Response) => {
+  res.json(appConfig);
 });
 
 // Helper to validate a path
@@ -81,27 +119,31 @@ const validatePath = (dirPath: string): boolean => {
   return true;
 };
 
-// API Endpoint to update the reports paths
-app.post('/api/set-paths', (req: Request, res: Response): any => {
-  const { currentPath, archivePath } = req.body;
+// API Endpoint to update the reports paths or runner options
+app.post('/api/config', (req: Request, res: Response): any => {
+  const { currentPath, archivePath, projectPath, runnerOptions, selectedProjects } = req.body;
   
   try {
-    // Validate both
-    if (currentPath) validatePath(currentPath);
-    if (archivePath) validatePath(archivePath);
+    // Validate paths if they are provided (for backwards compatibility with partial updates)
+    if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
+    if (archivePath !== undefined && archivePath !== null) validatePath(archivePath);
+    if (projectPath !== undefined && projectPath !== null) validatePath(projectPath);
 
-    // Clean paths
-    const newPaths: ConfigPaths = {
-      currentPath: currentPath ? currentPath.trim() : "",
-      archivePath: archivePath ? archivePath.trim() : ""
+    // Merge new config
+    const newConfig: AppConfig = {
+      currentPath: currentPath !== undefined ? currentPath.trim() : appConfig.currentPath,
+      archivePath: archivePath !== undefined ? archivePath.trim() : appConfig.archivePath,
+      projectPath: projectPath !== undefined ? projectPath.trim() : appConfig.projectPath,
+      runnerOptions: runnerOptions !== undefined ? { ...appConfig.runnerOptions, ...runnerOptions } : appConfig.runnerOptions,
+      selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
 
     // Save to file persistently
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newPaths, null, 2));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2));
     
     // Update active runtime variable
-    paths = newPaths;
-    res.json({ success: true, paths });
+    appConfig = newConfig;
+    res.json({ success: true, config: appConfig });
   } catch (error: any) {
     console.error("Validation/Save error:", error.message);
     res.status(400).json({ error: error.message });
@@ -167,13 +209,124 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
 // API Endpoint to get the list of available reports
 app.get('/api/reports', (req, res) => {
   res.json({
-    current: paths.currentPath ? scanDirectory(paths.currentPath, 'current') : [],
-    archive: paths.archivePath ? scanDirectory(paths.archivePath, 'archive') : [],
+    current: appConfig.currentPath ? scanDirectory(appConfig.currentPath, 'current') : [],
+    archive: appConfig.archivePath ? scanDirectory(appConfig.archivePath, 'archive') : [],
     configStatus: {
-      hasCurrent: !!paths.currentPath,
-      hasArchive: !!paths.archivePath
+      hasCurrent: !!appConfig.currentPath,
+      hasArchive: !!appConfig.archivePath,
+      hasProject: !!appConfig.projectPath
     }
   });
+});
+
+// Test Runner Integrations
+app.get('/api/projects', (req: Request, res: Response): any => {
+  if (!appConfig.projectPath || !fs.existsSync(appConfig.projectPath)) {
+    return res.json({ projects: [] });
+  }
+
+  try {
+    const configTs = path.join(appConfig.projectPath, 'playwright.config.ts');
+    const configJs = path.join(appConfig.projectPath, 'playwright.config.js');
+
+    let configPath = '';
+    if (fs.existsSync(configTs)) configPath = configTs;
+    else if (fs.existsSync(configJs)) configPath = configJs;
+    else return res.json({ projects: [] });
+
+    // Clear cache by deleting require.cache is not needed for jiti usually with moduleCache false
+    const config = jiti(configPath);
+    const cfg = config.default || config;
+
+    if (cfg.projects && Array.isArray(cfg.projects)) {
+      const projects = cfg.projects.map((p: any) => p.name).filter(Boolean);
+      return res.json({ projects });
+    }
+    return res.json({ projects: [] });
+  } catch (error) {
+    console.error('Error parsing config:', error);
+    return res.json({ projects: [] });
+  }
+});
+
+let activeProcess: ChildProcess | null = null;
+let sseClients: Response[] = [];
+
+const broadcastLog = (type: string, data: string) => {
+  sseClients.forEach(client => {
+    client.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
+  });
+};
+
+app.get('/api/logs', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+  
+  sseClients.push(res);
+  
+  req.on('close', () => {
+    sseClients = sseClients.filter(c => c !== res);
+  });
+});
+
+const stopTests = (): Promise<void> => {
+  return new Promise((resolve) => {
+    if (activeProcess && activeProcess.pid) {
+      treeKill(activeProcess.pid, 'SIGKILL', () => {
+        activeProcess = null;
+        resolve();
+      });
+    } else {
+      resolve();
+    }
+  });
+};
+
+app.post('/api/stop-tests', async (req: Request, res: Response) => {
+  await stopTests();
+  broadcastLog('output', '\nTests stopped by user.\n');
+  res.json({ success: true });
+});
+
+app.post('/api/run-tests', async (req: Request, res: Response): Promise<any> => {
+  if (activeProcess) {
+    await stopTests();
+  }
+
+  const { args = [], env = {} } = req.body;
+  if (!appConfig.projectPath) {
+    return res.status(400).json({ error: "Project path is not configured" });
+  }
+
+  const customEnv = { ...process.env, FORCE_COLOR: '1', ...env };
+  const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+
+  try {
+    const child = spawn(command, ['playwright', 'test', ...args], {
+      cwd: appConfig.projectPath,
+      env: customEnv,
+      shell: process.platform === 'win32' // On Windows we usually need shell for npx
+    });
+
+    activeProcess = child;
+    broadcastLog('start', `Running npx playwright test ${args.join(' ')}\n`);
+
+    child.stdout?.on('data', (data) => broadcastLog('output', data.toString()));
+    child.stderr?.on('data', (data) => broadcastLog('output', data.toString()));
+
+    child.on('close', (code) => {
+      broadcastLog('output', `\nProcess exited with code ${code}\n`);
+      broadcastLog('complete', code?.toString() || '0');
+      if (activeProcess === child) activeProcess = null;
+    });
+
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Auto-extract traces endpoint
@@ -184,7 +337,7 @@ app.post('/api/extract', (req: Request, res: Response): any => {
   try {
     // 1. Determine which base directory this is from (current vs archive)
     const isArchive = reportPath.startsWith('/reports/archive/');
-    const basePath = isArchive ? paths.archivePath : paths.currentPath;
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
     
     if (!basePath) {
       return res.status(400).json({ error: "Base directory not configured" });
@@ -244,14 +397,14 @@ app.post('/api/archive', (req: Request, res: Response): any => {
   const { reportPath } = req.body;
   
   if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
-  if (!paths.archivePath) return res.status(400).json({ error: "Archive directory is not configured! Please open Preferences and set an archive path first." });
+  if (!appConfig.archivePath) return res.status(400).json({ error: "Archive directory is not configured! Please open Preferences and set an archive path first." });
 
   try {
     // Determine source directory
     const isArchive = reportPath.startsWith('/reports/archive/');
     if (isArchive) return res.status(400).json({ error: "Report is already in the archive" });
     
-    if (!paths.currentPath) return res.status(400).json({ error: "Current directory not configured" });
+    if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
 
     // Extract the actual report folder name from the URL path
     const urlParts = reportPath.split('/');
@@ -260,7 +413,7 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     const folderName = urlParts[3]; 
 
     // Construct the absolute physical source path
-    const sourcePhysicalFolder = path.join(paths.currentPath, folderName);
+    const sourcePhysicalFolder = path.join(appConfig.currentPath, folderName);
     
     if (!fs.existsSync(sourcePhysicalFolder)) {
       return res.status(404).json({ error: "Report folder not found on disk" });
@@ -268,7 +421,7 @@ app.post('/api/archive', (req: Request, res: Response): any => {
 
     // Construct unique destination physical path
     const uniqueArchivedName = `playwright-report-${Date.now()}`;
-    const destinationPhysicalFolder = path.join(paths.archivePath, uniqueArchivedName);
+    const destinationPhysicalFolder = path.join(appConfig.archivePath, uniqueArchivedName);
 
     try {
       // Fast path: same drive move

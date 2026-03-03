@@ -9,7 +9,7 @@ import treeKill from 'tree-kill';
 const jiti = createJiti(__filename, { moduleCache: false });
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 9333;
 
 // Enable CORS if you need to fetch from other origins
 app.use(cors());

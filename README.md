@@ -8,6 +8,11 @@
 [![Express.js](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)]()
 [![PM2](https://img.shields.io/badge/PM2-2B037A?style=for-the-badge&logo=pm2&logoColor=white)]()
 
+<br><br>
+<img src="./screenshots/dashboard.png" alt="Dashboard View" width="800" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 20px;"/>
+<br>
+<img src="./screenshots/runner.png" alt="Integrated Test Runner" width="800" style="border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3);"/>
+
 </div>
 
 ---

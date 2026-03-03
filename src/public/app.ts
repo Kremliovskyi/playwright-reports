@@ -1,31 +1,47 @@
+interface Report {
+    id: string;
+    path: string;
+    name: string;
+    createdAt: string;
+}
+
+interface ReportsResponse {
+    current: Report[];
+    archive: Report[];
+    configStatus: {
+        hasCurrent: boolean;
+        hasArchive: boolean;
+    };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
-  const currentSection = document.getElementById('current-section');
-  const currentTable = currentSection.querySelector('.reports-table');
-  const currentTbody = document.getElementById('current-tbody');
+  const currentSection = document.getElementById('current-section') as HTMLElement;
+  const currentTable = currentSection.querySelector('.reports-table') as HTMLElement;
+  const currentTbody = document.getElementById('current-tbody') as HTMLElement;
   
-  const archiveSection = document.getElementById('archive-section');
-  const archiveTable = archiveSection.querySelector('.reports-table');
-  const archiveTbody = document.getElementById('archive-tbody');
+  const archiveSection = document.getElementById('archive-section') as HTMLElement;
+  const archiveTable = archiveSection.querySelector('.reports-table') as HTMLElement;
+  const archiveTbody = document.getElementById('archive-tbody') as HTMLElement;
 
-  const loading = document.getElementById('loading');
-  const emptyState = document.getElementById('empty-state');
-  const refreshBtn = document.getElementById('refresh-btn');
+  const loading = document.getElementById('loading') as HTMLElement;
+  const emptyState = document.getElementById('empty-state') as HTMLElement;
+  const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
 
   // Modal Elements
-  const settingsBtn = document.getElementById('settings-btn');
-  const settingsModal = document.getElementById('settings-modal');
-  const closeModalBtn = document.getElementById('close-modal-btn');
-  const cancelModalBtn = document.getElementById('cancel-modal-btn');
-  const saveModalBtn = document.getElementById('save-modal-btn');
+  const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
+  const settingsModal = document.getElementById('settings-modal') as HTMLElement;
+  const closeModalBtn = document.getElementById('close-modal-btn') as HTMLButtonElement;
+  const cancelModalBtn = document.getElementById('cancel-modal-btn') as HTMLButtonElement;
+  const saveModalBtn = document.getElementById('save-modal-btn') as HTMLButtonElement;
   
-  const currentPathInput = document.getElementById('current-path-input');
-  const archivePathInput = document.getElementById('archive-path-input');
-  const modalError = document.getElementById('modal-error');
+  const currentPathInput = document.getElementById('current-path-input') as HTMLInputElement;
+  const archivePathInput = document.getElementById('archive-path-input') as HTMLInputElement;
+  const modalError = document.getElementById('modal-error') as HTMLElement;
 
   // Format date nicely
-  const formatDate = (dateString) => {
-      const options = { 
+  const formatDate = (dateString: string) => {
+      const options: Intl.DateTimeFormatOptions = { 
           year: 'numeric', month: 'short', day: 'numeric',
           hour: '2-digit', minute: '2-digit'
       };
@@ -33,16 +49,18 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // Create highly interactive report row
-  const createReportRow = (report) => {
+  const createReportRow = (report: Report) => {
       const tr = document.createElement('tr');
       tr.className = 'report-row';
       tr.dataset.path = report.path; // Store path for table-level extraction
       
       const isCurrent = report.path.startsWith('/reports/current/');
 
-      tr.addEventListener('click', (e) => {
+      tr.addEventListener('click', (e: MouseEvent) => {
           // Don't open report if clicking action buttons
-          if (e.target.closest('.btn-extract') || e.target.closest('.btn-archive')) return;
+          const target = e.target as HTMLElement;
+          if (target && target.closest('.btn-extract')) return;
+          if (target && target.closest('.btn-archive')) return;
           window.open(report.path, '_blank', 'noopener,noreferrer');
       });
 
@@ -79,28 +97,32 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       // Wire up extract button
-      const extractBtn = tr.querySelector('.btn-extract');
-      extractBtn.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          await handleExtract(report.path, extractBtn);
-      });
+      const extractBtn = tr.querySelector('.btn-extract') as HTMLButtonElement;
+      if (extractBtn) {
+          extractBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              await handleExtract(report.path, extractBtn);
+          });
+      }
 
       // Wire up archive button conditionally
       if (isCurrent) {
-        const archiveBtn = tr.querySelector('.btn-archive');
-        archiveBtn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            await handleArchive(report.path, archiveBtn);
-        });
+        const archiveBtn = tr.querySelector('.btn-archive') as HTMLButtonElement;
+        if (archiveBtn) {
+            archiveBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await handleArchive(report.path, archiveBtn);
+            });
+        }
       }
 
       return tr;
   };
 
   // Logic to handle individual extraction
-  const handleExtract = async (reportPath, btnElement) => {
+  const handleExtract = async (reportPath: string, btnElement: HTMLElement) => {
       const originalHtml = btnElement.innerHTML;
-      btnElement.disabled = true;
+      (btnElement as HTMLButtonElement).disabled = true;
       btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Extracting...`;
       
       try {
@@ -115,13 +137,13 @@ document.addEventListener('DOMContentLoaded', () => {
           
           btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Extracted`;
           btnElement.classList.add('success');
-      } catch (err) {
+      } catch (err: any) {
           console.error("Extraction failed API call:", err);
           btnElement.innerHTML = `Error`;
           btnElement.classList.add('error');
       } finally {
           setTimeout(() => {
-              btnElement.disabled = false;
+              (btnElement as HTMLButtonElement).disabled = false;
               btnElement.innerHTML = originalHtml;
               btnElement.classList.remove('success', 'error');
           }, 3000);
@@ -129,9 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // Logic to handle moving current to archive
-  const handleArchive = async (reportPath, btnElement) => {
+  const handleArchive = async (reportPath: string, btnElement: HTMLElement) => {
       const originalHtml = btnElement.innerHTML;
-      btnElement.disabled = true;
+      (btnElement as HTMLButtonElement).disabled = true;
       btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Archiving...`;
       
       try {
@@ -158,19 +180,19 @@ document.addEventListener('DOMContentLoaded', () => {
               fetchReports();
           }, 800);
 
-      } catch (err) {
+      } catch (err: any) {
           console.error("Archive failed API call:", err);
           btnElement.innerHTML = `Error`;
           btnElement.classList.add('error');
           setTimeout(() => {
-              btnElement.disabled = false;
+              (btnElement as HTMLButtonElement).disabled = false;
               btnElement.innerHTML = originalHtml;
               btnElement.classList.remove('success', 'error');
           }, 3000);
       } 
   };
 
-  const renderTable = (reports, tbody, section, table) => {
+  const renderTable = (reports: Report[], tbody: HTMLElement, section: HTMLElement, table: HTMLElement) => {
       tbody.innerHTML = '';
       if (!reports || reports.length === 0) {
           section.classList.add('hidden');
@@ -192,7 +214,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
           const response = await fetch('/api/reports');
-          const data = await response.json();
+          const data: ReportsResponse = await response.json();
 
           loading.classList.add('hidden');
 
@@ -204,21 +226,27 @@ document.addEventListener('DOMContentLoaded', () => {
           // Check if user set the configuration paths
           if (!configStatus || (!configStatus.hasCurrent && !configStatus.hasArchive)) {
               emptyState.classList.remove('hidden');
-              emptyState.querySelector('h3').textContent = "Configuration Required";
-              emptyState.querySelector('p').textContent = "Please open Preferences and configure your report directories to view them here.";
+              const h3 = emptyState.querySelector('h3');
+              const p = emptyState.querySelector('p');
+              if (h3) h3.textContent = "Configuration Required";
+              if (p) p.textContent = "Please open Preferences and configure your report directories to view them here.";
           } else if (currentCount === 0 && archiveCount === 0) {
               // Directories configured, but no reports inside them
               emptyState.classList.remove('hidden');
-              emptyState.querySelector('h3').textContent = "No Reports Found";
-              emptyState.querySelector('p').innerHTML = "No valid Playwright HTML reports could be found in your configured directories.<br><br>Make sure the selected folders actually contain test runs and the innermost folders contain an <code>index.html</code> right at their root.";
+              const h3 = emptyState.querySelector('h3');
+              const p = emptyState.querySelector('p');
+              if (h3) h3.textContent = "No Reports Found";
+              if (p) p.innerHTML = "No valid Playwright HTML reports could be found in your configured directories.<br><br>Make sure the selected folders actually contain test runs and the innermost folders contain an <code>index.html</code> right at their root.";
           }
 
-      } catch (error) {
+      } catch (error: any) {
           console.error("Failed to fetch reports:", error);
           loading.classList.add('hidden');
           emptyState.classList.remove('hidden');
-          emptyState.querySelector('h3').textContent = "Error loading reports";
-          emptyState.querySelector('p').textContent = error.message;
+          const h3 = emptyState.querySelector('h3');
+          const p = emptyState.querySelector('p');
+          if (h3) h3.textContent = "Error loading reports";
+          if (p) p.textContent = error.message;
       }
   };
 
@@ -273,7 +301,7 @@ document.addEventListener('DOMContentLoaded', () => {
           closeModal();
           await fetchReports();
           
-      } catch (err) {
+      } catch (err: any) {
           modalError.textContent = err.message;
           modalError.classList.remove('hidden');
       } finally {
@@ -287,22 +315,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const extractAllBtns = document.querySelectorAll('.extract-all-btn');
   extractAllBtns.forEach(btn => {
       btn.addEventListener('click', async () => {
-          const target = btn.dataset.target; // "current" or "archive"
-          const tbody = document.getElementById(`${target}-tbody`);
+          const target = (btn as HTMLElement).dataset.target; // "current" or "archive"
+          const tbody = document.getElementById(`${target}-tbody`) as HTMLElement;
           const rows = tbody.querySelectorAll('.report-row');
           
           if (rows.length === 0) return;
 
           const originalHtml = btn.innerHTML;
-          btn.disabled = true;
+          (btn as HTMLButtonElement).disabled = true;
           btn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px;"></div> Extracting All...`;
 
           // Process sequentially to not overload Node.js/Disk
           for (const row of Array.from(rows)) {
-              const extractBtn = row.querySelector('.btn-extract');
+              const rowElement = row as HTMLElement;
+              const extractBtn = rowElement.querySelector('.btn-extract') as HTMLButtonElement;
               // Only extract if not already extracted (in UI state)
-              if (!extractBtn.disabled && !extractBtn.classList.contains('success')) {
-                  await handleExtract(row.dataset.path, extractBtn);
+              if (extractBtn && !extractBtn.disabled && !extractBtn.classList.contains('success')) {
+                  const reportPath = rowElement.dataset.path;
+                  if (reportPath) {
+                      await handleExtract(reportPath, extractBtn);
+                  }
               }
           }
 
@@ -310,7 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
           btn.classList.add('success');
           
           setTimeout(() => {
-              btn.disabled = false;
+              (btn as HTMLButtonElement).disabled = false;
               btn.classList.remove('success');
               btn.innerHTML = originalHtml;
           }, 4000);
@@ -318,14 +350,18 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   refreshBtn.addEventListener('click', () => {
-      const icon = refreshBtn.querySelector('svg');
-      icon.style.transition = 'transform 0.5s ease';
-      icon.style.transform = `rotate(360deg)`;
+      const icon = refreshBtn.querySelector('svg') as SVGSVGElement;
+      if (icon) {
+          icon.style.transition = 'transform 0.5s ease';
+          icon.style.transform = `rotate(360deg)`;
+      }
       
       fetchReports().then(() => {
           setTimeout(() => {
-              icon.style.transition = 'none';
-              icon.style.transform = `rotate(0deg)`;
+              if (icon) {
+                  icon.style.transition = 'none';
+                  icon.style.transform = `rotate(0deg)`;
+              }
           }, 500);
       });
   });

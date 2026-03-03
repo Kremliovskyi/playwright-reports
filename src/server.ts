@@ -1,7 +1,7 @@
-const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const cors = require('cors');
+import express, { Request, Response, NextFunction } from 'express';
+import path from 'path';
+import fs from 'fs';
+import cors from 'cors';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -9,14 +9,23 @@ const PORT = process.env.PORT || 3000;
 // Enable CORS if you need to fetch from other origins
 app.use(cors());
 
-// Serve the dashboard UI from the 'public' folder
-app.use(express.static(path.join(__dirname, 'public')));
+// Determine the correct public directory based on whether we are running from dist/ or src/
+const isBuild = __dirname.endsWith('dist');
+const publicDir = isBuild ? path.join(__dirname, 'public') : path.join(__dirname, 'public');
 
-const CONFIG_FILE = path.join(__dirname, 'config.json');
+// Serve the dashboard UI from the 'public' folder
+app.use(express.static(publicDir));
+
+const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
+
+interface ConfigPaths {
+  currentPath: string;
+  archivePath: string;
+}
 
 // Helper to load saved paths
-const getSavedPaths = () => {
-  const defaultPaths = { currentPath: "", archivePath: "" };
+const getSavedPaths = (): ConfigPaths => {
+  const defaultPaths: ConfigPaths = { currentPath: "", archivePath: "" };
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
@@ -43,7 +52,7 @@ let paths = getSavedPaths();
 app.use(express.json());
 
 // Serve the reports dynamically using isolated mount points
-app.use('/reports/current', (req, res, next) => {
+app.use('/reports/current', (req: Request, res: Response, next: NextFunction) => {
   if (paths.currentPath && fs.existsSync(paths.currentPath)) {
     express.static(paths.currentPath)(req, res, next);
   } else {
@@ -51,7 +60,7 @@ app.use('/reports/current', (req, res, next) => {
   }
 });
 
-app.use('/reports/archive', (req, res, next) => {
+app.use('/reports/archive', (req: Request, res: Response, next: NextFunction) => {
   if (paths.archivePath && fs.existsSync(paths.archivePath)) {
     express.static(paths.archivePath)(req, res, next);
   } else {
@@ -60,12 +69,12 @@ app.use('/reports/archive', (req, res, next) => {
 });
 
 // API Endpoint to get the current configured paths
-app.get('/api/current-paths', (req, res) => {
+app.get('/api/current-paths', (req: Request, res: Response) => {
   res.json(paths);
 });
 
 // Helper to validate a path
-const validatePath = (dirPath) => {
+const validatePath = (dirPath: string): boolean => {
   if (!dirPath) return true; // Empty path is valid (clearing it)
   if (!fs.existsSync(dirPath)) throw new Error(`Directory does not exist: ${dirPath}`);
   if (!fs.statSync(dirPath).isDirectory()) throw new Error(`Path is not a directory: ${dirPath}`);
@@ -73,7 +82,7 @@ const validatePath = (dirPath) => {
 };
 
 // API Endpoint to update the reports paths
-app.post('/api/set-paths', (req, res) => {
+app.post('/api/set-paths', (req: Request, res: Response): any => {
   const { currentPath, archivePath } = req.body;
   
   try {
@@ -82,7 +91,7 @@ app.post('/api/set-paths', (req, res) => {
     if (archivePath) validatePath(archivePath);
 
     // Clean paths
-    const newPaths = {
+    const newPaths: ConfigPaths = {
       currentPath: currentPath ? currentPath.trim() : "",
       archivePath: archivePath ? archivePath.trim() : ""
     };
@@ -93,14 +102,22 @@ app.post('/api/set-paths', (req, res) => {
     // Update active runtime variable
     paths = newPaths;
     res.json({ success: true, paths });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Validation/Save error:", error.message);
     res.status(400).json({ error: error.message });
   }
 });
 
+interface ReportInfo {
+  id: string;
+  name: string;
+  path: string;
+  createdAt: Date;
+  modifiedAt: Date;
+}
+
 // Helper to scan a directory for valid reports
-const scanDirectory = (dirPath, prefix) => {
+const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   if (!dirPath || !fs.existsSync(dirPath)) {
     return [];
   }
@@ -142,9 +159,9 @@ const scanDirectory = (dirPath, prefix) => {
           return null;
       }
     })
-    .filter(Boolean) // Remove invalid folders
+    .filter((item): item is ReportInfo => item !== null) // Remove invalid folders and type guard
     // Sort by modified date descending (newest first)
-    .sort((a, b) => new Date(b.modifiedAt) - new Date(a.modifiedAt));
+    .sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
 };
 
 // API Endpoint to get the list of available reports
@@ -160,7 +177,7 @@ app.get('/api/reports', (req, res) => {
 });
 
 // Auto-extract traces endpoint
-app.post('/api/extract', (req, res) => {
+app.post('/api/extract', (req: Request, res: Response): any => {
   const { reportPath } = req.body;
   if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
 
@@ -216,14 +233,14 @@ app.post('/api/extract', (req, res) => {
 
     res.json({ success: true, extractedCount });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error("Extraction error:", error);
     res.status(500).json({ error: "Failed to extract trace files: " + error.message });
   }
 });
 
 // Auto-archive report endpoint
-app.post('/api/archive', (req, res) => {
+app.post('/api/archive', (req: Request, res: Response): any => {
   const { reportPath } = req.body;
   
   if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
@@ -256,7 +273,7 @@ app.post('/api/archive', (req, res) => {
     try {
       // Fast path: same drive move
       fs.renameSync(sourcePhysicalFolder, destinationPhysicalFolder);
-    } catch (renameErr) {
+    } catch (renameErr: any) {
       if (renameErr.code === 'EXDEV') {
         // Slow path: cross drive move (copy then delete)
         fs.cpSync(sourcePhysicalFolder, destinationPhysicalFolder, { recursive: true });
@@ -268,14 +285,14 @@ app.post('/api/archive', (req, res) => {
 
     res.json({ success: true, newName: uniqueArchivedName });
     
-  } catch (error) {
+  } catch (error: any) {
     console.error("Archive error:", error);
     res.status(500).json({ error: "Failed to archive report: " + error.message });
   }
 });
 
 // Fallback to dashboard for any missing routes
-app.use((req, res) => {
+app.use((req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

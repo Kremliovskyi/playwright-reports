@@ -19,7 +19,11 @@ This project is fully compatible with **Windows, macOS, and Linux**.
    ```cmd
    npm install
    ```
-4. Install PM2 globally (recommended for background process management):
+4. Start the application (this automatically compiles TypeScript and launches the server):
+   ```cmd
+   npm start
+   ```
+5. Install PM2 globally (recommended for background process management):
    ```cmd
    npm install -g pm2
    ```

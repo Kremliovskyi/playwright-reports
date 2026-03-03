@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "outDir": "./dist/public",
+    "rootDir": "./src/public",
+    "strict": true,
+    "lib": ["dom", "es2022"],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/public/**/*"],
+  "exclude": ["node_modules"]
+}

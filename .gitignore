@@ -121,3 +121,6 @@ reports/
 # PM2 logs inside the project folder (if configured to write locally)
 .pm2/
 config.json
+
+# Build output
+dist/

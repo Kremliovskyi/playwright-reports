@@ -23,6 +23,7 @@
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
 - **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
+- **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmation.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI, saved safely to a backend `config.json`.
 - **🔌 Zero Local Dependencies:** Serve reports reliably via PM2 without needing Playwright installed globally.
 
@@ -96,6 +97,17 @@ Keep your active workspace clean by archiving old runs.
 
 - Click **Archive** on any report in the "Current Test Reports" table.
 - The report folder is safely moved to your configured Archive path and appended with a unique timestamp (`playwright-report-174000...`) to absolutely guarantee no collisions.
+
+---
+
+## 🗑️ Deleting Reports
+
+If a report is no longer needed (whether it's in Current or Archived), you can completely remove it to free up disk space.
+
+- Click **Delete** on any report in the tables.
+- A confirmation dialog will appear, displaying the exact creation date of the report, to ensure you don't delete the wrong run.
+- Upon confirming **Yes**, the backend will recursively and permanently remove the report directory from the disk system.
+- The dashboard automatically refreshes to reflect the change immediately.
 
 ---
 

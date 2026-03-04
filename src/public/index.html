@@ -166,6 +166,30 @@
       </div>
     </div>
 
+    <!-- Delete Confirmation Modal overlay -->
+    <div id="delete-modal" class="modal-backdrop hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Delete Report</h2>
+          <button id="close-delete-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        
+        <div class="modal-body">
+          <p>Are you sure that you want to delete report for <strong id="delete-report-date"></strong>?</p>
+          <p class="form-hint" style="margin-top: 0.5rem; color: #f85149;">This action will permanently remove the report directory from disk. This cannot be undone.</p>
+          
+          <div id="delete-modal-error" class="path-error static-error hidden"></div>
+        </div>
+        
+        <div class="modal-footer">
+          <button id="cancel-delete-btn" class="btn secondary-btn">No</button>
+          <button id="confirm-delete-btn" class="btn primary-btn" style="background-color: #f85149; border-color: #f85149;">Yes</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

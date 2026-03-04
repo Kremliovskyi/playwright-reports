@@ -40,6 +40,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const projectPathInput = document.getElementById('project-path-input') as HTMLInputElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
 
+  const deleteModal = document.getElementById('delete-modal') as HTMLElement;
+  const closeDeleteModalBtn = document.getElementById('close-delete-modal-btn') as HTMLButtonElement;
+  const cancelDeleteBtn = document.getElementById('cancel-delete-btn') as HTMLButtonElement;
+  const confirmDeleteBtn = document.getElementById('confirm-delete-btn') as HTMLButtonElement;
+  const deleteReportDate = document.getElementById('delete-report-date') as HTMLElement;
+  const deleteModalError = document.getElementById('delete-modal-error') as HTMLElement;
+  
+  let reportToDeletePath: string | null = null;
+
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
 
   if (runTestsBtn) {
@@ -95,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const target = e.target as HTMLElement;
           if (target && target.closest('.btn-extract')) return;
           if (target && target.closest('.btn-archive')) return;
+          if (target && target.closest('.btn-delete')) return;
           window.open(report.path, '_blank', 'noopener,noreferrer');
       });
 
@@ -122,6 +132,10 @@ document.addEventListener('DOMContentLoaded', () => {
                       Extract
                   </button>
                   ${archiveButtonHtml}
+                  <button class="btn btn-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                      Delete
+                  </button>
                   <a href="${report.path}" target="_blank" rel="noopener noreferrer" class="btn-open" aria-label="Open Report">
                       View Report
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -148,6 +162,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 await handleArchive(report.path, archiveBtn);
             });
         }
+      }
+
+      // Wire up delete button
+      const deleteBtn = tr.querySelector('.btn-delete') as HTMLButtonElement;
+      if (deleteBtn) {
+          deleteBtn.addEventListener('click', (e) => {
+              e.stopPropagation();
+              openDeleteModal(report.path, deleteBtn.dataset.date || '');
+          });
       }
 
       return tr;
@@ -308,6 +331,54 @@ document.addEventListener('DOMContentLoaded', () => {
   settingsBtn.addEventListener('click', openModal);
   closeModalBtn.addEventListener('click', closeModal);
   cancelModalBtn.addEventListener('click', closeModal);
+
+  // --- Delete Modal Logic ---
+  const openDeleteModal = (path: string, dateStr: string) => {
+      reportToDeletePath = path;
+      deleteReportDate.textContent = dateStr;
+      deleteModalError.classList.add('hidden');
+      deleteModal.classList.remove('hidden');
+  };
+
+  const closeDeleteModal = () => {
+      reportToDeletePath = null;
+      deleteModal.classList.add('hidden');
+  };
+
+  closeDeleteModalBtn.addEventListener('click', closeDeleteModal);
+  cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+
+  confirmDeleteBtn.addEventListener('click', async () => {
+      if (!reportToDeletePath) return;
+
+      deleteModalError.classList.add('hidden');
+      confirmDeleteBtn.disabled = true;
+      confirmDeleteBtn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Deleting...`;
+
+      try {
+          const response = await fetch('/api/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath: reportToDeletePath })
+          });
+          
+          const data = await response.json();
+          
+          if (!response.ok) {
+              throw new Error(data.error || 'Failed to delete report');
+          }
+          
+          closeDeleteModal();
+          await fetchReports(); // refresh dashboard
+          
+      } catch (err: any) {
+          deleteModalError.textContent = err.message;
+          deleteModalError.classList.remove('hidden');
+      } finally {
+          confirmDeleteBtn.disabled = false;
+          confirmDeleteBtn.innerHTML = `Yes`;
+      }
+  });
 
   // Intentionally not closing on backdrop click as requested
   // User must use standard close/cancel/save buttons

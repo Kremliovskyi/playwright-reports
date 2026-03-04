@@ -198,6 +198,25 @@ p {
   background: rgba(248, 81, 73, 0.1);
 }
 
+.btn-delete {
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.btn-delete:hover {
+  border-color: #f85149;
+  color: #f85149;
+}
+
+.btn-delete.error {
+  border-color: #f85149;
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+}
+
 .extract-all-btn {
   font-size: 0.8rem;
   padding: 6px 10px;
@@ -255,7 +274,10 @@ p {
 /* Modal Overlay */
 .modal-backdrop {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(2px);
   display: flex;

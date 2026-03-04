@@ -444,6 +444,44 @@ app.post('/api/archive', (req: Request, res: Response): any => {
   }
 });
 
+// Auto-delete report endpoint
+app.post('/api/delete', (req: Request, res: Response): any => {
+  const { reportPath } = req.body;
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+
+  try {
+    // Determine which base directory this is from (current vs archive)
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+    
+    if (!basePath) {
+      return res.status(400).json({ error: "Base directory not configured" });
+    }
+
+    // Extract the actual report folder name from the URL path
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    
+    const folderName = urlParts[3]; 
+
+    // Construct the absolute physical path to the report folder
+    const targetPhysicalFolder = path.join(basePath, folderName);
+    
+    if (!fs.existsSync(targetPhysicalFolder)) {
+      return res.status(404).json({ error: "Report folder not found on disk" });
+    }
+
+    // Delete the directory and its contents
+    fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
+
+    res.json({ success: true });
+    
+  } catch (error: any) {
+    console.error("Delete error:", error);
+    res.status(500).json({ error: "Failed to delete report: " + error.message });
+  }
+});
+
 // Fallback to dashboard for any missing routes
 app.use((req: Request, res: Response) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));

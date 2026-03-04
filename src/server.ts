@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -21,70 +22,12 @@ const publicDir = isBuild ? path.join(__dirname, 'public') : path.join(__dirname
 // Serve the dashboard UI from the 'public' folder
 app.use(express.static(publicDir));
 
-const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
+// Global AppConfig cache for fast synchronous access in middlewares
+let appConfig: AppConfig = getConfig();
 
-interface AppConfig {
-  currentPath: string;
-  archivePath: string;
-  projectPath: string;
-  runnerOptions: {
-    headed: boolean;
-    ui: boolean;
-    debug: boolean;
-    updateSnapshots: boolean;
-    grep: string;
-    repeatEach: string;
-    workers: string;
-    envVariables: string;
-  };
-  selectedProjects: string[];
-}
-
-const DEFAULT_RUNNER_OPTIONS = {
-  headed: false,
-  ui: false,
-  debug: false,
-  updateSnapshots: false,
-  grep: '',
-  repeatEach: '',
-  workers: '',
-  envVariables: ''
+const refreshConfigCache = () => {
+  appConfig = getConfig();
 };
-
-// Helper to load saved paths
-const getSavedPaths = (): AppConfig => {
-  const defaultConfig: AppConfig = { 
-    currentPath: "", 
-    archivePath: "", 
-    projectPath: "",
-    runnerOptions: { ...DEFAULT_RUNNER_OPTIONS },
-    selectedProjects: []
-  };
-  
-  try {
-    if (fs.existsSync(CONFIG_FILE)) {
-      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-      
-      // Migrate old config if it exists
-      if (config.reportsPath && !config.currentPath) {
-        config.currentPath = config.reportsPath;
-      }
-      
-      return {
-        currentPath: config.currentPath || "",
-        archivePath: config.archivePath || "",
-        projectPath: config.projectPath || "",
-        runnerOptions: { ...DEFAULT_RUNNER_OPTIONS, ...(config.runnerOptions || {}) },
-        selectedProjects: Array.isArray(config.selectedProjects) ? config.selectedProjects : []
-      };
-    }
-  } catch (error) {
-    console.error("Failed to read config:", error);
-  }
-  return defaultConfig;
-};
-
-let appConfig = getSavedPaths();
 
 // Enable JSON body parsing for our API
 app.use(express.json());
@@ -106,11 +49,6 @@ app.use('/reports/archive', (req: Request, res: Response, next: NextFunction) =>
   }
 });
 
-// API Endpoint to get the current configured paths and options
-app.get('/api/config', (req: Request, res: Response) => {
-  res.json(appConfig);
-});
-
 // Helper to validate a path
 const validatePath = (dirPath: string): boolean => {
   if (!dirPath) return true; // Empty path is valid (clearing it)
@@ -119,18 +57,22 @@ const validatePath = (dirPath: string): boolean => {
   return true;
 };
 
-// API Endpoint to update the reports paths or runner options
+// --- Config API Endpoints ---
+app.get('/api/config', (req: Request, res: Response) => {
+  refreshConfigCache();
+  res.json(appConfig);
+});
+
 app.post('/api/config', (req: Request, res: Response): any => {
   const { currentPath, archivePath, projectPath, runnerOptions, selectedProjects } = req.body;
   
   try {
-    // Validate paths if they are provided (for backwards compatibility with partial updates)
     if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
     if (archivePath !== undefined && archivePath !== null) validatePath(archivePath);
     if (projectPath !== undefined && projectPath !== null) validatePath(projectPath);
 
-    // Merge new config
     const newConfig: AppConfig = {
+      id: 'default',
       currentPath: currentPath !== undefined ? currentPath.trim() : appConfig.currentPath,
       archivePath: archivePath !== undefined ? archivePath.trim() : appConfig.archivePath,
       projectPath: projectPath !== undefined ? projectPath.trim() : appConfig.projectPath,
@@ -138,16 +80,50 @@ app.post('/api/config', (req: Request, res: Response): any => {
       selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
 
-    // Save to file persistently
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(newConfig, null, 2));
-    
-    // Update active runtime variable
-    appConfig = newConfig;
+    updateConfig(newConfig);
+    refreshConfigCache();
     res.json({ success: true, config: appConfig });
   } catch (error: any) {
     console.error("Validation/Save error:", error.message);
     res.status(400).json({ error: error.message });
   }
+});
+
+// --- Presets API Endpoints ---
+app.get('/api/presets', (req: Request, res: Response) => {
+  const presets = getPresets();
+  res.json({ success: true, presets });
+});
+
+app.post('/api/presets', (req: Request, res: Response): any => {
+    const { name, projects } = req.body;
+    if (!name || typeof name !== 'string') return res.status(400).json({ error: "Preset name is required" });
+    if (!Array.isArray(projects)) return res.status(400).json({ error: "projects must be an array" });
+
+    try {
+        const newPreset: Preset = {
+            id: Date.now().toString(),
+            configId: 'default',
+            name: name.trim(),
+            projects: projects
+        };
+        addPreset(newPreset);
+        res.json({ success: true, preset: newPreset });
+    } catch (error: any) {
+        console.error("Save preset error:", error.message);
+        res.status(500).json({ error: "Failed to save preset" });
+    }
+});
+
+app.delete('/api/presets/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    try {
+        deletePreset(id as string);
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error("Delete preset error:", error.message);
+        res.status(500).json({ error: "Failed to delete preset" });
+    }
 });
 
 interface ReportInfo {
@@ -484,7 +460,11 @@ app.post('/api/delete', (req: Request, res: Response): any => {
 
 // Fallback to dashboard for any missing routes
 app.use((req: Request, res: Response) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  if (req.path.startsWith('/runner')) {
+    res.sendFile(path.join(publicDir, 'runner.html'));
+  } else {
+    res.sendFile(path.join(publicDir, 'index.html'));
+  }
 });
 
 app.listen(PORT, () => {

@@ -16,6 +16,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectedCountSpan = document.getElementById('selected-count') as HTMLSpanElement;
     const projectGrid = document.getElementById('project-grid') as HTMLDivElement;
     
+    // Preset Elements
+    const presetsBtn = document.getElementById('presets-btn') as HTMLButtonElement;
+    const presetsModal = document.getElementById('presets-modal') as HTMLDivElement;
+    const closePresetsBtn = document.getElementById('close-presets-btn') as HTMLButtonElement;
+    const presetsList = document.getElementById('presets-list') as HTMLDivElement;
+    const savePresetBtn = document.getElementById('save-preset-btn') as HTMLButtonElement;
+    const newPresetName = document.getElementById('new-preset-name') as HTMLInputElement;
+
     const optHeaded = document.getElementById('opt-headed') as HTMLInputElement;
     const optUi = document.getElementById('opt-ui') as HTMLInputElement;
     const optDebug = document.getElementById('opt-debug') as HTMLInputElement;
@@ -169,6 +177,137 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(err => {
             projectGrid.innerHTML = `<div style="color: var(--danger); font-size: 13px; grid-column: 1 / -1;">Error loading projects</div>`;
         });
+
+    // --- Presets Logic ---
+    let currentPresets: any[] = [];
+
+    const loadPresets = async () => {
+        try {
+            presetsList.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px;">Loading presets...</div>`;
+            const res = await fetch('/api/presets');
+            const data = await res.json();
+            if (data.success) {
+                currentPresets = data.presets || [];
+                renderPresets();
+            } else {
+                presetsList.innerHTML = `<div style="color: var(--danger); font-size: 13px;">Error loading presets.</div>`;
+            }
+        } catch (err) {
+            presetsList.innerHTML = `<div style="color: var(--danger); font-size: 13px;">Network error loading presets.</div>`;
+        }
+    };
+
+    const renderPresets = () => {
+        if (currentPresets.length === 0) {
+            presetsList.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px; font-style: italic;">No presets saved yet.</div>`;
+            return;
+        }
+
+        presetsList.innerHTML = '';
+        currentPresets.forEach(preset => {
+            const item = document.createElement('div');
+            item.style.display = 'flex';
+            item.style.justifyContent = 'space-between';
+            item.style.alignItems = 'center';
+            item.style.padding = '8px 12px';
+            item.style.background = 'var(--bg-color)';
+            item.style.border = '1px solid var(--border-color)';
+            item.style.borderRadius = 'var(--radius)';
+            
+            const infoDiv = document.createElement('div');
+            infoDiv.style.flex = '1';
+            infoDiv.innerHTML = `
+                <div style="font-weight: 500; font-size: 14px;">${preset.name}</div>
+                <div style="font-size: 12px; color: var(--text-muted);">${preset.projects?.length || 0} projects</div>
+            `;
+            
+            const actionsDiv = document.createElement('div');
+            actionsDiv.style.display = 'flex';
+            actionsDiv.style.gap = '10px';
+            
+            const applyBtn = document.createElement('button');
+            applyBtn.className = 'btn secondary-btn';
+            applyBtn.style.padding = '4px 10px';
+            applyBtn.style.fontSize = '12px';
+            applyBtn.textContent = 'Apply';
+            applyBtn.onclick = () => {
+                selectedProjects = [...(preset.projects || [])];
+                projectSearch.value = ''; // Clear search to show all appropriately
+                renderProjects();
+                saveState();
+                presetsModal.classList.add('hidden');
+            };
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn-delete';
+            delBtn.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+            `;
+            delBtn.onclick = async () => {
+                if(confirm(`Delete preset "${preset.name}"?`)) {
+                    try {
+                        const res = await fetch(`/api/presets/${preset.id}`, { method: 'DELETE' });
+                        if(res.ok) {
+                            loadPresets(); // refresh
+                        }
+                    } catch (e) {
+                         alert('Failed to delete preset.');
+                    }
+                }
+            };
+            
+            actionsDiv.appendChild(applyBtn);
+            actionsDiv.appendChild(delBtn);
+
+            item.appendChild(infoDiv);
+            item.appendChild(actionsDiv);
+            presetsList.appendChild(item);
+        });
+    };
+
+    presetsBtn.addEventListener('click', () => {
+        presetsModal.classList.remove('hidden');
+        newPresetName.value = ''; // clear input
+        loadPresets();
+    });
+
+    closePresetsBtn.addEventListener('click', () => {
+        presetsModal.classList.add('hidden');
+    });
+
+    savePresetBtn.addEventListener('click', async () => {
+        const name = newPresetName.value.trim();
+        if (!name) return alert('Please enter a preset name.');
+        if (selectedProjects.length === 0) return alert('No projects currently selected.');
+
+        savePresetBtn.disabled = true;
+        savePresetBtn.textContent = 'Saving...';
+
+        try {
+            const res = await fetch('/api/presets', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, projects: selectedProjects })
+            });
+            const data = await res.json();
+            if (data.success) {
+                newPresetName.value = '';
+                loadPresets();
+            } else {
+                alert(data.error || 'Failed to save preset.');
+            }
+        } catch (err) {
+            alert('Network error saving preset.');
+        } finally {
+            savePresetBtn.disabled = false;
+            savePresetBtn.textContent = 'Save Current';
+        }
+    });
+
+    // Close modal on click outside
+    presetsModal.addEventListener('click', (e) => {
+        if (e.target === presetsModal) presetsModal.classList.add('hidden');
+    });
 
     // Initialize Terminal
     const term = new Terminal({

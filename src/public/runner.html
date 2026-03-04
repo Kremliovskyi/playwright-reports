@@ -275,6 +275,8 @@
             <input type="text" id="project-search" class="search-input" placeholder="Search projects...">
             <button id="select-all-btn" class="action-link">Select All</button>
             <button id="select-none-btn" class="action-link">None</button>
+            <span style="flex: 1;"></span>
+            <button id="presets-btn" class="btn secondary-btn" style="padding: 4px 10px; font-size: 13px;">★ Presets</button>
             <span id="selected-count" style="font-size: 12px; color: var(--text-secondary);"></span>
           </div>
           <div class="project-grid" id="project-grid">
@@ -331,6 +333,28 @@
         </div>
         
       </main>
+    </div>
+
+    <!-- Presets Modal -->
+    <div id="presets-modal" class="modal-backdrop hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Presets</h2>
+          <button id="close-presets-btn" class="icon-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding-bottom: 0;">
+          <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+            <input type="text" id="new-preset-name" class="path-input full-width" placeholder="New preset name..." />
+            <button id="save-preset-btn" class="btn primary-btn">Save Current</button>
+          </div>
+          <div class="section-title">Saved Presets</div>
+          <div id="presets-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
+            <div style="color: var(--text-secondary); font-size: 13px;">Loading presets...</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm/lib/xterm.js"></script>

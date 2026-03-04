@@ -20,11 +20,13 @@
 ## ✨ Features
 
 - **🚀 Integrated Test Runner:** Run your Playwright tests directly from the dashboard. Select projects, apply greps, configure workers, and watch the live colored terminal output stream in real-time.
-- **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
+- **⭐ Test Presets:** Save your favorite project and option combinations as "Presets" to instantly recall complex test environments with one click.
+- **�️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
+- **�📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
 - **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
-- **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmation.
-- **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI, saved safely to a backend `config.json`.
+- **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
+- **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI, backed by a persistent **SQLite** database (`app.db`).
 - **🔌 Zero Local Dependencies:** Serve reports reliably via PM2 without needing Playwright installed globally.
 
 ---
@@ -65,7 +67,7 @@ When you first launch the app, you'll need to configure your workspaces:
    - **Playwright Project Path:** The directory containing your `playwright.config.ts` (required for the Test Runner).
 3. Click **Save Changes**. The dashboard will instantly scan the directories and display any valid reports.
 
-> **Note:** The scanner is extremely resilient. It safely skips loose files and only mounts folders containing a valid Playwright `index.html`.
+> **Note:** Configuration and Presets are stored in a local **SQLite** database (`app.db`), ensuring high reliability and zero-configuration data management.
 
 ---
 
@@ -74,7 +76,9 @@ When you first launch the app, you'll need to configure your workspaces:
 Click **Run Tests** from the main dashboard to open the runner interface.
 
 - **Dynamic Discovery:** Automatically parses your `playwright.config.ts` to detect available projects.
-- **Options Persistence:** Your selections (Headed, UI Mode, custom Greps, Workers, Env Variables) are safely saved to the backend `config.json` so they persist across reboots.
+- **Presets System:** Save your current selection of projects and CLI arguments as a named preset for instant reuse later.
+- **Discrepancy Checks:** If you apply a preset but the underlying projects in your config have changed, the runner will notify you exactly what is missing via a clear dialog.
+- **Options Persistence:** Your selections (Headed, UI Mode, custom Greps, Workers, Env Variables) are safely saved so they persist across reboots.
 - **Live Output:** Features an integrated `xterm.js` terminal to stream your test execution exactly as it looks in a native console.
 - **Graceful Termination:** You can stop running tests at any time without leaving zombie Node processes.
 

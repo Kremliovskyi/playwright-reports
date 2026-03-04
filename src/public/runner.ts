@@ -36,6 +36,44 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
     const clearLogBtn = document.getElementById('clear-log-btn') as HTMLButtonElement;
+
+    // Dialog Elements
+    const dialogModal = document.getElementById('dialog-modal') as HTMLDivElement;
+    const dialogTitle = document.getElementById('dialog-title') as HTMLHeadingElement;
+    const dialogMessage = document.getElementById('dialog-message') as HTMLParagraphElement;
+    const dialogFooter = document.getElementById('dialog-footer') as HTMLDivElement;
+    const dialogHeaderCloseBtn = document.getElementById('dialog-header-close-btn') as HTMLButtonElement;
+
+    const showDialog = (message: string, options: { title?: string, confirm?: boolean } = {}): Promise<boolean> => {
+        dialogTitle.textContent = options.title || (options.confirm ? 'Confirm' : 'Notification');
+        dialogMessage.textContent = message;
+        dialogFooter.innerHTML = '';
+
+        return new Promise((resolve) => {
+            const close = (result: boolean) => {
+                dialogModal.classList.add('hidden');
+                resolve(result);
+            };
+
+            if (options.confirm) {
+                const cancelBtn = document.createElement('button');
+                cancelBtn.className = 'btn';
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.onclick = () => close(false);
+                dialogFooter.appendChild(cancelBtn);
+            }
+
+            const okBtn = document.createElement('button');
+            okBtn.className = 'btn primary-btn';
+            okBtn.textContent = options.confirm ? 'Confirm' : 'OK';
+            okBtn.onclick = () => close(true);
+            dialogFooter.appendChild(okBtn);
+
+            dialogHeaderCloseBtn.onclick = () => close(false);
+            
+            dialogModal.classList.remove('hidden');
+        });
+    };
     
     let allProjects: string[] = [];
     let selectedProjects: string[] = [];
@@ -230,8 +268,20 @@ document.addEventListener('DOMContentLoaded', () => {
             applyBtn.style.padding = '4px 10px';
             applyBtn.style.fontSize = '12px';
             applyBtn.textContent = 'Apply';
-            applyBtn.onclick = () => {
-                selectedProjects = [...(preset.projects || [])];
+            applyBtn.onclick = async () => {
+                const presetProjects = preset.projects || [];
+                const missingProjects = presetProjects.filter((p: string) => !allProjects.includes(p));
+                const validProjects = presetProjects.filter((p: string) => allProjects.includes(p));
+
+                if (missingProjects.length > 0) {
+                    const message = `Some projects in this preset are no longer available in your Playwright config:\n\n` + 
+                                    missingProjects.map((p: string) => `  • ${p}`).join('\n') + 
+                                    ` \n\nOnly the remaining ${validProjects.length} projects will be applied. You might want to update or delete this preset.`;
+                    
+                    await showDialog(message, { title: 'Preset Discrepancy' });
+                }
+
+                selectedProjects = [...validProjects];
                 projectSearch.value = ''; // Clear search to show all appropriately
                 renderProjects();
                 saveState();
@@ -244,14 +294,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
             `;
             delBtn.onclick = async () => {
-                if(confirm(`Delete preset "${preset.name}"?`)) {
+                if(await showDialog(`Delete preset "${preset.name}"?`, { confirm: true })) {
                     try {
                         const res = await fetch(`/api/presets/${preset.id}`, { method: 'DELETE' });
                         if(res.ok) {
                             loadPresets(); // refresh
                         }
                     } catch (e) {
-                         alert('Failed to delete preset.');
+                         await showDialog('Failed to delete preset.');
                     }
                 }
             };
@@ -277,8 +327,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     savePresetBtn.addEventListener('click', async () => {
         const name = newPresetName.value.trim();
-        if (!name) return alert('Please enter a preset name.');
-        if (selectedProjects.length === 0) return alert('No projects currently selected.');
+        if (!name) {
+            await showDialog('Please enter a preset name.');
+            return;
+        }
+        if (selectedProjects.length === 0) {
+            await showDialog('No projects currently selected.');
+            return;
+        }
 
         savePresetBtn.disabled = true;
         savePresetBtn.textContent = 'Saving...';
@@ -294,10 +350,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 newPresetName.value = '';
                 loadPresets();
             } else {
-                alert(data.error || 'Failed to save preset.');
+                await showDialog(data.error || 'Failed to save preset.');
             }
         } catch (err) {
-            alert('Network error saving preset.');
+            await showDialog('Network error saving preset.');
         } finally {
             savePresetBtn.disabled = false;
             savePresetBtn.textContent = 'Save Current';
@@ -376,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (selectedProjects.length === 0) {
-            alert('Project has to be selected for test run');
+            await showDialog('Project has to be selected for test run');
             return;
         }
 

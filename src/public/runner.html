@@ -270,14 +270,15 @@
         
         <!-- Projects Section -->
         <div class="section-container">
-          <div class="section-title">Projects</div>
+          <div class="section-title" style="display: flex; align-items: center; gap: 8px;">
+            Projects
+            <span id="selected-count" style="font-size: 12px; color: var(--text-secondary); font-weight: normal;"></span>
+          </div>
           <div class="project-toolbar">
             <input type="text" id="project-search" class="search-input" placeholder="Search projects...">
             <button id="select-all-btn" class="action-link">Select All</button>
             <button id="select-none-btn" class="action-link">None</button>
-            <span style="flex: 1;"></span>
             <button id="presets-btn" class="btn secondary-btn" style="padding: 4px 10px; font-size: 13px;">★ Presets</button>
-            <span id="selected-count" style="font-size: 12px; color: var(--text-secondary);"></span>
           </div>
           <div class="project-grid" id="project-grid">
              <div style="color: var(--text-secondary); font-size: 13px;">Loading projects...</div>
@@ -353,6 +354,24 @@
           <div id="presets-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
             <div style="color: var(--text-secondary); font-size: 13px;">Loading presets...</div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generic Dialog Modal -->
+    <div id="dialog-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 450px;">
+        <div class="modal-header">
+          <h2 id="dialog-title">Notification</h2>
+          <button id="dialog-header-close-btn" class="icon-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p id="dialog-message" style="font-size: 14px; color: var(--text-color); white-space: pre-wrap;"></p>
+        </div>
+        <div class="modal-footer" id="dialog-footer">
+          <!-- Buttons will be injected here -->
         </div>
       </div>
     </div>

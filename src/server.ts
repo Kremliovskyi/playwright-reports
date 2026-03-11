@@ -523,36 +523,57 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
                 // Extract filename from codeframe or message
                 let expectedFilename = '';
                 const nameRegex = /name:\s*['"]([^'"]+\.ya?ml)['"]/;
-                const matchMsg = errorMsg.match(nameRegex);
-                const matchCf = codeframe ? codeframe.match(nameRegex) : null;
                 
-                if (matchCf) {
-                    expectedFilename = matchCf[1];
-                } else if (matchMsg) {
-                    expectedFilename = matchMsg[1];
+                if (codeframe) {
+                    const codeLines = codeframe.split('\n');
+                    const errorLineIdx = codeLines.findIndex((l: string) => l.includes('^ Error:') || l.startsWith('>'));
+                    if (errorLineIdx > -1) {
+                        const searchScope = codeLines.slice(Math.max(0, errorLineIdx - 2), errorLineIdx + 5).join('\n');
+                        const match = searchScope.match(nameRegex);
+                        if (match) expectedFilename = match[1];
+                    } else {
+                        const matches = [...codeframe.matchAll(new RegExp(nameRegex.source, 'g'))];
+                        if (matches.length > 0) expectedFilename = matches[matches.length - 1][1];
+                    }
+                }
+                
+                if (!expectedFilename) {
+                    const matchMsg = errorMsg.match(nameRegex);
+                    if (matchMsg) expectedFilename = matchMsg[1];
                 }
 
                 // Clean ANSI & Reconstruct diff
                 const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*m/g, '');
                 const cleanMsg = stripAnsi(errorMsg);
                 
-                const diffStart = cleanMsg.indexOf('@@');
-                const diffEnd = cleanMsg.indexOf('Call log:');
-                const diffString = cleanMsg.substring(diffStart, diffEnd > -1 ? diffEnd : cleanMsg.length).trim();
-                
-                const lines = diffString.split('\n');
+                const lines = cleanMsg.split('\n');
                 const expectedLines = [];
                 const newSnapshotLines = [];
+                let inDiff = false;
                 
-                for (const line of lines) {
-                  if (line.startsWith('@@')) continue;
-                  if (line.startsWith('-')) {
-                    expectedLines.push(line.substring(1));
-                  } else if (line.startsWith('+')) {
-                    newSnapshotLines.push(line.substring(1));
-                  } else if (line.startsWith(' ')) {
-                    expectedLines.push(line.substring(1));
-                    newSnapshotLines.push(line.substring(1));
+                for (let line of lines) {
+                  line = line.replace(/\r/g, '');
+                  if (line === 'Call log:') break;
+                  
+                  if (!inDiff) {
+                    if (line.startsWith('- Expected') || line.startsWith('+ Received') || line.trim() === '' || line.startsWith('Error:') || line.startsWith('Locator:') || line.startsWith('Timeout:')) {
+                        continue;
+                    }
+                    if (line.startsWith('@@ ') || line.startsWith('- ') || line.startsWith('+ ') || line.startsWith('  ')) {
+                        inDiff = true;
+                    }
+                  }
+                  
+                  if (inDiff) {
+                      if (line.startsWith('@@ ')) continue;
+                      if (line.startsWith('-')) {
+                        expectedLines.push(line.substring(1));
+                      } else if (line.startsWith('+')) {
+                        newSnapshotLines.push(line.substring(1));
+                      } else if (line.startsWith(' ')) {
+                        expectedLines.push(line.substring(1));
+                        newSnapshotLines.push(line.substring(1));
+                      }
                   }
                 }
                 const newSnapshot = newSnapshotLines.join('\n');

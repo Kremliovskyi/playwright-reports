@@ -542,42 +542,101 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
                     if (matchMsg) expectedFilename = matchMsg[1];
                 }
 
-                // Clean ANSI & Reconstruct diff
+                // Clean ANSI
                 const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*m/g, '');
                 const cleanMsg = stripAnsi(errorMsg);
                 
-                const lines = cleanMsg.split('\n');
-                const expectedLines = [];
-                const newSnapshotLines = [];
-                let inDiff = false;
-                
-                for (let line of lines) {
-                  line = line.replace(/\r/g, '');
-                  if (line === 'Call log:') break;
-                  
-                  if (!inDiff) {
-                    if (line.startsWith('- Expected') || line.startsWith('+ Received') || line.trim() === '' || line.startsWith('Error:') || line.startsWith('Locator:') || line.startsWith('Timeout:')) {
-                        continue;
+                let newSnapshot = '';
+                const unexpectedValueToken = '- unexpected value "';
+                const unexpectedValueIdx = cleanMsg.lastIndexOf(unexpectedValueToken);
+
+                if (unexpectedValueIdx !== -1) {
+                    const snapshotStart = unexpectedValueIdx + unexpectedValueToken.length;
+                    const remaining = cleanMsg.substring(snapshotStart);
+                    const lines = remaining.split('\n');
+                    const extractedLines = [];
+                    let foundEnd = false;
+                    for (let i = 0; i < lines.length; i++) {
+                        let line = lines[i].replace(/\r/g, '');
+                        if (i === 0 && line.startsWith('- ')) {
+                           extractedLines.push(line);
+                        } else if (!foundEnd) {
+                           if (line.endsWith('"') && (
+                               i === lines.length - 1 || 
+                               lines[i+1].trim() === '' || 
+                               /^\s*\d+ × locator resolved/.test(lines[i+1])
+                           )) {
+                               foundEnd = true;
+                               extractedLines.push(line.substring(0, line.length - 1));
+                           } else {
+                               extractedLines.push(line);
+                           }
+                        }
                     }
-                    if (line.startsWith('@@ ') || line.startsWith('- ') || line.startsWith('+ ') || line.startsWith('  ')) {
-                        inDiff = true;
+                    newSnapshot = extractedLines.join('\n');
+                } else {
+                    // Fallback to old diff string extraction if it does not have the 'unexpected value' Call log (e.g. older playwright versions)
+                    const diffStart = cleanMsg.indexOf('@@');
+                    const diffEnd = cleanMsg.indexOf('Call log:');
+                    if (diffStart !== -1) {
+                        const diffString = cleanMsg.substring(diffStart, diffEnd > -1 ? diffEnd : cleanMsg.length).trim();
+                        const lines = diffString.split('\n');
+                        const newSnapshotLines = [];
+                        let inDiff = false;
+                        for (let line of lines) {
+                          line = line.replace(/\r/g, '');
+                          if (line === 'Call log:') break;
+                          if (!inDiff) {
+                            if (line.startsWith('- Expected') || line.startsWith('+ Received') || line.trim() === '' || line.startsWith('Error:') || line.startsWith('Locator:') || line.startsWith('Timeout:')) {
+                                continue;
+                            }
+                            if (line.startsWith('@@ ') || line.startsWith('- ') || line.startsWith('+ ') || line.startsWith('  ')) {
+                                inDiff = true;
+                            }
+                          }
+                          if (inDiff) {
+                              if (line.startsWith('@@ ')) continue;
+                              if (line.startsWith('+') || line.startsWith(' ')) {
+                                newSnapshotLines.push(line.substring(1));
+                              }
+                          }
+                        }
+                        newSnapshot = newSnapshotLines.join('\n');
                     }
-                  }
-                  
-                  if (inDiff) {
-                      if (line.startsWith('@@ ')) continue;
-                      if (line.startsWith('-')) {
-                        expectedLines.push(line.substring(1));
-                      } else if (line.startsWith('+')) {
-                        newSnapshotLines.push(line.substring(1));
-                      } else if (line.startsWith(' ')) {
-                        expectedLines.push(line.substring(1));
-                        newSnapshotLines.push(line.substring(1));
-                      }
-                  }
                 }
-                const newSnapshot = newSnapshotLines.join('\n');
-                const expectedSnapshot = expectedLines.join('\n');
+                
+                // Note: Content-based matching against the expected snapshot still requires knowing the expected snapshot.
+                // Playwright doesn't print the *entire* expected file if it's too long in the diff,
+                // but we don't necessarily need the expected string anymore because codeframe filename extraction works perfectly.
+                // I will keep the existing expected string extraction around for the fallback content matching if codeframe fails.
+                let expectedSnapshot = '';
+                const diffStart = cleanMsg.indexOf('@@');
+                const diffEnd = cleanMsg.indexOf('Call log:');
+                if (diffStart !== -1) {
+                        const diffString = cleanMsg.substring(diffStart, diffEnd > -1 ? diffEnd : cleanMsg.length).trim();
+                        const lines = diffString.split('\n');
+                        const expectedLines = [];
+                        let inDiff = false;
+                        for (let line of lines) {
+                          line = line.replace(/\r/g, '');
+                          if (line === 'Call log:') break;
+                          if (!inDiff) {
+                            if (line.startsWith('- Expected') || line.startsWith('+ Received') || line.trim() === '' || line.startsWith('Error:') || line.startsWith('Locator:') || line.startsWith('Timeout:')) {
+                                continue;
+                            }
+                            if (line.startsWith('@@ ') || line.startsWith('- ') || line.startsWith('+ ') || line.startsWith('  ')) {
+                                inDiff = true;
+                            }
+                          }
+                          if (inDiff) {
+                              if (line.startsWith('@@ ')) continue;
+                              if (line.startsWith('-') || line.startsWith(' ')) {
+                                expectedLines.push(line.substring(1));
+                              }
+                          }
+                        }
+                        expectedSnapshot = expectedLines.join('\n');
+                }
                 
                 // Determine aria snapshots directory
                 let testAriaDir = `src/test-data/aria-snapshots/${test.location.file}`;

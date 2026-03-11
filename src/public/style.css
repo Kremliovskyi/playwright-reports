@@ -627,3 +627,27 @@ p {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
 }
+
+/* Custom Webkit Scrollbars for Dark Theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 148, 158, 0.4);
+  border-radius: var(--radius-sm);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 148, 158, 0.7);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--bg-color);
+}

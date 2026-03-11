@@ -458,6 +458,222 @@ app.post('/api/delete', (req: Request, res: Response): any => {
   }
 });
 
+// Aria Snapshot Extraction Endpoint
+app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
+  const { reportPath } = req.body;
+  
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+  if (!appConfig.projectPath) return res.status(400).json({ error: "Project path is not configured" });
+
+  try {
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+    if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    const folderName = urlParts[3]; 
+    const physicalFolder = path.join(basePath, folderName);
+    const indexPath = path.join(physicalFolder, 'index.html');
+
+    if (!fs.existsSync(indexPath)) return res.status(404).json({ error: "Report index.html not found" });
+    
+    const indexHtml = fs.readFileSync(indexPath, 'utf8');
+    let base64Data = "";
+    
+    // Check old format window.playwrightReportBase64
+    const zipMatch = indexHtml.match(/window\.playwrightReportBase64\s*=\s*"([^"]+)"/);
+    if (zipMatch) {
+        base64Data = zipMatch[1];
+    } else {
+        // Check new format <script id="playwrightReportBase64" type="application/zip">data:application/zip;base64,...</script>
+        const scriptMatch = indexHtml.match(/<script id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/script>/);
+        if (scriptMatch) {
+            base64Data = scriptMatch[1];
+        }
+    }
+    
+    if (!base64Data) return res.status(400).json({ error: "Could not find embedded report data in index.html" });
+    
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(Buffer.from(base64Data, 'base64'));
+    const zipEntries = zip.getEntries();
+    
+    const ariaFailures: any[] = [];
+    
+    for (const entry of zipEntries) {
+      if (!entry.entryName.endsWith('.json') || entry.entryName === 'report.json') continue;
+      
+      const content = Buffer.from(entry.getData()).toString('utf8');
+      const data = JSON.parse(content);
+      if (!data.tests) continue;
+      
+      for (const test of data.tests) {
+        if (!test.results) continue;
+        
+        let foundErrors = false;
+        const snapshotsToFix: { expectedPath: string, newSnapshot: string }[] = [];
+        
+        for (const result of test.results) {
+          for (const err of result.errors || []) {
+            const errorMsg = typeof err === 'string' ? err : err.message;
+            const codeframe = typeof err === 'object' ? err.codeframe : '';
+            
+            if (errorMsg && errorMsg.includes('toMatchAriaSnapshot')) {
+                // Extract filename from codeframe or message
+                let expectedFilename = '';
+                const nameRegex = /name:\s*['"]([^'"]+\.ya?ml)['"]/;
+                const matchMsg = errorMsg.match(nameRegex);
+                const matchCf = codeframe ? codeframe.match(nameRegex) : null;
+                
+                if (matchCf) {
+                    expectedFilename = matchCf[1];
+                } else if (matchMsg) {
+                    expectedFilename = matchMsg[1];
+                }
+
+                // Clean ANSI & Reconstruct diff
+                const stripAnsi = (str: string) => str.replace(/\x1B\[[0-9;]*m/g, '');
+                const cleanMsg = stripAnsi(errorMsg);
+                
+                const diffStart = cleanMsg.indexOf('@@');
+                const diffEnd = cleanMsg.indexOf('Call log:');
+                const diffString = cleanMsg.substring(diffStart, diffEnd > -1 ? diffEnd : cleanMsg.length).trim();
+                
+                const lines = diffString.split('\n');
+                const expectedLines = [];
+                const newSnapshotLines = [];
+                
+                for (const line of lines) {
+                  if (line.startsWith('@@')) continue;
+                  if (line.startsWith('-')) {
+                    expectedLines.push(line.substring(1));
+                  } else if (line.startsWith('+')) {
+                    newSnapshotLines.push(line.substring(1));
+                  } else if (line.startsWith(' ')) {
+                    expectedLines.push(line.substring(1));
+                    newSnapshotLines.push(line.substring(1));
+                  }
+                }
+                const newSnapshot = newSnapshotLines.join('\n');
+                const expectedSnapshot = expectedLines.join('\n');
+                
+                // Determine aria snapshots directory
+                let testAriaDir = `src/test-data/aria-snapshots/${test.location.file}`;
+                try {
+                    const configTs = path.join(appConfig.projectPath!, 'playwright.config.ts');
+                    const configJs = path.join(appConfig.projectPath!, 'playwright.config.js');
+                    const configPath = fs.existsSync(configTs) ? configTs : fs.existsSync(configJs) ? configJs : '';
+                    if (configPath) {
+                        const cfg = jiti(configPath);
+                        const resolvedCfg = cfg.default || cfg;
+                        if (resolvedCfg.expect?.toMatchAriaSnapshot?.pathTemplate) {
+                            const template = resolvedCfg.expect.toMatchAriaSnapshot.pathTemplate;
+                            const parsedRelPath = path.parse(test.location.file);
+                            let resolvedDirTemplate = template
+                                .replace(/\{(.)?testFilePath\}/g, test.location.file)
+                                .replace(/\{(.)?testFileName\}/g, parsedRelPath.base)
+                                .replace(/\{(.)?testFileDir\}/g, parsedRelPath.dir);
+                            testAriaDir = resolvedDirTemplate.substring(0, resolvedDirTemplate.lastIndexOf('/'));
+                        }
+                    }
+                } catch(e) { /* fallback to default */ }
+                
+                let expectedPath = expectedFilename ? path.join(testAriaDir, expectedFilename) : '';
+                
+                // Content-based matching logic
+                const isContentMatch = (filePath: string, expectedContentStr: string) => {
+                    try {
+                        const content = fs.readFileSync(path.join(appConfig.projectPath!, filePath), 'utf8');
+                        // Use a softer trim since aria snapshots often have specific whitespace but trailing space can differ
+                        return content.trim() === expectedContentStr.trim();
+                    } catch (e) { return false; }
+                };
+
+                let foundPath = '';
+                if (expectedPath && isContentMatch(expectedPath, expectedSnapshot)) {
+                    foundPath = expectedPath;
+                } else {
+                    const absoluteAriaDir = path.join(appConfig.projectPath!, testAriaDir);
+                    if (fs.existsSync(absoluteAriaDir)) {
+                        const files = fs.readdirSync(absoluteAriaDir);
+                        for (const file of files) {
+                            if (!file.endsWith('.yml')) continue;
+                            const maybePath = path.join(testAriaDir, file);
+                            if (isContentMatch(maybePath, expectedSnapshot)) {
+                                foundPath = maybePath;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (foundPath) {
+                    expectedPath = foundPath;
+                } else if (!expectedPath) {
+                    expectedPath = 'UNRESOLVED_PATH.yml';
+                }
+
+                if (!snapshotsToFix.some(s => s.newSnapshot === newSnapshot)) {
+                    snapshotsToFix.push({
+                       expectedPath,
+                       newSnapshot
+                    });
+                }
+                foundErrors = true;
+            }
+          }
+        }
+        
+        if (foundErrors && snapshotsToFix.length > 0) {
+          ariaFailures.push({
+            testId: test.testId,
+            testTitle: test.title,
+            projectName: test.projectName,
+            file: test.location.file,
+            snapshots: snapshotsToFix
+          });
+        }
+      }
+    }
+    
+    res.json({ success: true, ariaFailures });
+  } catch (error: any) {
+    console.error("Aria snapshots error:", error);
+    res.status(500).json({ error: "Failed to extract aria snapshots: " + error.message });
+  }
+});
+
+// Aria Snapshot Fixing Endpoint
+app.post('/api/fix-aria-snapshot', (req: Request, res: Response): any => {
+    const { snapshotPath, newContent } = req.body;
+    
+    if (!snapshotPath || newContent === undefined) {
+        return res.status(400).json({ error: "snapshotPath and newContent are required." });
+    }
+    
+    if (!appConfig.projectPath) {
+       return res.status(400).json({ error: "Project path is not configured" });
+    }
+    
+    try {
+        const absolutePath = path.join(appConfig.projectPath, snapshotPath);
+        
+        // Ensure path is within projectPath for security
+        if (!absolutePath.startsWith(appConfig.projectPath)) {
+            return res.status(403).json({ error: "Invalid snapshot path" });
+        }
+        
+        fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+        
+        const finalContent = newContent.endsWith('\n') ? newContent : newContent + '\n';
+        fs.writeFileSync(absolutePath, finalContent, 'utf8');
+        res.json({ success: true, message: "Aria snapshot updated successfully." });
+    } catch(error: any) {
+        console.error("Failed to fix aria snapshot:", error);
+        res.status(500).json({ error: "Failed to update aria snapshot: " + error.message });
+    }
+});
+
 // Fallback to dashboard for any missing routes
 app.use((req: Request, res: Response) => {
   if (req.path.startsWith('/runner')) {

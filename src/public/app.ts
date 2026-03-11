@@ -47,6 +47,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const deleteReportDate = document.getElementById('delete-report-date') as HTMLElement;
   const deleteModalError = document.getElementById('delete-modal-error') as HTMLElement;
   
+  const ariaModal = document.getElementById('aria-modal') as HTMLElement;
+  const ariaTbody = document.getElementById('aria-tbody') as HTMLElement;
+  const closeAriaModalBtn = document.getElementById('close-aria-modal-btn') as HTMLButtonElement;
+  
+  const ariaPreviewModal = document.getElementById('aria-preview-modal') as HTMLElement;
+  const ariaPreviewBody = document.getElementById('aria-preview-body') as HTMLElement;
+  const closeAriaPreviewBtn = document.getElementById('close-aria-preview-btn') as HTMLButtonElement;
+  const closeAriaPreviewFooterBtn = document.getElementById('close-aria-preview-footer-btn') as HTMLButtonElement;
+  const ariaPreviewSubtitle = document.getElementById('aria-preview-subtitle') as HTMLElement;
+
   let reportToDeletePath: string | null = null;
 
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
@@ -115,6 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </button>
       ` : '';
 
+      const fixAriaButtonHtml = isCurrent ? `
+        <button class="btn btn-fix-aria" aria-label="Fix Aria Snapshots">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-wrench"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Fix Snapshots
+        </button>
+      ` : '';
+
       tr.innerHTML = `
           <td class="col-date">
               <div class="date-wrapper">
@@ -131,6 +148,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
                       Extract
                   </button>
+                  ${fixAriaButtonHtml}
                   ${archiveButtonHtml}
                   <button class="btn btn-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
@@ -160,6 +178,14 @@ document.addEventListener('DOMContentLoaded', () => {
             archiveBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 await handleArchive(report.path, archiveBtn);
+            });
+        }
+        
+        const fixAriaBtn = tr.querySelector('.btn-fix-aria') as HTMLButtonElement;
+        if (fixAriaBtn) {
+            fixAriaBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                await handleFixAria(report.path, fixAriaBtn);
             });
         }
       }
@@ -248,6 +274,146 @@ document.addEventListener('DOMContentLoaded', () => {
           }, 3000);
       } 
   };
+  
+  // Logic to handle Aria snapshots extraction
+  const handleFixAria = async (reportPath: string, btnElement: HTMLElement) => {
+      const originalHtml = btnElement.innerHTML;
+      (btnElement as HTMLButtonElement).disabled = true;
+      btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Checking...`;
+      
+      try {
+          const response = await fetch('/api/aria-snapshots', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath })
+          });
+          const data = await response.json();
+          
+          if (!response.ok) throw new Error(data.error);
+
+          const failures = data.ariaFailures || [];
+          if (failures.length === 0) {
+              btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> No Failures`;
+              btnElement.classList.add('success');
+              setTimeout(() => {
+                  btnElement.innerHTML = originalHtml;
+                  btnElement.classList.remove('success');
+                  (btnElement as HTMLButtonElement).disabled = false;
+              }, 3000);
+              return;
+          }
+
+          // Render failures in modal
+          ariaTbody.innerHTML = '';
+          failures.forEach((failure: any) => {
+              const tr = document.createElement('tr');
+              tr.className = 'report-row';
+              
+              tr.addEventListener('click', () => {
+                 openAriaPreviewModal(failure);
+              });
+              
+              tr.innerHTML = `
+                  <td style="width: 80%;">
+                      <div style="font-weight: 500;">${failure.testTitle}</div>
+                      <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace; margin-top: 4px;">${failure.file}</div>
+                  </td>
+                  <td style="width: 20%; text-align: right;">
+                      <button class="btn secondary-btn">Preview</button>
+                  </td>
+              `;
+              ariaTbody.appendChild(tr);
+          });
+          
+          btnElement.innerHTML = originalHtml;
+          (btnElement as HTMLButtonElement).disabled = false;
+          
+          ariaModal.classList.remove('hidden');
+
+      } catch (err: any) {
+          console.error("Aria extraction failed:", err);
+          btnElement.innerHTML = `Error`;
+          btnElement.classList.add('error');
+          setTimeout(() => {
+              (btnElement as HTMLButtonElement).disabled = false;
+              btnElement.innerHTML = originalHtml;
+              btnElement.classList.remove('success', 'error');
+          }, 3000);
+      }
+  };
+
+  const openAriaPreviewModal = (failure: any) => {
+      ariaPreviewSubtitle.textContent = failure.testTitle;
+      ariaPreviewBody.innerHTML = '';
+      
+      failure.snapshots.forEach((snap: any, index: number) => {
+         const block = document.createElement('div');
+         block.className = 'aria-snapshot-block';
+         
+         const expectedPathName = snap.expectedPath.split('/').pop() || snap.expectedPath;
+         
+         block.innerHTML = `
+            <div class="aria-snapshot-header">
+                <div>
+                   <span class="aria-filename">${expectedPathName}</span>
+                   <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${snap.expectedPath}</div>
+                </div>
+                <button class="btn primary-btn apply-aria-fix-btn" data-index="${index}">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-circle-2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                   Apply Fix
+                </button>
+            </div>
+            <textarea class="aria-textarea" id="aria-textarea-${index}">${snap.newSnapshot}</textarea>
+         `;
+         ariaPreviewBody.appendChild(block);
+         
+         const applyBtn = block.querySelector('.apply-aria-fix-btn') as HTMLButtonElement;
+         applyBtn.addEventListener('click', async () => {
+             const tx = document.getElementById(`aria-textarea-${index}`) as HTMLTextAreaElement;
+             const newContent = tx.value;
+             const originalHtml = applyBtn.innerHTML;
+             
+             applyBtn.disabled = true;
+             applyBtn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Applying...`;
+             
+             try {
+                 const res = await fetch('/api/fix-aria-snapshot', {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({
+                         snapshotPath: snap.expectedPath,
+                         newContent
+                     })
+                 });
+                 const d = await res.json();
+                 
+                 if (!res.ok) throw new Error(d.error);
+                 
+                 applyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Fixed`;
+                 applyBtn.style.backgroundColor = '#238636';
+                 applyBtn.style.borderColor = '#238636';
+             } catch(err: any) {
+                 console.error("Failed to apply fix", err);
+                 applyBtn.innerHTML = `Failed!`;
+                 applyBtn.style.backgroundColor = '#f85149';
+                 applyBtn.style.borderColor = '#f85149';
+             } finally {
+                 setTimeout(() => {
+                     applyBtn.innerHTML = originalHtml;
+                     applyBtn.disabled = false;
+                     applyBtn.style.backgroundColor = '';
+                     applyBtn.style.borderColor = '';
+                 }, 3000);
+             }
+         });
+      });
+      
+      ariaPreviewModal.classList.remove('hidden');
+  };
+
+  closeAriaModalBtn.addEventListener('click', () => ariaModal.classList.add('hidden'));
+  closeAriaPreviewBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
+  closeAriaPreviewFooterBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
 
   const renderTable = (reports: Report[], tbody: HTMLElement, section: HTMLElement, table: HTMLElement) => {
       tbody.innerHTML = '';

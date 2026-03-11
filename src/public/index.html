@@ -190,6 +190,53 @@
       </div>
     </div>
 
+    <!-- Aria Snapshots List Modal -->
+    <div id="aria-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 800px;">
+        <div class="modal-header">
+          <h2>Fix Aria Snapshots</h2>
+          <button id="close-aria-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+          <p class="form-hint" style="margin-bottom: 1rem;">The following tests have failed `toMatchAriaSnapshot` assertions. Click Preview to view the expected update and apply the fix to your codebase.</p>
+          <div class="table-container">
+            <table class="reports-table">
+              <thead>
+                <tr>
+                  <th>Test Name</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="aria-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full-screen Aria Preview Modal -->
+    <div id="aria-preview-modal" class="modal-backdrop hidden" style="align-items: flex-start; padding: 2rem;">
+      <div class="modal-content full-screen" style="max-width: 100%; width: 100%; height: calc(100vh - 4rem); display: flex; flex-direction: column;">
+        <div class="modal-header">
+          <div>
+            <h2 id="aria-preview-title">Aria Snapshot Preview</h2>
+            <p id="aria-preview-subtitle" class="form-hint" style="margin-bottom: 0;">Review the reconstructed aria snapshot differences below.</p>
+          </div>
+          <button id="close-aria-preview-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" id="aria-preview-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2rem;">
+          <!-- dynamic content will be injected here -->
+        </div>
+        <div class="modal-footer">
+          <button id="close-aria-preview-footer-btn" class="btn secondary-btn">Back</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

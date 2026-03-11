@@ -55,6 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const ariaPreviewBody = document.getElementById('aria-preview-body') as HTMLElement;
   const closeAriaPreviewBtn = document.getElementById('close-aria-preview-btn') as HTMLButtonElement;
   const closeAriaPreviewFooterBtn = document.getElementById('close-aria-preview-footer-btn') as HTMLButtonElement;
+  const ariaDeepEqualCheckbox = document.getElementById('aria-deep-equal-checkbox') as HTMLInputElement;
   const ariaPreviewSubtitle = document.getElementById('aria-preview-subtitle') as HTMLElement;
 
   let reportToDeletePath: string | null = null;
@@ -363,9 +364,14 @@ document.addEventListener('DOMContentLoaded', () => {
                    Apply Fix
                 </button>
             </div>
-            <textarea class="aria-textarea" id="aria-textarea-${index}">${snap.newSnapshot}</textarea>
+            <textarea class="aria-textarea" id="aria-textarea-${index}"></textarea>
          `;
          ariaPreviewBody.appendChild(block);
+         
+         const textarea = document.getElementById(`aria-textarea-${index}`) as HTMLTextAreaElement;
+         textarea.placeholder = "New Snapshot...";
+         const defaultPrefix = ariaDeepEqualCheckbox.checked ? '- /children: deep-equal\n' : '';
+         textarea.value = defaultPrefix + snap.newSnapshot;
          
          const applyBtn = block.querySelector('.apply-aria-fix-btn') as HTMLButtonElement;
          applyBtn.addEventListener('click', async () => {
@@ -414,6 +420,25 @@ document.addEventListener('DOMContentLoaded', () => {
   closeAriaModalBtn.addEventListener('click', () => ariaModal.classList.add('hidden'));
   closeAriaPreviewBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
   closeAriaPreviewFooterBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
+
+  ariaDeepEqualCheckbox.addEventListener('change', () => {
+    const textareas = document.querySelectorAll('.aria-textarea') as NodeListOf<HTMLTextAreaElement>;
+    const isChecked = ariaDeepEqualCheckbox.checked;
+    const prefix = '- /children: deep-equal\n';
+    
+    textareas.forEach(textarea => {
+        let val = textarea.value;
+        if (isChecked) {
+            if (!val.startsWith(prefix)) {
+                textarea.value = prefix + val;
+            }
+        } else {
+            if (val.startsWith(prefix)) {
+                textarea.value = val.substring(prefix.length);
+            }
+        }
+    });
+  });
 
   const renderTable = (reports: Report[], tbody: HTMLElement, section: HTMLElement, table: HTMLElement) => {
       tbody.innerHTML = '';

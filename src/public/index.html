@@ -231,7 +231,11 @@
         <div class="modal-body" id="aria-preview-body" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 2rem;">
           <!-- dynamic content will be injected here -->
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+            <input type="checkbox" id="aria-deep-equal-checkbox" checked>
+            <span>Deep Equal</span>
+          </label>
           <button id="close-aria-preview-footer-btn" class="btn secondary-btn">Back</button>
         </div>
       </div>

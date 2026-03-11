@@ -23,6 +23,7 @@
 - **⭐ Test Presets:** Save your favorite project selections as "Presets" to instantly recall specific test groups with one click.
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
+- **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
@@ -92,6 +93,17 @@ Having extracted traces as raw JSON/network files allows AI agents to easily rea
 
 - Click **Extract** next to any report to automatically unzip its trace files on the host machine.
 - Click **Extract All Traces** to bulk-process your entire workspace. _The extraction is idempotent and will quickly skip already-extracted runs._
+
+---
+
+## 📸 Aria Snapshot Fixer
+
+Reviewing failed `.yml` aria snapshots in Playwright often involves squinting at terminal outputs and manually copying strings or rerunning test with the hope it will capture exact same place. The Dashboard streamlines this entirely:
+
+- **Intelligent Error Parsing:** Automatically parses the specific `toMatchAriaSnapshot` failures from the Base64 Playwright HTML report. It reads the Playwright evaluation engine's execution call log to extract the literal DOM structure exactly as the browser saw it, bypassing truncated visual diffs entirely.
+- **Full-Screen Preview:** Click **Fix Snapshots** on any current report to open a full screen code-review dialog displaying the exact filename expected and a large textarea containing the raw new snapshot.
+- **Deep Equal Toggle:** A convenience checkbox allows you to instantly prepend `- /children: deep-equal` to newly proposed snapshots.
+- **One-Click Apply:** Clicking **Apply Fix** will automatically resolve the snapshot path in your workspace, generate any missing directories, and instantly write the updated `.yml` file so you can re-run your tests immediately.
 
 ---
 

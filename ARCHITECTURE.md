@@ -19,6 +19,18 @@ The application enforces a strictly zero-configuration data model out of the box
 - **WAL Mode:** The database is initialized with `journal_mode = WAL` (Write-Ahead Logging) to ensure high concurrent read performance when the frontend dashboard aggressively polls.
 - **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, as well as the serialized JSON payload for user-selected Test Runner Options.
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
+- **`reports` Table:** Persists metadata for all scanned reports. It uses the report folder name as the primary `id`. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
+
+---
+
+## 📊 Report Metadata & Syncing
+
+The application does not use a "dumb" filesystem scan. It implements a differential sync between the disk and the database.
+
+- **Sync During Scan:** Every time `scanDirectory` is called (during dashboard load or refresh), the system builds a list of reports from the disk and immediately `upserts` them into the `reports` table.
+- **Metadata Persistence:** User-entered metadata is stored only in the database. During the sync, the system merges the existing DB metadata back into the scanned objects. This ensures that manually added info like 'UAT NA' remains attached to the report even if the server restarts.
+- **Archiving Logic:** When a report is moved to the Archive, the backend physically renames the folder. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move.
+- **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the scan to keep the database and UI in perfect alignment.
 
 ---
 

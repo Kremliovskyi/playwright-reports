@@ -27,7 +27,9 @@
 - **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
-- **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI, backed by a persistent **SQLite** database (`app.db`).
+- **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
+- **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
+- **🗃️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
 - **🔌 Zero Local Dependencies:** Serve reports reliably via PM2 without needing Playwright installed globally.
 
 ---
@@ -135,9 +137,20 @@ If you started the server with `npm start`, it runs in the background using PM2.
 | ----------------- | ---------------------------------------------------------- |
 | `npx pm2 status`  | Check the status of the background process                 |
 | `npm run logs`    | View the live console output of the server                 |
-| `npm run restart` | Restart the dashboard (useful if you manually edit config) |
+| `npm run restart` | Restart the dashboard (useful if you manually edit code)   |
 | `npm run stop`    | Stop the server from running                               |
 | `npm run delete`  | Remove the server from PM2 entirely                        |
+
+---
+
+## 📝 Report Metadata & Persistence
+
+The dashboard now automatically tracks every report in its persistent SQLite database.
+
+- **Automated Sync:** Every time you refresh the dashboard, it performs a differential sync between your filesystem and the database.
+- **Inline Editing:** Just click into the **Metadata** column on any report row to add or edit custom info.
+- **Date Tracking:** Creation dates are captured directly from the filesystem's `birthtime` and persisted, ensuring consistent ordering.
+- **Archive Integrity:** When you move a report to the archive, its metadata and historical record are automatically updated in the database to reflect the new path.
 
 ### Auto-start on Reboot
 

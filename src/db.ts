@@ -27,6 +27,13 @@ export interface Preset {
   projects: string[];
 }
 
+export interface ReportRecord {
+  id: string;
+  dateCreated: string;
+  metadata: string;
+  reportPath: string;
+}
+
 const DEFAULT_RUNNER_OPTIONS = {
   headed: false,
   ui: false,
@@ -67,6 +74,12 @@ db.exec(`
     configId TEXT NOT NULL DEFAULT 'default',
     name TEXT NOT NULL,
     projects TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    dateCreated TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '',
+    reportPath TEXT NOT NULL DEFAULT ''
   );
 `);
 
@@ -114,4 +127,35 @@ export const addPreset = (preset: Preset): void => {
 
 export const deletePreset = (id: string): void => {
   db.prepare('DELETE FROM presets WHERE id = ?').run(id);
+};
+
+// --- Report Operations ---
+export const upsertReport = (report: ReportRecord): void => {
+  db.prepare(
+    `INSERT INTO reports (id, dateCreated, metadata, reportPath)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       dateCreated = excluded.dateCreated,
+       reportPath = excluded.reportPath`
+  ).run(report.id, report.dateCreated, report.metadata, report.reportPath);
+};
+
+export const getReport = (id: string): ReportRecord | undefined => {
+  return db.prepare('SELECT * FROM reports WHERE id = ?').get(id) as ReportRecord | undefined;
+};
+
+export const getAllReports = (): ReportRecord[] => {
+  return db.prepare('SELECT * FROM reports').all() as ReportRecord[];
+};
+
+export const updateReportMetadata = (id: string, metadata: string): void => {
+  db.prepare('UPDATE reports SET metadata = ? WHERE id = ?').run(metadata, id);
+};
+
+export const deleteReportRecord = (id: string): void => {
+  db.prepare('DELETE FROM reports WHERE id = ?').run(id);
+};
+
+export const updateReportId = (oldId: string, newId: string, newPath: string): void => {
+  db.prepare('UPDATE reports SET id = ?, reportPath = ? WHERE id = ?').run(newId, newPath, oldId);
 };

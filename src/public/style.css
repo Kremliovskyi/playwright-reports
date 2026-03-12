@@ -80,7 +80,7 @@ p {
 }
 
 .header-content {
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: var(--space-3) var(--space-4);
   display: flex;
@@ -372,7 +372,7 @@ p {
 /* Main Content */
 .main-content {
   flex: 1;
-  max-width: 1200px;
+  max-width: 1600px;
   width: 100%;
   margin: 0 auto;
   padding: var(--space-5) var(--space-4);
@@ -433,7 +433,7 @@ p {
 }
 
 .col-date {
-  width: 35%;
+  width: 20%;
 }
 
 .date-wrapper {
@@ -450,7 +450,7 @@ p {
 }
 
 .col-origin {
-  width: 45%;
+  width: 18%;
 }
 
 .origin-label {
@@ -464,8 +464,42 @@ p {
 }
 
 .col-action {
-  width: 20%;
+  width: 42%;
   text-align: right;
+}
+
+.col-metadata {
+  width: 20%;
+}
+
+.metadata-input {
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.metadata-input:hover {
+  border-color: var(--border-color);
+  background: var(--bg-color);
+}
+
+.metadata-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--bg-color);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.metadata-input::placeholder {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .reports-table th:last-child {

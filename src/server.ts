@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -132,9 +132,10 @@ interface ReportInfo {
   path: string;
   createdAt: Date;
   modifiedAt: Date;
+  metadata: string;
 }
 
-// Helper to scan a directory for valid reports
+// Helper to scan a directory for valid reports and sync with DB
 const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   if (!dirPath || !fs.existsSync(dirPath)) {
     return [];
@@ -148,7 +149,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
     return [];
   }
   
-  return entries
+  const reports = entries
     .filter(dirent => dirent.isDirectory())
     .map(dirent => {
       const folderPath = path.join(dirPath, dirent.name);
@@ -165,21 +166,48 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           const indexContent = fs.readFileSync(indexPath, 'utf8');
           if (!indexContent.includes('<title>Playwright Test Report</title>')) return null;
 
+          const reportPath = `/reports/${prefix}/${dirent.name}/index.html`;
+          const reportOrigin = dirent.name.replace(/[-_]/g, ' ');
+
+          // Look up existing DB record to preserve metadata
+          const existing = getReport(dirent.name);
+          const metadata = existing?.metadata || '';
+
+          // Upsert into DB (preserves metadata via ON CONFLICT)
+          upsertReport({
+            id: dirent.name,
+            dateCreated: stat.birthtime.toISOString(),
+            metadata,
+            reportPath
+          });
+
           return {
             id: dirent.name,
-            name: dirent.name.replace(/[-_]/g, ' '), // Prettify folder name
-            path: `/reports/${prefix}/${dirent.name}/index.html`,
+            name: reportOrigin,
+            path: reportPath,
             createdAt: stat.birthtime,
-            modifiedAt: stat.mtime
+            modifiedAt: stat.mtime,
+            metadata
           };
       } catch (err) {
           // If permission denied or other read error, skip safely
           return null;
       }
     })
-    .filter((item): item is ReportInfo => item !== null) // Remove invalid folders and type guard
-    // Sort by modified date descending (newest first)
+    .filter((item): item is ReportInfo => item !== null)
     .sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+  // Clean up stale DB entries: remove records for reports no longer on disk
+  const diskIds = new Set(reports.map(r => r.id));
+  const allDbReports = getAllReports();
+  for (const dbReport of allDbReports) {
+    // Only clean up records that belong to this prefix (check reportPath)
+    if (dbReport.reportPath.startsWith(`/reports/${prefix}/`) && !diskIds.has(dbReport.id)) {
+      deleteReportRecord(dbReport.id);
+    }
+  }
+
+  return reports;
 };
 
 // API Endpoint to get the list of available reports
@@ -412,6 +440,10 @@ app.post('/api/archive', (req: Request, res: Response): any => {
       }
     }
 
+    // Update DB record: transfer from old folder name to new archived folder name
+    const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
+    updateReportId(folderName, uniqueArchivedName, newReportPath);
+
     res.json({ success: true, newName: uniqueArchivedName });
     
   } catch (error: any) {
@@ -450,11 +482,32 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     // Delete the directory and its contents
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
+    // Remove DB record
+    deleteReportRecord(folderName);
+
     res.json({ success: true });
     
   } catch (error: any) {
     console.error("Delete error:", error);
     res.status(500).json({ error: "Failed to delete report: " + error.message });
+  }
+});
+
+// Update report metadata endpoint
+app.post('/api/report-metadata', (req: Request, res: Response): any => {
+  const { reportId, metadata } = req.body;
+  if (!reportId) return res.status(400).json({ error: "reportId is required" });
+  if (metadata === undefined) return res.status(400).json({ error: "metadata is required" });
+
+  try {
+    const existing = getReport(reportId);
+    if (!existing) return res.status(404).json({ error: "Report not found in database" });
+
+    updateReportMetadata(reportId, metadata);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error("Metadata update error:", error);
+    res.status(500).json({ error: "Failed to update metadata: " + error.message });
   }
 });
 

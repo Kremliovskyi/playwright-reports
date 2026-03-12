@@ -3,6 +3,7 @@ interface Report {
     path: string;
     name: string;
     createdAt: string;
+    metadata: string;
 }
 
 interface ReportsResponse {
@@ -143,6 +144,9 @@ document.addEventListener('DOMContentLoaded', () => {
           <td class="col-origin">
               <span class="origin-label">${report.name}</span>
           </td>
+          <td class="col-metadata">
+              <input type="text" class="metadata-input" value="${(report.metadata || '').replace(/"/g, '&quot;')}" placeholder="Add metadata..." data-report-id="${report.id}" />
+          </td>
           <td class="col-action">
               <div style="display: flex; gap: 8px;">
                   <button class="btn btn-extract" aria-label="Extract Traces">
@@ -197,6 +201,36 @@ document.addEventListener('DOMContentLoaded', () => {
           deleteBtn.addEventListener('click', (e) => {
               e.stopPropagation();
               openDeleteModal(report.path, deleteBtn.dataset.date || '');
+          });
+      }
+
+      // Wire up metadata input
+      const metaInput = tr.querySelector('.metadata-input') as HTMLInputElement;
+      if (metaInput) {
+          metaInput.addEventListener('click', (e) => e.stopPropagation());
+          
+          const saveMetadata = async () => {
+              const newVal = metaInput.value.trim();
+              try {
+                  const res = await fetch('/api/report-metadata', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ reportId: report.id, metadata: newVal })
+                  });
+                  if (!res.ok) {
+                      const d = await res.json();
+                      console.error('Failed to save metadata:', d.error);
+                  }
+              } catch (err) {
+                  console.error('Failed to save metadata:', err);
+              }
+          };
+
+          metaInput.addEventListener('blur', saveMetadata);
+          metaInput.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') {
+                  metaInput.blur();
+              }
           });
       }
 

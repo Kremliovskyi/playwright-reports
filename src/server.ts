@@ -798,8 +798,7 @@ app.post('/api/fix-aria-snapshot', (req: Request, res: Response): any => {
         
         fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
         
-        const finalContent = newContent.endsWith('\n') ? newContent : newContent + '\n';
-        fs.writeFileSync(absolutePath, finalContent, 'utf8');
+        fs.writeFileSync(absolutePath, newContent, 'utf8');
         res.json({ success: true, message: "Aria snapshot updated successfully." });
     } catch(error: any) {
         console.error("Failed to fix aria snapshot:", error);

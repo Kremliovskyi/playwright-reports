@@ -109,5 +109,5 @@ When a test has *multiple* `toMatchAriaSnapshot` assertions, identifying *which*
 When developers fix aria snapshots, it's essential to understand exactly what changed and frequently they want to enforce `deep-equal` checking across the entire body.
 
 - **Diff View:** Instead of presenting users a raw editable textarea containing the new snapshot, the frontend computes a live Longest Common Subsequence (LCS) diff between the expected snapshot on disk and the new snapshot in the error. Removed lines are highlighted green, and added lines are highlighted red to exactly match the terminal and Playwright HTML report conventions.
-- **Deep Equal Checkbox:** The Preview UI Modal includes a "Deep Equal" checkbox in the footer.
+- **Deep Equal Checkbox:** The Preview UI Modal includes a "Deep Equal" checkbox in the footer. It is `checked` by default.
 - **Dynamic Processing:** The `app.ts` logic detects this checkbox and dynamically prepends `- /children: deep-equal\n` to the top of the diff output. It executes this *without* triggering diff highlighting (so it appears as regular text), ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.

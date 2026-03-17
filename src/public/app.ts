@@ -15,6 +15,62 @@ interface ReportsResponse {
     };
 }
 
+// Simple Diffing Logic
+interface DiffLine {
+    type: 'added' | 'removed' | 'unchanged';
+    text: string;
+}
+
+function computeDiff(oldStr: string, newStr: string): DiffLine[] {
+    const oldLines = oldStr.split('\n');
+    const newLines = newStr.split('\n');
+
+    const prefix = '- /children: deep-equal';
+    const cleanOldLines = oldLines[0] === prefix ? oldLines.slice(1) : oldLines;
+    const cleanNewLines = newLines[0] === prefix ? newLines.slice(1) : newLines;
+
+    // A basic Longest Common Subsequence (LCS) algorithm for diffing
+    const m = cleanOldLines.length;
+    const n = cleanNewLines.length;
+    const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (cleanOldLines[i - 1] === cleanNewLines[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+
+    const diff: DiffLine[] = [];
+    let i = m, j = n;
+    while (i > 0 && j > 0) {
+        if (cleanOldLines[i - 1] === cleanNewLines[j - 1]) {
+            diff.unshift({ type: 'unchanged', text: cleanOldLines[i - 1] });
+            i--;
+            j--;
+        } else if (dp[i - 1][j] > dp[i][j - 1]) {
+            diff.unshift({ type: 'removed', text: cleanOldLines[i - 1] });
+            i--;
+        } else {
+            diff.unshift({ type: 'added', text: cleanNewLines[j - 1] });
+            j--;
+        }
+    }
+    while (i > 0) {
+        diff.unshift({ type: 'removed', text: cleanOldLines[i - 1] });
+        i--;
+    }
+    while (j > 0) {
+        diff.unshift({ type: 'added', text: cleanNewLines[j - 1] });
+        j--;
+    }
+    
+    return diff;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
   const currentSection = document.getElementById('current-section') as HTMLElement;
@@ -377,7 +433,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
-  const openAriaPreviewModal = (failure: any) => {
+  let openAriaPreviewModal = (failure: any) => {
       ariaPreviewSubtitle.textContent = failure.testTitle;
       ariaPreviewBody.innerHTML = '';
       
@@ -386,6 +442,16 @@ document.addEventListener('DOMContentLoaded', () => {
          block.className = 'aria-snapshot-block';
          
          const expectedPathName = snap.expectedPath.split('/').pop() || snap.expectedPath;
+         
+         const rawNewSnapshot = snap.newSnapshot || '';
+         const rawExpectedSnapshot = snap.expectedSnapshot || '';
+         const prefixStr = '- /children: deep-equal\n';
+         
+         // Note: We strip existing prefixes inside computeDiff automatically, but to be clean:
+         const newContentBase = rawNewSnapshot.startsWith(prefixStr) ? rawNewSnapshot.substring(prefixStr.length) : rawNewSnapshot;
+         
+         block.dataset.rawNewSnapshot = newContentBase;
+         block.dataset.rawExpectedSnapshot = rawExpectedSnapshot;
          
          block.innerHTML = `
             <div class="aria-snapshot-header">
@@ -398,19 +464,14 @@ document.addEventListener('DOMContentLoaded', () => {
                    Apply Fix
                 </button>
             </div>
-            <textarea class="aria-textarea" id="aria-textarea-${index}"></textarea>
+            <div class="aria-diff-view" id="aria-diff-${index}"></div>
          `;
          ariaPreviewBody.appendChild(block);
          
-         const textarea = document.getElementById(`aria-textarea-${index}`) as HTMLTextAreaElement;
-         textarea.placeholder = "New Snapshot...";
-         const defaultPrefix = ariaDeepEqualCheckbox.checked ? '- /children: deep-equal\n' : '';
-         textarea.value = defaultPrefix + snap.newSnapshot;
-         
          const applyBtn = block.querySelector('.apply-aria-fix-btn') as HTMLButtonElement;
          applyBtn.addEventListener('click', async () => {
-             const tx = document.getElementById(`aria-textarea-${index}`) as HTMLTextAreaElement;
-             const newContent = tx.value;
+             const baseStr = block.dataset.rawNewSnapshot || '';
+             const newContent = ariaDeepEqualCheckbox.checked ? prefixStr + baseStr : baseStr;
              const originalHtml = applyBtn.innerHTML;
              
              applyBtn.disabled = true;
@@ -455,24 +516,40 @@ document.addEventListener('DOMContentLoaded', () => {
   closeAriaPreviewBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
   closeAriaPreviewFooterBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
 
-  ariaDeepEqualCheckbox.addEventListener('change', () => {
-    const textareas = document.querySelectorAll('.aria-textarea') as NodeListOf<HTMLTextAreaElement>;
-    const isChecked = ariaDeepEqualCheckbox.checked;
-    const prefix = '- /children: deep-equal\n';
-    
-    textareas.forEach(textarea => {
-        let val = textarea.value;
-        if (isChecked) {
-            if (!val.startsWith(prefix)) {
-                textarea.value = prefix + val;
-            }
-        } else {
-            if (val.startsWith(prefix)) {
-                textarea.value = val.substring(prefix.length);
-            }
-        }
-    });
-  });
+  const renderAllDiffs = () => {
+      const blocks = document.querySelectorAll('.aria-snapshot-block') as NodeListOf<HTMLElement>;
+      const isChecked = ariaDeepEqualCheckbox.checked;
+      
+      blocks.forEach((block, index) => {
+          const rawExpected = block.dataset.rawExpectedSnapshot || '';
+          const rawNew = block.dataset.rawNewSnapshot || '';
+          const diffContainer = document.getElementById(`aria-diff-${index}`);
+          if (!diffContainer) return;
+          
+          const diffLines = computeDiff(rawExpected, rawNew);
+          let html = '';
+          
+          if (isChecked) {
+              html += `<div class="diff-line diff-unchanged">- /children: deep-equal</div>`;
+          }
+          
+          diffLines.forEach(line => {
+              const escapedText = line.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+              html += `<div class="diff-line diff-${line.type}">${escapedText || ' '}</div>`;
+          });
+          
+          diffContainer.innerHTML = html;
+      });
+  };
+
+  // Replace openAriaPreviewModal with a wrapped version that calls renderAllDiffs
+  const _openAriaPreviewModalOrig = openAriaPreviewModal;
+  openAriaPreviewModal = (failure: any) => {
+      _openAriaPreviewModalOrig(failure);
+      renderAllDiffs();
+  };
+  
+  ariaDeepEqualCheckbox.addEventListener('change', renderAllDiffs);
 
   const renderTable = (reports: Report[], tbody: HTMLElement, section: HTMLElement, table: HTMLElement) => {
       tbody.innerHTML = '';

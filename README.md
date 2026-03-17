@@ -1,7 +1,7 @@
 <div align="center">
   <img src="https://playwright.dev/img/playwright-logo.svg" alt="Playwright Logo" width="100"/>
   <h1>Playwright Test Reports Central</h1>
-  <p><em>A centralized, dependency-free dashboard to run, view, archive, and extract Playwright tests.</em></p>
+  <p><em>A centralized dashboard to run, view, archive, and extract Playwright tests.</em></p>
 
 [![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=node.js&logoColor=white)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)]()
@@ -30,7 +30,6 @@
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
 - **🗃️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
-- **🔌 Zero Local Dependencies:** Serve reports reliably via PM2 without needing Playwright installed globally.
 
 ---
 
@@ -40,6 +39,8 @@
 
 - **Node.js**: Installed on your machine (download from [nodejs.org](https://nodejs.org/)).
 - **PM2**: (Optional but recommended) for running the server in the background. Install globally via `npm install -g pm2`.
+- **Playwright**: This dashboard requires Playwright to be installed in your project to run tests and resolve configurations.
+- **jiti**: Used internally to resolve your Playwright configuration files on the fly.
 
 ### Installation
 
@@ -102,10 +103,10 @@ Having extracted traces as raw JSON/network files allows AI agents to easily rea
 
 Reviewing failed `.yml` aria snapshots in Playwright often involves squinting at terminal outputs and manually copying strings or rerunning test with the hope it will capture exact same place. The Dashboard streamlines this entirely:
 
-- **Intelligent Error Parsing:** Automatically parses the specific `toMatchAriaSnapshot` failures from the Base64 Playwright HTML report. It reads the Playwright evaluation engine's execution call log to extract the literal DOM structure exactly as the browser saw it, bypassing truncated visual diffs entirely.
-- **Full-Screen Preview:** Click **Fix Snapshots** on any current report to open a full screen code-review dialog displaying the exact filename expected and a large textarea containing the raw new snapshot.
-- **Deep Equal Toggle:** A convenience checkbox allows you to instantly prepend `- /children: deep-equal` to newly proposed snapshots.
-- **One-Click Apply:** Clicking **Apply Fix** will automatically resolve the snapshot path in your workspace, generate any missing directories, and instantly write the updated `.yml` file so you can re-run your tests immediately.
+- **Intelligent Error Parsing:** Automatically parses the specific `toMatchAriaSnapshot` failures from the Base64 Playwright HTML report. It reads the Playwright evaluation engine's execution call log and codeframes to extract the exact expectations and reconstruct the DOM structures as the browser saw them.
+- **Full-Screen Preview:** Click **Fix Snapshots** on any current report to open a full screen code-review dialog displaying the exact filename expected. Instead of squinting at a textarea, it presents an elegant, syntax-highlighted diff view distinguishing removed (expected) and added (new) lines.
+- **Deep Equal Toggle:** A convenience checkbox allows you to seamlessly prepend `- /children: deep-equal` to newly proposed snapshots, directly updating the diff view without refreshing.
+- **One-Click Apply:** Clicking **Apply Fix** will accurately resolve the snapshot path in your workspace (even accurately matching content if multiple `.yml` assertions exist in a single test), generate any missing directories, and instantly write the updated `.yml` file so you can re-run your tests immediately.
 
 ---
 

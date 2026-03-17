@@ -642,7 +642,7 @@ p {
   border-radius: var(--radius-sm);
 }
 
-.aria-textarea {
+.aria-diff-view {
   width: 100%;
   min-height: 250px;
   background: var(--bg-surface);
@@ -652,14 +652,28 @@ p {
   padding: var(--space-3);
   font-family: monospace;
   font-size: 0.85rem;
-  line-height: 1.4;
-  resize: vertical;
+  line-height: 1.5;
+  overflow-x: auto;
 }
 
-.aria-textarea:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+.diff-line {
+  display: block;
+  white-space: pre;
+}
+
+.diff-added {
+  background-color: rgba(248, 81, 73, 0.15);
+  color: #ff7b72;
+}
+
+.diff-removed {
+  background-color: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+  text-decoration: line-through;
+}
+
+.diff-unchanged {
+  color: var(--text-primary);
 }
 
 /* Custom Webkit Scrollbars for Dark Theme */

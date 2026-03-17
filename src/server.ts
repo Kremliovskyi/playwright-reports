@@ -565,7 +565,7 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
         if (!test.results) continue;
         
         let foundErrors = false;
-        const snapshotsToFix: { expectedPath: string, newSnapshot: string }[] = [];
+        const snapshotsToFix: { expectedPath: string, expectedSnapshot?: string, newSnapshot: string }[] = [];
         
         for (const result of test.results) {
           for (const err of result.errors || []) {
@@ -746,9 +746,19 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
                     expectedPath = 'UNRESOLVED_PATH.yml';
                 }
 
+                let expectedSnapshotText = '';
+                if (expectedPath && expectedPath !== 'UNRESOLVED_PATH.yml') {
+                    try {
+                        expectedSnapshotText = fs.readFileSync(path.join(appConfig.projectPath!, expectedPath), 'utf8');
+                    } catch (e) {
+                        console.error('Failed to read expected snapshot from disk', e);
+                    }
+                }
+
                 if (!snapshotsToFix.some(s => s.newSnapshot === newSnapshot)) {
                     snapshotsToFix.push({
                        expectedPath,
+                       expectedSnapshot: expectedSnapshotText,
                        newSnapshot
                     });
                 }

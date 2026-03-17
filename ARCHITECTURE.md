@@ -29,8 +29,9 @@ The application does not use a "dumb" filesystem scan. It implements a different
 
 - **Sync During Scan:** Every time `scanDirectory` is called (during dashboard load or refresh), the system builds a list of reports from the disk and immediately `upserts` them into the `reports` table.
 - **Metadata Persistence:** User-entered metadata is stored only in the database. During the sync, the system merges the existing DB metadata back into the scanned objects. This ensures that manually added info like 'UAT NA' remains attached to the report even if the server restarts.
-- **Archiving Logic:** When a report is moved to the Archive, the backend physically renames the folder. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move.
-- **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the scan to keep the database and UI in perfect alignment.
+- **Archiving Logic:** When a report is moved to the Archive via `/api/archive-report`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move.
+- **Deleting Logic:** When a user permanently deletes a report via `/api/delete-report`, the backend uses `fs.rm` with `{ recursive: true, force: true }` to completely wipe the report from disk.
+- **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the `scanDirectory` sync to keep the database and UI in perfect alignment.
 
 ---
 
@@ -57,9 +58,11 @@ Playwright generates static HTML reports. Instead of trying to parse pure HTML t
 
 ## 🛡️ Playwright Config Resolution (`jiti`)
 
-To reliably know where a given test project's aria snapshots are stored, the backend needs to read the user's `playwright.config.ts`.
+To reliably know where a given test project's aria snapshots are stored, and to execute tests accurately, **the dashboard requires Playwright to be installed in the underlying project workspace.**
+
+Furthermore, the backend needs to parse the user's `playwright.config.ts`.
 - **The Problem:** Node cannot natively `require()` a TypeScript file without compilation.
-- **The Solution:** We use `jiti` to dynamically transpile and import the config on the fly.
+- **The Solution:** We use `jiti` to dynamically transpile and import the config on the fly. This is a crucial internal dependency for resolving workspace variables.
 - **Aria Path Template:** We specifically read `config.expect?.toMatchAriaSnapshot?.pathTemplate` to determine the exact folder structure Playwright expects for `.yml` snapshot files.
 
 ---
@@ -101,9 +104,10 @@ When a test has *multiple* `toMatchAriaSnapshot` assertions, identifying *which*
 
 ---
 
-## 💅 Frontend "Deep Equal" UI Toggle
+## 💅 Frontend "Deep Equal" UI & Diff View
 
-When developers fix aria snapshots, they frequently want to enforce `deep-equal` checking across the entire body.
-- The Preview UI Modal includes a "Deep Equal" checkbox in the footer.
-- It is `checked` by default.
-- `app.ts` contains logic that dynamically prepends `- /children: deep-equal\n` to the top of all textareas when checked, and precisely removes it when unchecked, ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.
+When developers fix aria snapshots, it's essential to understand exactly what changed and frequently they want to enforce `deep-equal` checking across the entire body.
+
+- **Diff View:** Instead of presenting users a raw editable textarea containing the new snapshot, the frontend computes a live Longest Common Subsequence (LCS) diff between the expected snapshot on disk and the new snapshot in the error. Removed lines are highlighted green, and added lines are highlighted red to exactly match the terminal and Playwright HTML report conventions.
+- **Deep Equal Checkbox:** The Preview UI Modal includes a "Deep Equal" checkbox in the footer.
+- **Dynamic Processing:** The `app.ts` logic detects this checkbox and dynamically prepends `- /children: deep-equal\n` to the top of the diff output. It executes this *without* triggering diff highlighting (so it appears as regular text), ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.

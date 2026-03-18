@@ -749,7 +749,8 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
                 let expectedSnapshotText = '';
                 if (expectedPath && expectedPath !== 'UNRESOLVED_PATH.yml') {
                     try {
-                        expectedSnapshotText = fs.readFileSync(path.join(appConfig.projectPath!, expectedPath), 'utf8');
+                        expectedSnapshotText = fs.readFileSync(path.join(appConfig.projectPath!, expectedPath), 'utf8')
+                            .replace(/\r\n/g, '\n').replace(/\r/g, '\n');
                     } catch (e) {
                         console.error('Failed to read expected snapshot from disk', e);
                     }

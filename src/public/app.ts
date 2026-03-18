@@ -22,12 +22,13 @@ interface DiffLine {
 }
 
 function normalizeIndent(str: string): string {
-    const lines = str.split('\n');
+    const normalized = str.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n');
     const indents = lines
         .filter(l => l.length > 0 && l.trimStart().length < l.length)
         .map(l => l.length - l.trimStart().length);
     const minIndent = indents.length > 0 ? Math.min(...indents) : 0;
-    if (minIndent === 0 || minIndent === 2) return str;
+    if (minIndent === 0 || minIndent === 2) return normalized;
     return lines.map(l => {
         if (l.length === 0) return l;
         const spaces = l.length - l.trimStart().length;
@@ -37,8 +38,8 @@ function normalizeIndent(str: string): string {
 }
 
 function computeDiff(oldStr: string, newStr: string): DiffLine[] {
-    const oldLines = oldStr.split('\n');
-    const newLines = newStr.split('\n');
+    const oldLines = oldStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    const newLines = newStr.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
 
     const prefix = '- /children: deep-equal';
     const cleanOldLines = oldLines[0] === prefix ? oldLines.slice(1) : oldLines;

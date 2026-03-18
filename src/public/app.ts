@@ -21,6 +21,21 @@ interface DiffLine {
     text: string;
 }
 
+function normalizeIndent(str: string): string {
+    const lines = str.split('\n');
+    const indents = lines
+        .filter(l => l.length > 0 && l.trimStart().length < l.length)
+        .map(l => l.length - l.trimStart().length);
+    const minIndent = indents.length > 0 ? Math.min(...indents) : 0;
+    if (minIndent === 0 || minIndent === 2) return str;
+    return lines.map(l => {
+        if (l.length === 0) return l;
+        const spaces = l.length - l.trimStart().length;
+        const level = Math.floor(spaces / minIndent);
+        return ' '.repeat(level * 2) + l.trimStart();
+    }).join('\n');
+}
+
 function computeDiff(oldStr: string, newStr: string): DiffLine[] {
     const oldLines = oldStr.split('\n');
     const newLines = newStr.split('\n');
@@ -526,7 +541,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const diffContainer = document.getElementById(`aria-diff-${index}`);
           if (!diffContainer) return;
           
-          const diffLines = computeDiff(rawExpected, rawNew);
+          const diffLines = computeDiff(normalizeIndent(rawExpected), normalizeIndent(rawNew));
           let html = '';
           
           if (isChecked) {

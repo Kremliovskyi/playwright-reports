@@ -167,7 +167,6 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           if (!indexContent.includes('<title>Playwright Test Report</title>')) return null;
 
           const reportPath = `/reports/${prefix}/${dirent.name}/index.html`;
-          const reportOrigin = dirent.name.replace(/[-_]/g, ' ');
 
           // Look up existing DB record to preserve metadata
           const existing = getReport(dirent.name);
@@ -183,7 +182,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
 
           return {
             id: dirent.name,
-            name: reportOrigin,
+            name: dirent.name,
             path: reportPath,
             createdAt: stat.birthtime,
             modifiedAt: stat.mtime,
@@ -508,6 +507,45 @@ app.post('/api/report-metadata', (req: Request, res: Response): any => {
   } catch (error: any) {
     console.error("Metadata update error:", error);
     res.status(500).json({ error: "Failed to update metadata: " + error.message });
+  }
+});
+
+// Rename report endpoint (renames folder on disk + updates DB id/path)
+app.post('/api/report-rename', (req: Request, res: Response): any => {
+  const { reportId, newName } = req.body;
+  if (!reportId) return res.status(400).json({ error: "reportId is required" });
+  if (!newName || typeof newName !== 'string') return res.status(400).json({ error: "newName is required" });
+
+  const trimmed = newName.trim();
+  if (!trimmed) return res.status(400).json({ error: "newName cannot be empty" });
+  if (/[/\\:*?"<>|\x00]/.test(trimmed)) return res.status(400).json({ error: "newName contains invalid characters" });
+  if (trimmed === '.' || trimmed === '..') return res.status(400).json({ error: "newName is not a valid folder name" });
+
+  try {
+    const existing = getReport(reportId);
+    if (!existing) return res.status(404).json({ error: "Report not found in database" });
+    if (!existing.reportPath.startsWith('/reports/current/')) return res.status(400).json({ error: "Only current reports can be renamed" });
+    if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory is not configured" });
+
+    const oldFolder = path.resolve(appConfig.currentPath, reportId);
+    const newFolder = path.resolve(appConfig.currentPath, trimmed);
+
+    // Path traversal guard
+    const base = path.resolve(appConfig.currentPath);
+    if (!oldFolder.startsWith(base + path.sep) && oldFolder !== base) return res.status(400).json({ error: "Invalid report path" });
+    if (!newFolder.startsWith(base + path.sep) && newFolder !== base) return res.status(400).json({ error: "Invalid new name" });
+
+    if (!fs.existsSync(oldFolder)) return res.status(404).json({ error: "Report folder not found on disk" });
+    if (fs.existsSync(newFolder)) return res.status(409).json({ error: `A report named "${trimmed}" already exists` });
+
+    fs.renameSync(oldFolder, newFolder);
+    const newReportPath = `/reports/current/${trimmed}/index.html`;
+    updateReportId(reportId, trimmed, newReportPath);
+
+    res.json({ success: true, newId: trimmed, newPath: newReportPath });
+  } catch (error: any) {
+    console.error("Rename error:", error);
+    res.status(500).json({ error: "Failed to rename report: " + error.message });
   }
 });
 

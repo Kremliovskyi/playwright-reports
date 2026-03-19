@@ -27,6 +27,7 @@
 - **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
+- **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
 - **🗃️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.

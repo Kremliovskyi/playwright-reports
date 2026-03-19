@@ -502,6 +502,19 @@ p {
   font-style: italic;
 }
 
+.metadata-input.input-error {
+  border-color: #f85149;
+  box-shadow: 0 0 0 2px rgba(248, 81, 73, 0.2);
+}
+
+.origin-error {
+  display: block;
+  color: #f85149;
+  font-size: 0.75rem;
+  margin-top: 2px;
+  min-height: 0;
+}
+
 .reports-table th:last-child {
   text-align: left;
   /* Align the header exactly with the start of the button text 

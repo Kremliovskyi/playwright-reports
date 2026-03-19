@@ -214,7 +214,10 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
           </td>
           <td class="col-origin">
-              <span class="origin-label">${report.name}</span>
+              ${isCurrent
+                ? `<input type="text" class="origin-input metadata-input" value="${(report.id || '').replace(/"/g, '&quot;')}" placeholder="Rename report..." data-report-id="${report.id}" /><span class="origin-error"></span>`
+                : `<span class="origin-label">${report.name}</span>`
+              }
           </td>
           <td class="col-metadata">
               <input type="text" class="metadata-input" value="${(report.metadata || '').replace(/"/g, '&quot;')}" placeholder="Add metadata..." data-report-id="${report.id}" />
@@ -276,8 +279,87 @@ document.addEventListener('DOMContentLoaded', () => {
           });
       }
 
+      // Wire up origin rename input (current reports only)
+      if (isCurrent) {
+          const originInput = tr.querySelector('.origin-input') as HTMLInputElement;
+          const originError = tr.querySelector('.origin-error') as HTMLSpanElement;
+          if (originInput && originError) {
+              let originalOriginValue = originInput.value;
+              const FORBIDDEN_ORIGIN = /[\/\\:*?"<>|\x00]/;
+
+              const validateOrigin = (val: string): string => {
+                  if (!val.trim()) return 'Name cannot be empty';
+                  if (FORBIDDEN_ORIGIN.test(val)) return 'Characters not allowed: / \\ : * ? " < > |';
+                  if (val.trim() === '.' || val.trim() === '..') return 'Name is not valid';
+                  return '';
+              };
+
+              originInput.addEventListener('click', (e) => e.stopPropagation());
+
+              originInput.addEventListener('input', () => {
+                  const err = validateOrigin(originInput.value);
+                  originError.textContent = err;
+                  originInput.classList.toggle('input-error', !!err);
+              });
+
+              const saveOriginName = async () => {
+                  const newVal = originInput.value.trim();
+                  const err = validateOrigin(newVal);
+                  if (err) {
+                      originError.textContent = err;
+                      originInput.classList.add('input-error');
+                      return;
+                  }
+                  if (newVal === originalOriginValue) return;
+                  try {
+                      const res = await fetch('/api/report-rename', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ reportId: report.id, newName: newVal })
+                      });
+                      const data = await res.json();
+                      if (!res.ok) {
+                          originError.textContent = data.error || 'Rename failed';
+                          originInput.classList.add('input-error');
+                          originInput.value = originalOriginValue;
+                          return;
+                      }
+                      // Update local state
+                      report.id = data.newId;
+                      report.name = newVal;
+                      report.path = data.newPath;
+                      originalOriginValue = newVal;
+                      originInput.dataset.reportId = data.newId;
+                      tr.dataset.path = data.newPath;
+                      // Update metadata input's reportId too
+                      const metaInputEl = tr.querySelector('.metadata-input:not(.origin-input)') as HTMLInputElement;
+                      if (metaInputEl) metaInputEl.dataset.reportId = data.newId;
+                      originError.textContent = '';
+                      originInput.classList.remove('input-error');
+                  } catch (err) {
+                      console.error('Failed to rename report:', err);
+                      originError.textContent = 'Rename failed';
+                      originInput.classList.add('input-error');
+                      originInput.value = originalOriginValue;
+                  }
+              };
+
+              originInput.addEventListener('keydown', (e) => {
+                  if (e.key === 'Enter') { originInput.blur(); }
+                  if (e.key === 'Escape') {
+                      originInput.value = originalOriginValue;
+                      originError.textContent = '';
+                      originInput.classList.remove('input-error');
+                      originInput.blur();
+                  }
+              });
+
+              originInput.addEventListener('blur', saveOriginName);
+          }
+      }
+
       // Wire up metadata input
-      const metaInput = tr.querySelector('.metadata-input') as HTMLInputElement;
+      const metaInput = tr.querySelector('.metadata-input:not(.origin-input)') as HTMLInputElement;
       if (metaInput) {
           metaInput.addEventListener('click', (e) => e.stopPropagation());
           

@@ -36,7 +36,40 @@ The application does not use a "dumb" filesystem scan. It implements a different
 
 ---
 
-## 🚀 Integrated Test Runner
+## � Full Report Lifecycle
+
+### 1. Report appears on disk
+Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` into the configured **current directory**.
+
+### 2. Dashboard load → `scanDirectory('current')`
+- Reads all subfolders from the current directory.
+- Validates each has `index.html` containing `<title>Playwright Test Report</title>`.
+- Calls `upsertReport({ id, dateCreated, metadata, reportPath })` — inserts if new, updates path/date on conflict but **preserves existing metadata**.
+- Returns `ReportInfo` with `id` and `name` both equal to `dirent.name` — no transformation applied; what is on disk is what is shown.
+- Frontend renders `id` as an editable `<input>` in the Current Reports table.
+
+### 3. User renames: `playwright-report-4` → `my-smoke-run`
+- Frontend validates immediately (no forbidden chars, not empty) and shows an inline error if invalid — no server round-trip needed.
+- `POST /api/report-rename { reportId: 'playwright-report-4', newName: 'my-smoke-run' }`
+- Server: path-traversal guard → conflict check → `fs.renameSync(oldFolder, newFolder)`.
+- `updateReportId('playwright-report-4', 'my-smoke-run', '/reports/current/my-smoke-run/index.html')` — updates both `id` and `reportPath` in DB atomically.
+- Frontend updates the local `report` closure (`id`, `name`, `path`) in-place — no page reload needed.
+
+### 4. User archives: `POST /api/archive { reportPath: '/reports/current/my-smoke-run/index.html' }`
+- Extracts folder name `my-smoke-run` from the URL path.
+- Generates a unique archive name: `playwright-report-<timestamp>`.
+- `fs.renameSync(currentPath/my-smoke-run, archivePath/playwright-report-1773916890669)`.
+- `updateReportId('my-smoke-run', 'playwright-report-1773916890669', '/reports/archive/playwright-report-1773916890669/index.html')`.
+- DB `id` is now the timestamped archive folder name; **metadata is preserved** across the move.
+
+### 5. Archive table display
+- `scanDirectory('archive')` — same mechanism as step 2.
+- Archive rows render as a read-only `<span>` (no editable input).
+- `name = dirent.name` — shows exactly what's on disk and in DB, no transformation.
+
+---
+
+## �🚀 Integrated Test Runner
 
 The execution engine runs Playwright tests natively on the host machine, piping the output live to the dashboard browser window.
 

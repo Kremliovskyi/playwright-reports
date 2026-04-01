@@ -58,10 +58,12 @@ This keeps the filtering UX consistent while preserving the rule that search its
 The Current and Archived tables now maintain independent, frontend-only selection state.
 
 - **Selection Model:** Each row includes a checkbox bound to a `selectedReports` `Set`, keyed by table (`current` or `archive`). The selection state is intentionally not persisted anywhere; it is recalculated from the rendered table and cleared on every full refresh.
+- **Shift-click Range Selection:** Checkbox selection supports `Shift + left click` range selection using a per-table anchor. The range is computed only from the rows currently rendered in that specific table, so it naturally respects filtered views and never crosses between Current and Archived tables.
 - **Toolbar Controls:** `Select All` is always enabled for visible tables, while `Select None` is enabled only when the corresponding selection set is non-empty. A live selection counter (`N selected`) is shown only when the count is greater than zero.
 - **Contextual Actions Menu:** Bulk actions are hidden until at least one row is selected. The Current table exposes `Archive selected` and `Delete selected`; the Archive table exposes only `Delete selected`.
 - **Row Interaction Guardrails:** Row clicks still open the report, but clicks originating from checkboxes, metadata inputs, rename inputs, or action buttons are stopped so selection and inline editing do not accidentally navigate away.
 - **Selection Integrity During Rename:** Current-report rename mutates the row's `reportPath`. If that row is currently selected, the frontend swaps the old path out of the selection set and inserts the new path immediately so bulk actions continue to target the correct report.
+- **Anchor Reset Rules:** The Shift-click anchor is intentionally cleared on full rerenders and row-identity mutations such as refreshes, searches that rerender the table, `Select None`, `Select All`, archive/delete completions, and rename operations. This avoids stale range references after the visible row order changes.
 
 ### Why selection is frontend-only
 

@@ -204,6 +204,11 @@ document.addEventListener('DOMContentLoaded', () => {
       archive: new Set<string>()
   };
 
+  const lastSelectedReportPath: Record<SectionKey, string | null> = {
+      current: null,
+      archive: null
+  };
+
   let deleteRequest: DeleteRequest | null = null;
   let activeBulkTarget: SectionKey | null = null;
     let cachedReportsData: ReportsResponse | null = null;
@@ -278,6 +283,8 @@ document.addEventListener('DOMContentLoaded', () => {
       closeBulkMenus();
       selectedReports.current.clear();
       selectedReports.archive.clear();
+      lastSelectedReportPath.current = null;
+      lastSelectedReportPath.archive = null;
       emptyState.classList.add('hidden');
       loading.classList.toggle('hidden', !showLoading);
   };
@@ -446,6 +453,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const clearSelection = (target: SectionKey) => {
       const context = tableContexts[target];
       selectedReports[target].clear();
+      lastSelectedReportPath[target] = null;
       const checkboxes = context.tbody.querySelectorAll<HTMLInputElement>('.row-select-checkbox');
       checkboxes.forEach(checkbox => {
           checkbox.checked = false;
@@ -457,6 +465,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const context = tableContexts[target];
       const checkboxes = context.tbody.querySelectorAll<HTMLInputElement>('.row-select-checkbox');
       selectedReports[target].clear();
+      lastSelectedReportPath[target] = null;
       checkboxes.forEach(checkbox => {
           const reportPath = checkbox.dataset.reportPath;
           if (!reportPath) return;
@@ -464,6 +473,35 @@ document.addEventListener('DOMContentLoaded', () => {
           selectedReports[target].add(reportPath);
       });
       syncBulkControls(target);
+  };
+
+  const setRangeSelection = (target: SectionKey, anchorPath: string, currentPath: string) => {
+      const context = tableContexts[target];
+      const rows = Array.from(context.tbody.querySelectorAll<HTMLTableRowElement>('.report-row'));
+      const startIndex = rows.findIndex(row => row.dataset.path === anchorPath);
+      const endIndex = rows.findIndex(row => row.dataset.path === currentPath);
+
+      if (startIndex === -1 || endIndex === -1) {
+          return false;
+      }
+
+      const [fromIndex, toIndex] = startIndex <= endIndex
+          ? [startIndex, endIndex]
+          : [endIndex, startIndex];
+
+      for (let index = fromIndex; index <= toIndex; index++) {
+          const row = rows[index];
+          const checkbox = row.querySelector<HTMLInputElement>('.row-select-checkbox');
+          const reportPath = checkbox?.dataset.reportPath;
+          if (!checkbox || !reportPath) continue;
+
+          checkbox.checked = true;
+          selectedReports[target].add(reportPath);
+          row.classList.add('selected');
+      }
+
+      syncBulkControls(target);
+      return true;
   };
 
   const getTableLabel = (target: SectionKey) => target === 'current' ? 'current' : 'archived';
@@ -609,11 +647,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const selectCheckbox = tr.querySelector('.row-select-checkbox') as HTMLInputElement;
       if (selectCheckbox) {
-          selectCheckbox.addEventListener('click', e => e.stopPropagation());
-          selectCheckbox.addEventListener('change', () => {
+          selectCheckbox.addEventListener('click', e => {
+              e.stopPropagation();
+
               const reportPath = selectCheckbox.dataset.reportPath;
               if (!reportPath) return;
-              setRowSelection(target, reportPath, selectCheckbox.checked, tr);
+
+              const mouseEvent = e as MouseEvent;
+              const anchorPath = lastSelectedReportPath[target];
+              const shouldSelectRange = mouseEvent.shiftKey && selectCheckbox.checked && !!anchorPath && anchorPath !== reportPath;
+
+              if (shouldSelectRange) {
+                  setRangeSelection(target, anchorPath, reportPath);
+              } else {
+                  setRowSelection(target, reportPath, selectCheckbox.checked, tr);
+              }
+
+              lastSelectedReportPath[target] = reportPath;
           });
       }
 
@@ -715,6 +765,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       report.name = newVal;
                       report.path = data.newPath;
                       updateCachedRenamedReport(previousPath, data.newId, data.newPath, newVal);
+                      lastSelectedReportPath.current = null;
                       originalOriginValue = newVal;
                       originInput.dataset.reportId = data.newId;
                       tr.dataset.path = data.newPath;

@@ -24,7 +24,9 @@
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
-- **📦 Trace Extraction:** Extract `.zip` trace files found in your reports with a single click—perfect for feeding raw DOM/Network data to AI agents.
+- **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
+- **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
+- **🧰 Contextual Bulk Actions:** When one or more rows are selected, the table reveals bulk actions for the selected set. Current reports support bulk archive and delete; Archived reports support bulk delete.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
@@ -96,7 +98,7 @@ Playwright packages test traces (network logs, DOM snapshots) into `.zip` files.
 Having extracted traces as raw JSON/network files allows AI agents to easily read and interact with your test run data (e.g., automatically generating Jira defects or API assertions).
 
 - Click **Extract** next to any report to automatically unzip its trace files on the host machine.
-- Click **Extract All Traces** to bulk-process your entire workspace. _The extraction is idempotent and will quickly skip already-extracted runs._
+- Trace extraction stays intentionally per-report, while archive and delete workflows are handled through the new multi-select controls in each table.
 
 ---
 
@@ -115,7 +117,8 @@ Reviewing failed `.yml` aria snapshots in Playwright often involves squinting at
 
 Keep your active workspace clean by archiving old runs.
 
-- Click **Archive** on any report in the "Current Test Reports" table.
+- Click **Archive** on any report in the "Current Test Reports" table for a one-off archive.
+- Or select multiple rows with the new checkboxes, click **Select All** when you want the whole table, then use **Actions → Archive selected**.
 - The report folder is safely moved to your configured Archive path and appended with a unique timestamp (`playwright-report-174000...`) to absolutely guarantee no collisions.
 
 ---
@@ -124,9 +127,10 @@ Keep your active workspace clean by archiving old runs.
 
 If a report is no longer needed (whether it's in Current or Archived), you can completely remove it to free up disk space.
 
-- Click **Delete** on any report in the tables.
-- A confirmation dialog will appear, displaying the exact creation date of the report, to ensure you don't delete the wrong run.
-- Upon confirming **Yes**, the backend will recursively and permanently remove the report directory from the disk system.
+- Click **Delete** on any report in the tables for a one-off removal, or select multiple rows and use **Actions → Delete selected**.
+- `Select None` stays disabled until at least one row is checked, which makes it clear when there is active selection to clear.
+- A confirmation dialog will appear before any delete, and the same dialog is reused for both single-report and multi-report deletion.
+- Upon confirming **Delete**, the backend will recursively and permanently remove the report directory from the disk system.
 - The dashboard automatically refreshes to reflect the change immediately.
 
 ---

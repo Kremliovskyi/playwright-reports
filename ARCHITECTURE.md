@@ -36,6 +36,34 @@ The application does not use a "dumb" filesystem scan. It implements a different
 
 ---
 
+## ☑️ Table Selection & Bulk Actions
+
+The Current and Archived tables now maintain independent, frontend-only selection state.
+
+- **Selection Model:** Each row includes a checkbox bound to a `selectedReports` `Set`, keyed by table (`current` or `archive`). The selection state is intentionally not persisted anywhere; it is recalculated from the rendered table and cleared on every full refresh.
+- **Toolbar Controls:** `Select All` is always enabled for visible tables, while `Select None` is enabled only when the corresponding selection set is non-empty. A live selection counter (`N selected`) is shown only when the count is greater than zero.
+- **Contextual Actions Menu:** Bulk actions are hidden until at least one row is selected. The Current table exposes `Archive selected` and `Delete selected`; the Archive table exposes only `Delete selected`.
+- **Row Interaction Guardrails:** Row clicks still open the report, but clicks originating from checkboxes, metadata inputs, rename inputs, or action buttons are stopped so selection and inline editing do not accidentally navigate away.
+- **Selection Integrity During Rename:** Current-report rename mutates the row's `reportPath`. If that row is currently selected, the frontend swaps the old path out of the selection set and inserts the new path immediately so bulk actions continue to target the correct report.
+
+### Why selection is frontend-only
+
+Selection is strictly a transient UI concern. Persisting it in SQLite would add state-recovery complexity without improving the underlying report model, since a page refresh or filesystem sync can legitimately re-order, rename, archive, or remove reports.
+
+---
+
+## 🧰 Bulk Archive / Delete Execution Strategy
+
+Bulk archive and delete intentionally reuse the existing single-report backend endpoints instead of introducing batch APIs.
+
+- **No new backend contracts:** The frontend loops through the selected `reportPath` values and calls `/api/archive` or `/api/delete` one report at a time.
+- **Sequential execution:** Requests are performed serially to avoid hammering the filesystem with multiple move/delete operations in parallel and to keep behavior aligned with the existing single-report flows.
+- **Single refresh after completion:** The dashboard refreshes once at the end of a bulk operation instead of after every item, which keeps the UI stable while preserving the existing scan-and-sync behavior.
+- **Shared confirmation modal:** Single delete and bulk delete both use the same modal shell. The frontend injects the title, message, and confirm label dynamically based on the number of selected reports.
+- **Busy-state protection:** While a bulk operation is active, the relevant table's selection controls and action buttons are disabled so the user cannot mutate selection mid-flight.
+
+---
+
 ## � Full Report Lifecycle
 
 ### 1. Report appears on disk

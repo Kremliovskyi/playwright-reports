@@ -15,6 +15,27 @@ interface ReportsResponse {
     };
 }
 
+type SectionKey = 'current' | 'archive';
+
+interface DeleteRequest {
+    reportPaths: string[];
+    title: string;
+    message: string;
+    confirmLabel: string;
+}
+
+interface TableContext {
+    section: HTMLElement;
+    table: HTMLElement;
+    tbody: HTMLElement;
+    selectAllBtn: HTMLButtonElement;
+    selectNoneBtn: HTMLButtonElement;
+    selectionCount: HTMLElement;
+    bulkMenu: HTMLElement;
+    bulkMenuTrigger: HTMLButtonElement;
+    bulkMenuPanel: HTMLElement;
+}
+
 // Simple Diffing Logic
 interface DiffLine {
     type: 'added' | 'removed' | 'unchanged';
@@ -114,10 +135,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalError = document.getElementById('modal-error') as HTMLElement;
 
   const deleteModal = document.getElementById('delete-modal') as HTMLElement;
+    const deleteModalTitle = document.getElementById('delete-modal-title') as HTMLElement;
+    const deleteModalMessage = document.getElementById('delete-modal-message') as HTMLElement;
   const closeDeleteModalBtn = document.getElementById('close-delete-modal-btn') as HTMLButtonElement;
   const cancelDeleteBtn = document.getElementById('cancel-delete-btn') as HTMLButtonElement;
   const confirmDeleteBtn = document.getElementById('confirm-delete-btn') as HTMLButtonElement;
-  const deleteReportDate = document.getElementById('delete-report-date') as HTMLElement;
   const deleteModalError = document.getElementById('delete-modal-error') as HTMLElement;
   
   const ariaModal = document.getElementById('aria-modal') as HTMLElement;
@@ -131,7 +153,38 @@ document.addEventListener('DOMContentLoaded', () => {
   const ariaDeepEqualCheckbox = document.getElementById('aria-deep-equal-checkbox') as HTMLInputElement;
   const ariaPreviewSubtitle = document.getElementById('aria-preview-subtitle') as HTMLElement;
 
-  let reportToDeletePath: string | null = null;
+  const tableContexts: Record<SectionKey, TableContext> = {
+      current: {
+          section: currentSection,
+          table: currentTable,
+          tbody: currentTbody,
+          selectAllBtn: document.querySelector('.select-all-btn[data-target="current"]') as HTMLButtonElement,
+          selectNoneBtn: document.querySelector('.select-none-btn[data-target="current"]') as HTMLButtonElement,
+          selectionCount: document.querySelector('.selection-count[data-target="current"]') as HTMLElement,
+          bulkMenu: document.querySelector('.bulk-menu[data-target="current"]') as HTMLElement,
+          bulkMenuTrigger: document.querySelector('.bulk-menu-trigger[data-target="current"]') as HTMLButtonElement,
+          bulkMenuPanel: document.querySelector('.bulk-menu-panel[data-target="current"]') as HTMLElement
+      },
+      archive: {
+          section: archiveSection,
+          table: archiveTable,
+          tbody: archiveTbody,
+          selectAllBtn: document.querySelector('.select-all-btn[data-target="archive"]') as HTMLButtonElement,
+          selectNoneBtn: document.querySelector('.select-none-btn[data-target="archive"]') as HTMLButtonElement,
+          selectionCount: document.querySelector('.selection-count[data-target="archive"]') as HTMLElement,
+          bulkMenu: document.querySelector('.bulk-menu[data-target="archive"]') as HTMLElement,
+          bulkMenuTrigger: document.querySelector('.bulk-menu-trigger[data-target="archive"]') as HTMLButtonElement,
+          bulkMenuPanel: document.querySelector('.bulk-menu-panel[data-target="archive"]') as HTMLElement
+      }
+  };
+
+  const selectedReports: Record<SectionKey, Set<string>> = {
+      current: new Set<string>(),
+      archive: new Set<string>()
+  };
+
+  let deleteRequest: DeleteRequest | null = null;
+  let activeBulkTarget: SectionKey | null = null;
 
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
 
@@ -175,20 +228,180 @@ document.addEventListener('DOMContentLoaded', () => {
       return new Date(dateString).toLocaleDateString(undefined, options);
   };
 
+  const closeBulkMenus = () => {
+      (Object.keys(tableContexts) as SectionKey[]).forEach(target => {
+          const context = tableContexts[target];
+          context.bulkMenuPanel.classList.add('hidden');
+          context.bulkMenuTrigger.setAttribute('aria-expanded', 'false');
+      });
+  };
+
+  const syncBulkControls = (target: SectionKey) => {
+      const context = tableContexts[target];
+      const selectionCount = selectedReports[target].size;
+      const isBusy = activeBulkTarget === target;
+
+      context.selectionCount.textContent = `${selectionCount} selected`;
+      context.selectionCount.classList.toggle('hidden', selectionCount === 0);
+      context.selectNoneBtn.disabled = selectionCount === 0 || isBusy;
+      context.bulkMenu.classList.toggle('hidden', selectionCount === 0);
+      context.bulkMenuTrigger.disabled = selectionCount === 0 || isBusy;
+
+      const menuActions = context.bulkMenuPanel.querySelectorAll<HTMLButtonElement>('.bulk-menu-action');
+      menuActions.forEach(actionBtn => {
+          actionBtn.disabled = isBusy;
+      });
+
+      if (selectionCount === 0 || isBusy) {
+          context.bulkMenuPanel.classList.add('hidden');
+          context.bulkMenuTrigger.setAttribute('aria-expanded', 'false');
+      }
+
+      const rows = context.tbody.querySelectorAll<HTMLTableRowElement>('.report-row');
+      rows.forEach(row => {
+          const checkbox = row.querySelector<HTMLInputElement>('.row-select-checkbox');
+          row.classList.toggle('selected', checkbox?.checked ?? false);
+      });
+  };
+
+  const syncAllBulkControls = () => {
+      syncBulkControls('current');
+      syncBulkControls('archive');
+  };
+
+  const setSelectionControlsDisabled = (target: SectionKey, disabled: boolean) => {
+      const context = tableContexts[target];
+      context.selectAllBtn.disabled = disabled;
+      context.selectNoneBtn.disabled = disabled || selectedReports[target].size === 0;
+      context.bulkMenuTrigger.disabled = disabled || selectedReports[target].size === 0;
+
+      const checkboxes = context.tbody.querySelectorAll<HTMLInputElement>('.row-select-checkbox');
+      checkboxes.forEach(checkbox => {
+          checkbox.disabled = disabled;
+      });
+
+      const actionButtons = context.bulkMenuPanel.querySelectorAll<HTMLButtonElement>('.bulk-menu-action');
+      actionButtons.forEach(button => {
+          button.disabled = disabled;
+      });
+  };
+
+  const setRowSelection = (target: SectionKey, reportPath: string, checked: boolean, row: HTMLTableRowElement) => {
+      if (checked) {
+          selectedReports[target].add(reportPath);
+      } else {
+          selectedReports[target].delete(reportPath);
+      }
+
+      row.classList.toggle('selected', checked);
+      syncBulkControls(target);
+  };
+
+  const clearSelection = (target: SectionKey) => {
+      const context = tableContexts[target];
+      selectedReports[target].clear();
+      const checkboxes = context.tbody.querySelectorAll<HTMLInputElement>('.row-select-checkbox');
+      checkboxes.forEach(checkbox => {
+          checkbox.checked = false;
+      });
+      syncBulkControls(target);
+  };
+
+  const selectAllRows = (target: SectionKey) => {
+      const context = tableContexts[target];
+      const checkboxes = context.tbody.querySelectorAll<HTMLInputElement>('.row-select-checkbox');
+      selectedReports[target].clear();
+      checkboxes.forEach(checkbox => {
+          const reportPath = checkbox.dataset.reportPath;
+          if (!reportPath) return;
+          checkbox.checked = true;
+          selectedReports[target].add(reportPath);
+      });
+      syncBulkControls(target);
+  };
+
+  const getTableLabel = (target: SectionKey) => target === 'current' ? 'current' : 'archived';
+
+  const performDeleteRequests = async (reportPaths: string[]) => {
+      const failures: string[] = [];
+
+      for (const reportPath of reportPaths) {
+          try {
+              const response = await fetch('/api/delete', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reportPath })
+              });
+
+              const data = await response.json();
+              if (!response.ok) {
+                  throw new Error(data.error || 'Failed to delete report');
+              }
+          } catch (error: any) {
+              failures.push(error.message || 'Failed to delete report');
+          }
+      }
+
+      return {
+          successCount: reportPaths.length - failures.length,
+          failures
+      };
+  };
+
+  const performArchiveRequests = async (reportPaths: string[]) => {
+      const failures: string[] = [];
+
+      for (const reportPath of reportPaths) {
+          try {
+              const response = await fetch('/api/archive', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ reportPath })
+              });
+
+              const data = await response.json();
+              if (!response.ok) {
+                  throw new Error(data.error || 'Failed to archive report');
+              }
+          } catch (error: any) {
+              failures.push(error.message || 'Failed to archive report');
+          }
+      }
+
+      return {
+          successCount: reportPaths.length - failures.length,
+          failures
+      };
+  };
+
+  const openDeleteModal = (request: DeleteRequest) => {
+      deleteRequest = request;
+      deleteModalTitle.textContent = request.title;
+      deleteModalMessage.textContent = request.message;
+      confirmDeleteBtn.textContent = request.confirmLabel;
+      deleteModalError.classList.add('hidden');
+      deleteModal.classList.remove('hidden');
+  };
+
   // Create highly interactive report row
-  const createReportRow = (report: Report) => {
+  const createReportRow = (report: Report, target: SectionKey) => {
       const tr = document.createElement('tr');
       tr.className = 'report-row';
       tr.dataset.path = report.path; // Store path for table-level extraction
       
       const isCurrent = report.path.startsWith('/reports/current/');
+      const escapedReportName = (report.name || report.id || '')
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
 
       tr.addEventListener('click', (e: MouseEvent) => {
-          // Don't open report if clicking action buttons
           const target = e.target as HTMLElement;
-          if (target && target.closest('.btn-extract')) return;
-          if (target && target.closest('.btn-archive')) return;
-          if (target && target.closest('.btn-delete')) return;
+          if (target && target.closest('.btn')) return;
+          if (target && target.closest('.btn-open')) return;
+          if (target && target.closest('.metadata-input')) return;
+          if (target && target.closest('.row-select-control')) return;
           window.open(report.path, '_blank', 'noopener,noreferrer');
       });
 
@@ -207,6 +420,12 @@ document.addEventListener('DOMContentLoaded', () => {
       ` : '';
 
       tr.innerHTML = `
+          <td class="col-select">
+              <label class="row-select-control" aria-label="Select ${escapedReportName}">
+                  <input type="checkbox" class="row-select-checkbox" data-report-path="${report.path}" />
+                  <span class="row-select-indicator"></span>
+              </label>
+          </td>
           <td class="col-date">
               <div class="date-wrapper">
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-calendar"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
@@ -216,14 +435,14 @@ document.addEventListener('DOMContentLoaded', () => {
           <td class="col-origin">
               ${isCurrent
                 ? `<input type="text" class="origin-input metadata-input" value="${(report.id || '').replace(/"/g, '&quot;')}" placeholder="Rename report..." data-report-id="${report.id}" /><span class="origin-error"></span>`
-                : `<span class="origin-label">${report.name}</span>`
+                                : `<span class="origin-label">${escapedReportName}</span>`
               }
           </td>
           <td class="col-metadata">
               <input type="text" class="metadata-input" value="${(report.metadata || '').replace(/"/g, '&quot;')}" placeholder="Add metadata..." data-report-id="${report.id}" />
           </td>
           <td class="col-action">
-              <div style="display: flex; gap: 8px;">
+              <div class="row-actions">
                   <button class="btn btn-extract" aria-label="Extract Traces">
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
                       Extract
@@ -241,6 +460,21 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
           </td>
       `;
+
+      const selectCheckbox = tr.querySelector('.row-select-checkbox') as HTMLInputElement;
+      if (selectCheckbox) {
+          selectCheckbox.addEventListener('click', e => e.stopPropagation());
+          selectCheckbox.addEventListener('change', () => {
+              const reportPath = selectCheckbox.dataset.reportPath;
+              if (!reportPath) return;
+              setRowSelection(target, reportPath, selectCheckbox.checked, tr);
+          });
+      }
+
+      const openLink = tr.querySelector('.btn-open') as HTMLAnchorElement;
+      if (openLink) {
+          openLink.addEventListener('click', e => e.stopPropagation());
+      }
 
       // Wire up extract button
       const extractBtn = tr.querySelector('.btn-extract') as HTMLButtonElement;
@@ -275,7 +509,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (deleteBtn) {
           deleteBtn.addEventListener('click', (e) => {
               e.stopPropagation();
-              openDeleteModal(report.path, deleteBtn.dataset.date || '');
+              openDeleteModal({
+                  reportPaths: [report.path],
+                  title: 'Delete Report',
+                  message: `Are you sure that you want to delete report for ${deleteBtn.dataset.date || 'this date'}?`,
+                  confirmLabel: 'Delete'
+              });
           });
       }
 
@@ -312,6 +551,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   }
                   if (newVal === originalOriginValue) return;
                   try {
+                      const previousPath = report.path;
                       const res = await fetch('/api/report-rename', {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
@@ -331,6 +571,17 @@ document.addEventListener('DOMContentLoaded', () => {
                       originalOriginValue = newVal;
                       originInput.dataset.reportId = data.newId;
                       tr.dataset.path = data.newPath;
+                      if (selectCheckbox) {
+                          if (selectCheckbox.checked) {
+                              selectedReports.current.delete(previousPath);
+                              selectedReports.current.add(data.newPath);
+                          }
+                          selectCheckbox.dataset.reportPath = data.newPath;
+                          syncBulkControls('current');
+                      }
+                      if (openLink) {
+                          openLink.href = data.newPath;
+                      }
                       // Update metadata input's reportId too
                       const metaInputEl = tr.querySelector('.metadata-input:not(.origin-input)') as HTMLInputElement;
                       if (metaInputEl) metaInputEl.dataset.reportId = data.newId;
@@ -649,16 +900,21 @@ document.addEventListener('DOMContentLoaded', () => {
   
   ariaDeepEqualCheckbox.addEventListener('change', renderAllDiffs);
 
-  const renderTable = (reports: Report[], tbody: HTMLElement, section: HTMLElement, table: HTMLElement) => {
+  const renderTable = (reports: Report[], target: SectionKey) => {
+      const context = tableContexts[target];
+      const { tbody, section, table } = context;
       tbody.innerHTML = '';
+      selectedReports[target].clear();
       if (!reports || reports.length === 0) {
           section.classList.add('hidden');
+          syncBulkControls(target);
           return 0;
       }
       
       section.classList.remove('hidden');
       table.classList.remove('hidden');
-      reports.forEach(report => tbody.appendChild(createReportRow(report)));
+      reports.forEach(report => tbody.appendChild(createReportRow(report, target)));
+      syncBulkControls(target);
       return reports.length;
   };
 
@@ -666,6 +922,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Reset State
       currentSection.classList.add('hidden');
       archiveSection.classList.add('hidden');
+    closeBulkMenus();
+    selectedReports.current.clear();
+    selectedReports.archive.clear();
       loading.classList.remove('hidden');
       emptyState.classList.add('hidden');
 
@@ -675,8 +934,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
           loading.classList.add('hidden');
 
-          const currentCount = renderTable(data.current, currentTbody, currentSection, currentTable);
-          const archiveCount = renderTable(data.archive, archiveTbody, archiveSection, archiveTable);
+          const currentCount = renderTable(data.current, 'current');
+          const archiveCount = renderTable(data.archive, 'archive');
 
           const { configStatus } = data;
           
@@ -733,50 +992,44 @@ document.addEventListener('DOMContentLoaded', () => {
   cancelModalBtn.addEventListener('click', closeModal);
 
   // --- Delete Modal Logic ---
-  const openDeleteModal = (path: string, dateStr: string) => {
-      reportToDeletePath = path;
-      deleteReportDate.textContent = dateStr;
-      deleteModalError.classList.add('hidden');
-      deleteModal.classList.remove('hidden');
-  };
-
   const closeDeleteModal = () => {
-      reportToDeletePath = null;
+      deleteRequest = null;
       deleteModal.classList.add('hidden');
+      deleteModalError.classList.add('hidden');
   };
 
   closeDeleteModalBtn.addEventListener('click', closeDeleteModal);
   cancelDeleteBtn.addEventListener('click', closeDeleteModal);
 
   confirmDeleteBtn.addEventListener('click', async () => {
-      if (!reportToDeletePath) return;
+      if (!deleteRequest) return;
+
+      const currentRequest = deleteRequest;
 
       deleteModalError.classList.add('hidden');
       confirmDeleteBtn.disabled = true;
       confirmDeleteBtn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Deleting...`;
 
       try {
-          const response = await fetch('/api/delete', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ reportPath: reportToDeletePath })
-          });
-          
-          const data = await response.json();
-          
-          if (!response.ok) {
-              throw new Error(data.error || 'Failed to delete report');
+          const result = await performDeleteRequests(currentRequest.reportPaths);
+
+          if (result.failures.length === currentRequest.reportPaths.length) {
+              throw new Error(result.failures[0] || 'Failed to delete reports');
           }
-          
+
           closeDeleteModal();
-          await fetchReports(); // refresh dashboard
+          await fetchReports();
+
+          if (result.failures.length > 0) {
+              alert(`Deleted ${result.successCount} reports. Failed to delete ${result.failures.length}. First error: ${result.failures[0]}`);
+          }
           
       } catch (err: any) {
           deleteModalError.textContent = err.message;
           deleteModalError.classList.remove('hidden');
       } finally {
           confirmDeleteBtn.disabled = false;
-          confirmDeleteBtn.innerHTML = `Yes`;
+          confirmDeleteBtn.textContent = currentRequest.confirmLabel;
       }
   });
 
@@ -819,41 +1072,91 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- Toolbars & Globals ---
 
-  const extractAllBtns = document.querySelectorAll('.extract-all-btn');
-  extractAllBtns.forEach(btn => {
-      btn.addEventListener('click', async () => {
-          const target = (btn as HTMLElement).dataset.target; // "current" or "archive"
-          const tbody = document.getElementById(`${target}-tbody`) as HTMLElement;
-          const rows = tbody.querySelectorAll('.report-row');
-          
-          if (rows.length === 0) return;
+  (Object.keys(tableContexts) as SectionKey[]).forEach(target => {
+      const context = tableContexts[target];
 
-          const originalHtml = btn.innerHTML;
-          (btn as HTMLButtonElement).disabled = true;
-          btn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px;"></div> Extracting All...`;
+      context.selectAllBtn.addEventListener('click', () => {
+          selectAllRows(target);
+      });
 
-          // Process sequentially to not overload Node.js/Disk
-          for (const row of Array.from(rows)) {
-              const rowElement = row as HTMLElement;
-              const extractBtn = rowElement.querySelector('.btn-extract') as HTMLButtonElement;
-              // Only extract if not already extracted (in UI state)
-              if (extractBtn && !extractBtn.disabled && !extractBtn.classList.contains('success')) {
-                  const reportPath = rowElement.dataset.path;
-                  if (reportPath) {
-                      await handleExtract(reportPath, extractBtn);
+      context.selectNoneBtn.addEventListener('click', () => {
+          clearSelection(target);
+      });
+
+      context.bulkMenuTrigger.addEventListener('click', event => {
+          event.stopPropagation();
+          const isOpen = !context.bulkMenuPanel.classList.contains('hidden');
+          closeBulkMenus();
+          if (!isOpen && selectedReports[target].size > 0) {
+              context.bulkMenuPanel.classList.remove('hidden');
+              context.bulkMenuTrigger.setAttribute('aria-expanded', 'true');
+          }
+      });
+
+      const bulkActions = context.bulkMenuPanel.querySelectorAll<HTMLButtonElement>('.bulk-menu-action');
+      bulkActions.forEach(actionBtn => {
+          actionBtn.addEventListener('click', async event => {
+              event.stopPropagation();
+
+              const action = actionBtn.dataset.action;
+              const selectedPaths = Array.from(selectedReports[target]);
+              if (selectedPaths.length === 0 || !action) return;
+
+              closeBulkMenus();
+
+              if (action === 'delete') {
+                  openDeleteModal({
+                      reportPaths: selectedPaths,
+                      title: selectedPaths.length === 1 ? 'Delete Report' : 'Delete Selected Reports',
+                      message: selectedPaths.length === 1
+                          ? `Are you sure that you want to delete the selected ${getTableLabel(target)} report?`
+                          : `Are you sure that you want to delete ${selectedPaths.length} selected ${getTableLabel(target)} reports?`,
+                      confirmLabel: selectedPaths.length === 1 ? 'Delete' : `Delete ${selectedPaths.length} Reports`
+                  });
+                  return;
+              }
+
+              if (action === 'archive') {
+                  const originalText = actionBtn.textContent || 'Archive selected';
+                  activeBulkTarget = target;
+                  setSelectionControlsDisabled(target, true);
+                  actionBtn.textContent = 'Archiving...';
+
+                  try {
+                      const result = await performArchiveRequests(selectedPaths);
+                      if (result.failures.length === selectedPaths.length) {
+                          throw new Error(result.failures[0] || 'Failed to archive reports');
+                      }
+
+                      await fetchReports();
+
+                      if (result.failures.length > 0) {
+                          alert(`Archived ${result.successCount} reports. Failed to archive ${result.failures.length}. First error: ${result.failures[0]}`);
+                      }
+                  } catch (error: any) {
+                      alert(error.message || 'Failed to archive reports');
+                  } finally {
+                      activeBulkTarget = null;
+                      actionBtn.textContent = originalText;
+                      setSelectionControlsDisabled(target, false);
+                      syncBulkControls(target);
                   }
               }
-          }
-
-          btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> All Extracted`;
-          btn.classList.add('success');
-          
-          setTimeout(() => {
-              (btn as HTMLButtonElement).disabled = false;
-              btn.classList.remove('success');
-              btn.innerHTML = originalHtml;
-          }, 4000);
+          });
       });
+  });
+
+  document.addEventListener('click', event => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.bulk-menu')) {
+          closeBulkMenus();
+      }
+  });
+
+  document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') {
+          closeBulkMenus();
+      }
   });
 
   refreshBtn.addEventListener('click', () => {
@@ -874,5 +1177,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initial fetch
+    syncAllBulkControls();
   fetchReports();
 });

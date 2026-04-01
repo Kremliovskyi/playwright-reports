@@ -40,7 +40,6 @@
             <h1>Test Reports Central</h1>
           </div>
           <div class="actions">
-          <div class="actions">
             <button id="run-tests-btn" class="btn primary-btn" style="background-color: #10b981; border-color: #10b981; color: white;">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
               Run Tests
@@ -75,20 +74,38 @@
 
         <!-- Current Reports Section (always on top structurally) -->
         <section id="current-section" class="reports-section hidden">
-          <div class="section-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+          <div class="section-header reports-toolbar">
             <div>
               <h2>Current Test Reports</h2>
               <p class="subtitle">Recent active test runs from your primary workspace.</p>
             </div>
-            <button class="btn secondary-btn extract-all-btn" data-target="current">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
-              Extract All Traces
-            </button>
+            <div class="bulk-controls" data-target="current">
+              <button class="btn secondary-btn select-all-btn" data-target="current">Select All</button>
+              <button class="btn secondary-btn select-none-btn" data-target="current" disabled>Select None</button>
+              <span class="selection-count hidden" data-target="current" aria-live="polite">0 selected</span>
+              <div class="bulk-menu hidden" data-target="current">
+                <button
+                  class="btn secondary-btn bulk-menu-trigger"
+                  data-target="current"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-label="Bulk actions for selected current reports"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-ellipsis"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                  Actions
+                </button>
+                <div class="bulk-menu-panel hidden" data-target="current" role="menu">
+                  <button class="bulk-menu-action" data-target="current" data-action="archive" role="menuitem">Archive selected</button>
+                  <button class="bulk-menu-action danger" data-target="current" data-action="delete" role="menuitem">Delete selected</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="table-container">
             <table class="reports-table">
               <thead>
                 <tr>
+                  <th class="col-select-header">Select</th>
                   <th>Date Created</th>
                   <th>Report Origin</th>
                   <th>Metadata</th>
@@ -102,20 +119,37 @@
 
         <!-- Archive Reports Section -->
         <section id="archive-section" class="reports-section hidden" style="margin-top: 3rem;">
-          <div class="section-header" style="display: flex; justify-content: space-between; align-items: flex-end;">
+          <div class="section-header reports-toolbar">
             <div>
               <h2>Archived Reports</h2>
               <p class="subtitle">Historical reports retained for comparison or auditing.</p>
             </div>
-            <button class="btn secondary-btn extract-all-btn" data-target="archive">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
-              Extract All Traces
-            </button>
+            <div class="bulk-controls" data-target="archive">
+              <button class="btn secondary-btn select-all-btn" data-target="archive">Select All</button>
+              <button class="btn secondary-btn select-none-btn" data-target="archive" disabled>Select None</button>
+              <span class="selection-count hidden" data-target="archive" aria-live="polite">0 selected</span>
+              <div class="bulk-menu hidden" data-target="archive">
+                <button
+                  class="btn secondary-btn bulk-menu-trigger"
+                  data-target="archive"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-label="Bulk actions for selected archived reports"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-ellipsis"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                  Actions
+                </button>
+                <div class="bulk-menu-panel hidden" data-target="archive" role="menu">
+                  <button class="bulk-menu-action danger" data-target="archive" data-action="delete" role="menuitem">Delete selected</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="table-container">
             <table class="reports-table">
               <thead>
                 <tr>
+                  <th class="col-select-header">Select</th>
                   <th>Date Created</th>
                   <th>Report Origin</th>
                   <th>Metadata</th>
@@ -172,14 +206,14 @@
     <div id="delete-modal" class="modal-backdrop hidden">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Delete Report</h2>
+          <h2 id="delete-modal-title">Delete Report</h2>
           <button id="close-delete-modal-btn" class="icon-btn" aria-label="Close">
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </button>
         </div>
         
         <div class="modal-body">
-          <p>Are you sure that you want to delete report for <strong id="delete-report-date"></strong>?</p>
+          <p id="delete-modal-message">Are you sure that you want to delete this report?</p>
           <p class="form-hint" style="margin-top: 0.5rem; color: #f85149;">This action will permanently remove the report directory from disk. This cannot be undone.</p>
           
           <div id="delete-modal-error" class="path-error static-error hidden"></div>
@@ -187,7 +221,7 @@
         
         <div class="modal-footer">
           <button id="cancel-delete-btn" class="btn secondary-btn">No</button>
-          <button id="confirm-delete-btn" class="btn primary-btn" style="background-color: #f85149; border-color: #f85149;">Yes</button>
+          <button id="confirm-delete-btn" class="btn primary-btn" style="background-color: #f85149; border-color: #f85149;">Delete</button>
         </div>
       </div>
     </div>

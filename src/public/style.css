@@ -237,6 +237,26 @@ p {
   gap: var(--space-4);
 }
 
+.search-toggle-open {
+  border-color: rgba(88, 166, 255, 0.45);
+  color: var(--primary);
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.15);
+}
+
+.search-toggle-applied {
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.18), rgba(88, 166, 255, 0.1));
+  border-color: rgba(88, 166, 255, 0.55);
+  color: #dbeeff;
+  box-shadow:
+    0 0 0 1px rgba(88, 166, 255, 0.18),
+    0 12px 24px rgba(0, 0, 0, 0.18);
+}
+
+.search-toggle-applied:hover {
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.24), rgba(88, 166, 255, 0.14));
+  border-color: rgba(88, 166, 255, 0.7);
+}
+
 .path-input {
   background: var(--bg-color);
   border: 1px solid var(--border-color);
@@ -369,6 +389,162 @@ p {
   background: var(--bg-surface-hover);
   border-bottom-left-radius: var(--radius-lg);
   border-bottom-right-radius: var(--radius-lg);
+}
+
+.search-panel {
+  position: fixed;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100vw - 2rem));
+  z-index: 30;
+}
+
+.search-panel-card {
+  background:
+    linear-gradient(180deg, rgba(22, 27, 34, 0.98) 0%, rgba(13, 17, 23, 0.98) 100%);
+  border: 1px solid rgba(88, 166, 255, 0.2);
+  border-radius: 18px;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(88, 166, 255, 0.08);
+  overflow: hidden;
+  backdrop-filter: blur(14px);
+}
+
+.search-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 1rem 1.1rem 0.75rem;
+  border-bottom: 1px solid rgba(48, 54, 61, 0.8);
+}
+
+.search-panel-header h2 {
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+.search-panel-subtitle {
+  margin-top: 0.3rem;
+  max-width: 32rem;
+  color: var(--text-secondary);
+}
+
+.search-panel-body {
+  padding: 0.95rem 1.1rem 1rem;
+}
+
+.search-label {
+  display: inline-block;
+  margin-bottom: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.search-input-shell {
+  position: relative;
+}
+
+.search-input {
+  width: 100%;
+  padding: 0.95rem 3.4rem 0.95rem 1rem;
+  border-radius: 14px;
+  border: 1px solid rgba(88, 166, 255, 0.2);
+  background: rgba(13, 17, 23, 0.95);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.98rem;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: rgba(88, 166, 255, 0.55);
+  box-shadow: 0 0 0 4px rgba(88, 166, 255, 0.12);
+}
+
+.search-submit-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--primary);
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.search-submit-btn:hover {
+  background: rgba(88, 166, 255, 0.22);
+  transform: translateY(-50%) scale(1.02);
+}
+
+.search-filter-grid {
+  margin-top: 0.95rem;
+}
+
+.search-filter-block {
+  min-width: 0;
+}
+
+.search-date-input {
+  width: 100%;
+  min-width: 0;
+  height: 46px;
+  font-family: inherit;
+  color-scheme: dark;
+}
+
+.search-date-input::-webkit-calendar-picker-indicator {
+  opacity: 0.92;
+  cursor: pointer;
+  filter: invert(82%) sepia(10%) saturate(532%) hue-rotate(181deg)
+    brightness(104%) contrast(92%);
+}
+
+.search-date-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  filter: invert(72%) sepia(44%) saturate(1137%) hue-rotate(181deg)
+    brightness(108%) contrast(101%);
+}
+
+.search-range-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  align-items: end;
+}
+
+.search-range-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.search-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.85rem 1.1rem 1rem;
+  border-top: 1px solid rgba(48, 54, 61, 0.8);
+  background: rgba(13, 17, 23, 0.55);
 }
 
 /* Main Content */
@@ -775,6 +951,37 @@ p {
   padding: 0.1em 0.3em;
   border-radius: 3px;
   font-family: monospace;
+}
+
+@media (max-width: 900px) {
+  .actions {
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .search-panel {
+    top: 92px;
+  }
+}
+
+@media (max-width: 640px) {
+  .search-panel {
+    width: calc(100vw - 1rem);
+    top: 124px;
+  }
+
+  .search-panel-header,
+  .search-panel-body,
+  .search-panel-footer {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .search-range-grid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
 }
 
 /* Aria Snapshots Details */

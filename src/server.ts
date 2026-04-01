@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -135,6 +135,36 @@ interface ReportInfo {
   metadata: string;
 }
 
+const getConfigStatus = () => ({
+  hasCurrent: !!appConfig.currentPath,
+  hasArchive: !!appConfig.archivePath,
+  hasProject: !!appConfig.projectPath
+});
+
+const toReportInfo = (record: ReportRecord): ReportInfo => ({
+  id: record.id,
+  name: record.id,
+  path: record.reportPath,
+  createdAt: new Date(record.dateCreated),
+  modifiedAt: new Date(record.dateCreated),
+  metadata: record.metadata
+});
+
+const getQueryString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') return value;
+  return undefined;
+};
+
+const getQueryArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  if (typeof value === 'string') {
+    return value.split(',').map(item => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
 // Helper to scan a directory for valid reports and sync with DB
 const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   if (!dirPath || !fs.existsSync(dirPath)) {
@@ -214,12 +244,40 @@ app.get('/api/reports', (req, res) => {
   res.json({
     current: appConfig.currentPath ? scanDirectory(appConfig.currentPath, 'current') : [],
     archive: appConfig.archivePath ? scanDirectory(appConfig.archivePath, 'archive') : [],
-    configStatus: {
-      hasCurrent: !!appConfig.currentPath,
-      hasArchive: !!appConfig.archivePath,
-      hasProject: !!appConfig.projectPath
-    }
+    configStatus: getConfigStatus()
   });
+});
+
+app.get('/api/report-search', (req: Request, res: Response): any => {
+  try {
+    const query = getQueryString(req.query.query);
+    const selectedDates = getQueryArray(req.query.selectedDates);
+    const rangeStart = getQueryString(req.query.rangeStart);
+    const rangeEnd = getQueryString(req.query.rangeEnd);
+
+    const matchingReports = searchReports({
+      query,
+      selectedDates,
+      rangeStart,
+      rangeEnd
+    });
+
+    const current = matchingReports
+      .filter(report => report.reportPath.startsWith('/reports/current/'))
+      .map(toReportInfo);
+    const archive = matchingReports
+      .filter(report => report.reportPath.startsWith('/reports/archive/'))
+      .map(toReportInfo);
+
+    return res.json({
+      current,
+      archive,
+      configStatus: getConfigStatus()
+    });
+  } catch (error: any) {
+    console.error('Search error:', error);
+    return res.status(400).json({ error: error.message || 'Failed to search reports' });
+  }
 });
 
 // Test Runner Integrations

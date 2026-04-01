@@ -12,7 +12,20 @@ interface ReportsResponse {
     configStatus: {
         hasCurrent: boolean;
         hasArchive: boolean;
+        hasProject?: boolean;
     };
+}
+
+interface SearchFilters {
+    query: string;
+    rangeStart: string;
+    rangeEnd: string;
+}
+
+interface SearchState {
+    isOpen: boolean;
+    draft: SearchFilters;
+    applied: SearchFilters | null;
 }
 
 type SectionKey = 'current' | 'archive';
@@ -121,6 +134,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const loading = document.getElementById('loading') as HTMLElement;
   const emptyState = document.getElementById('empty-state') as HTMLElement;
   const refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
+    const searchToggleBtn = document.getElementById('search-toggle-btn') as HTMLButtonElement;
+    const searchPanel = document.getElementById('search-panel') as HTMLElement;
+    const searchCloseBtn = document.getElementById('search-close-btn') as HTMLButtonElement;
+    const searchInput = document.getElementById('search-input') as HTMLInputElement;
+    const searchSubmitBtn = document.getElementById('search-submit-btn') as HTMLButtonElement;
+    const searchRangeStartInput = document.getElementById('search-range-start') as HTMLInputElement;
+    const searchRangeEndInput = document.getElementById('search-range-end') as HTMLInputElement;
+        const searchResetBtn = document.getElementById('search-reset-btn') as HTMLButtonElement;
 
   // Modal Elements
   const settingsBtn = document.getElementById('settings-btn') as HTMLButtonElement;
@@ -185,6 +206,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let deleteRequest: DeleteRequest | null = null;
   let activeBulkTarget: SectionKey | null = null;
+    let cachedReportsData: ReportsResponse | null = null;
+    let activeSearchState: SearchState = {
+        isOpen: false,
+        draft: {
+        query: '',
+        rangeStart: '',
+        rangeEnd: ''
+        },
+        applied: null
+    };
 
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
 
@@ -226,6 +257,121 @@ document.addEventListener('DOMContentLoaded', () => {
           hour: '2-digit', minute: '2-digit'
       };
       return new Date(dateString).toLocaleDateString(undefined, options);
+  };
+
+  const setEmptyStateContent = (title: string, message: string, allowHtml: boolean = false) => {
+      const heading = emptyState.querySelector('h3');
+      const body = emptyState.querySelector('p');
+      if (heading) heading.textContent = title;
+      if (body) {
+          if (allowHtml) {
+              body.innerHTML = message;
+          } else {
+              body.textContent = message;
+          }
+      }
+  };
+
+  const resetRenderedState = (showLoading: boolean) => {
+      currentSection.classList.add('hidden');
+      archiveSection.classList.add('hidden');
+      closeBulkMenus();
+      selectedReports.current.clear();
+      selectedReports.archive.clear();
+      emptyState.classList.add('hidden');
+      loading.classList.toggle('hidden', !showLoading);
+  };
+
+  const createEmptySearchFilters = (): SearchFilters => ({
+      query: '',
+      rangeStart: '',
+      rangeEnd: ''
+  });
+
+  const normalizeSearchFilters = (filters: SearchFilters): SearchFilters => ({
+      query: filters.query.trim(),
+      rangeStart: filters.rangeStart,
+      rangeEnd: filters.rangeEnd
+  });
+
+  const readSearchInputs = (): SearchFilters => normalizeSearchFilters({
+      query: searchInput.value,
+      rangeStart: searchRangeStartInput.value,
+      rangeEnd: searchRangeEndInput.value
+  });
+
+  const syncSearchInputs = (filters: SearchFilters) => {
+      searchInput.value = filters.query;
+      searchRangeStartInput.value = filters.rangeStart;
+      searchRangeEndInput.value = filters.rangeEnd;
+  };
+
+  const hasSearchFilters = (filters: SearchFilters) => {
+      return Boolean(filters.query || filters.rangeStart || filters.rangeEnd);
+  };
+
+  const setRefreshDisabled = (disabled: boolean) => {
+      refreshBtn.disabled = disabled;
+      refreshBtn.setAttribute('aria-disabled', String(disabled));
+      refreshBtn.title = disabled ? 'Close search to refresh reports' : '';
+  };
+
+  const updateSearchButtonState = () => {
+      const hasAppliedFilter = Boolean(activeSearchState.applied && hasSearchFilters(activeSearchState.applied));
+      searchToggleBtn.classList.toggle('search-toggle-open', activeSearchState.isOpen);
+      searchToggleBtn.classList.toggle('search-toggle-applied', hasAppliedFilter);
+      searchToggleBtn.setAttribute('aria-expanded', String(activeSearchState.isOpen));
+      setRefreshDisabled(activeSearchState.isOpen);
+  };
+
+  const buildSearchUrl = (filters: SearchFilters) => {
+      const params = new URLSearchParams();
+      if (filters.query) params.set('query', filters.query);
+      if (filters.rangeStart) params.set('rangeStart', filters.rangeStart);
+      if (filters.rangeEnd) params.set('rangeEnd', filters.rangeEnd);
+      const queryString = params.toString();
+      return queryString ? `/api/report-search?${queryString}` : '/api/report-search';
+  };
+
+  const setDraftFilters = (filters: SearchFilters) => {
+      activeSearchState.draft = normalizeSearchFilters(filters);
+      syncSearchInputs(activeSearchState.draft);
+  };
+
+  const setAppliedFilters = (filters: SearchFilters | null) => {
+      const normalized = filters ? normalizeSearchFilters(filters) : null;
+      activeSearchState.applied = normalized && hasSearchFilters(normalized) ? normalized : null;
+      setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
+      updateSearchButtonState();
+  };
+
+  const requestReports = async (url: string): Promise<ReportsResponse> => {
+      const response = await fetch(url);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+          throw new Error(data.error || 'Failed to load reports');
+      }
+      return data as ReportsResponse;
+  };
+
+  const updateCachedReportMetadata = (reportId: string, metadata: string) => {
+      if (!cachedReportsData) return;
+      [...cachedReportsData.current, ...cachedReportsData.archive].forEach(report => {
+          if (report.id === reportId) {
+              report.metadata = metadata;
+          }
+      });
+  };
+
+  const updateCachedRenamedReport = (previousPath: string, newId: string, newPath: string, newName: string) => {
+      if (!cachedReportsData) return;
+      cachedReportsData.current.forEach(report => {
+          if (report.path === previousPath) {
+              report.id = newId;
+              report.name = newName;
+              report.path = newPath;
+          }
+      });
   };
 
   const closeBulkMenus = () => {
@@ -568,6 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
                       report.id = data.newId;
                       report.name = newVal;
                       report.path = data.newPath;
+                      updateCachedRenamedReport(previousPath, data.newId, data.newPath, newVal);
                       originalOriginValue = newVal;
                       originInput.dataset.reportId = data.newId;
                       tr.dataset.path = data.newPath;
@@ -625,7 +772,10 @@ document.addEventListener('DOMContentLoaded', () => {
                   if (!res.ok) {
                       const d = await res.json();
                       console.error('Failed to save metadata:', d.error);
+                      return;
                   }
+                  report.metadata = newVal;
+                  updateCachedReportMetadata(report.id, newVal);
               } catch (err) {
                   console.error('Failed to save metadata:', err);
               }
@@ -700,7 +850,7 @@ document.addEventListener('DOMContentLoaded', () => {
           
           // Refresh entire UI to slide it into bottom table!
           setTimeout(() => {
-              fetchReports();
+              void reloadVisibleReports();
           }, 800);
 
       } catch (err: any) {
@@ -918,52 +1068,141 @@ document.addEventListener('DOMContentLoaded', () => {
       return reports.length;
   };
 
-  const fetchReports = async () => {
-      // Reset State
-      currentSection.classList.add('hidden');
-      archiveSection.classList.add('hidden');
-    closeBulkMenus();
-    selectedReports.current.clear();
-    selectedReports.archive.clear();
-      loading.classList.remove('hidden');
-      emptyState.classList.add('hidden');
+  const renderReportsData = (data: ReportsResponse, mode: 'default' | 'search') => {
+      loading.classList.add('hidden');
+
+      const currentCount = renderTable(data.current, 'current');
+      const archiveCount = renderTable(data.archive, 'archive');
+      const { configStatus } = data;
+
+      if (mode === 'search') {
+          if (currentCount === 0 && archiveCount === 0) {
+              emptyState.classList.remove('hidden');
+              setEmptyStateContent(
+                  'No Matching Reports',
+                  'No saved reports matched that metadata and date combination. Adjust the search terms or selected dates and try again.'
+              );
+          }
+          return;
+      }
+
+      if (!configStatus || (!configStatus.hasCurrent && !configStatus.hasArchive)) {
+          emptyState.classList.remove('hidden');
+          setEmptyStateContent('Configuration Required', 'Please open Preferences and configure your report directories to view them here.');
+      } else if (currentCount === 0 && archiveCount === 0) {
+          emptyState.classList.remove('hidden');
+          setEmptyStateContent(
+              'No Reports Found',
+              'No valid Playwright HTML reports could be found in your configured directories.<br><br>Make sure the selected folders actually contain test runs and the innermost folders contain an <code>index.html</code> right at their root.',
+              true
+          );
+      }
+  };
+
+  const fetchReports = async (options: { showLoading?: boolean; render?: boolean } = {}) => {
+      const { showLoading = true, render = true } = options;
+      resetRenderedState(showLoading);
 
       try {
-          const response = await fetch('/api/reports');
-          const data: ReportsResponse = await response.json();
-
-          loading.classList.add('hidden');
-
-          const currentCount = renderTable(data.current, 'current');
-          const archiveCount = renderTable(data.archive, 'archive');
-
-          const { configStatus } = data;
-          
-          // Check if user set the configuration paths
-          if (!configStatus || (!configStatus.hasCurrent && !configStatus.hasArchive)) {
-              emptyState.classList.remove('hidden');
-              const h3 = emptyState.querySelector('h3');
-              const p = emptyState.querySelector('p');
-              if (h3) h3.textContent = "Configuration Required";
-              if (p) p.textContent = "Please open Preferences and configure your report directories to view them here.";
-          } else if (currentCount === 0 && archiveCount === 0) {
-              // Directories configured, but no reports inside them
-              emptyState.classList.remove('hidden');
-              const h3 = emptyState.querySelector('h3');
-              const p = emptyState.querySelector('p');
-              if (h3) h3.textContent = "No Reports Found";
-              if (p) p.innerHTML = "No valid Playwright HTML reports could be found in your configured directories.<br><br>Make sure the selected folders actually contain test runs and the innermost folders contain an <code>index.html</code> right at their root.";
+          const data = await requestReports('/api/reports');
+          cachedReportsData = data;
+          if (render) {
+              renderReportsData(data, 'default');
+          } else {
+              loading.classList.add('hidden');
           }
-
+          return data;
       } catch (error: any) {
-          console.error("Failed to fetch reports:", error);
+          console.error('Failed to fetch reports:', error);
+          loading.classList.add('hidden');
+          if (render) {
+              emptyState.classList.remove('hidden');
+              setEmptyStateContent('Error loading reports', error.message);
+          }
+          throw error;
+      }
+  };
+
+  const fetchAndRenderSearchResults = async (
+      filters: SearchFilters,
+      options: { showLoading?: boolean; updateAppliedState?: boolean } = {}
+  ) => {
+      const { showLoading = true } = options;
+      const { updateAppliedState = true } = options;
+      const normalizedFilters = normalizeSearchFilters(filters);
+
+      resetRenderedState(showLoading);
+
+      try {
+          const data = await requestReports(buildSearchUrl(normalizedFilters));
+          if (updateAppliedState) {
+              setAppliedFilters(normalizedFilters);
+          }
+          renderReportsData(data, 'search');
+          return data;
+      } catch (error: any) {
+          console.error('Failed to search reports:', error);
           loading.classList.add('hidden');
           emptyState.classList.remove('hidden');
-          const h3 = emptyState.querySelector('h3');
-          const p = emptyState.querySelector('p');
-          if (h3) h3.textContent = "Error loading reports";
-          if (p) p.textContent = error.message;
+          setEmptyStateContent('Search Unavailable', error.message || 'The report search could not be completed.');
+          throw error;
       }
+  };
+
+  const searchReportsAndRender = async (options: { showLoading?: boolean } = {}) => {
+      const { showLoading = true } = options;
+      const filters = readSearchInputs();
+      setDraftFilters(filters);
+
+      if (!hasSearchFilters(filters)) {
+          setAppliedFilters(null);
+          restoreDefaultDashboard();
+          return cachedReportsData ?? fetchReports({ showLoading, render: true });
+      }
+
+      return fetchAndRenderSearchResults(filters, { showLoading, updateAppliedState: true });
+  };
+
+  const restoreDefaultDashboard = () => {
+      resetRenderedState(false);
+      if (cachedReportsData) {
+          renderReportsData(cachedReportsData, 'default');
+          return;
+      }
+
+      void fetchReports();
+  };
+
+  const reloadVisibleReports = async () => {
+      const appliedFilters = activeSearchState.applied;
+      if (appliedFilters && hasSearchFilters(appliedFilters)) {
+          await fetchReports({ showLoading: true, render: false });
+          await fetchAndRenderSearchResults(appliedFilters, { showLoading: false, updateAppliedState: false });
+          return;
+      }
+
+      await fetchReports();
+  };
+
+  const openSearchPanel = () => {
+      activeSearchState.isOpen = true;
+      setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
+      searchPanel.classList.remove('hidden');
+      updateSearchButtonState();
+      window.setTimeout(() => searchInput.focus(), 0);
+  };
+
+  const closeSearchPanel = () => {
+      activeSearchState.isOpen = false;
+      setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
+      searchPanel.classList.add('hidden');
+      updateSearchButtonState();
+  };
+
+  const resetSearchFilters = () => {
+      setAppliedFilters(null);
+      restoreDefaultDashboard();
+      window.setTimeout(() => searchInput.focus(), 0);
   };
 
   // --- Modal Logic ---
@@ -1018,7 +1257,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           closeDeleteModal();
-          await fetchReports();
+          await reloadVisibleReports();
 
           if (result.failures.length > 0) {
               alert(`Deleted ${result.successCount} reports. Failed to delete ${result.failures.length}. First error: ${result.failures[0]}`);
@@ -1059,7 +1298,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           
           closeModal();
-          await fetchReports();
+          await reloadVisibleReports();
           
       } catch (err: any) {
           modalError.textContent = err.message;
@@ -1128,7 +1367,7 @@ document.addEventListener('DOMContentLoaded', () => {
                           throw new Error(result.failures[0] || 'Failed to archive reports');
                       }
 
-                      await fetchReports();
+                      await reloadVisibleReports();
 
                       if (result.failures.length > 0) {
                           alert(`Archived ${result.successCount} reports. Failed to archive ${result.failures.length}. First error: ${result.failures[0]}`);
@@ -1159,6 +1398,29 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   });
 
+  searchToggleBtn.addEventListener('click', () => {
+      if (activeSearchState.isOpen) {
+          searchInput.focus();
+          return;
+      }
+      openSearchPanel();
+  });
+
+  searchCloseBtn.addEventListener('click', closeSearchPanel);
+  searchSubmitBtn.addEventListener('click', () => {
+      void searchReportsAndRender();
+  });
+  searchResetBtn.addEventListener('click', resetSearchFilters);
+
+  [searchInput, searchRangeStartInput, searchRangeEndInput].forEach(input => {
+      input.addEventListener('keydown', event => {
+          if (event.key === 'Enter') {
+              event.preventDefault();
+              void searchReportsAndRender();
+          }
+      });
+  });
+
   refreshBtn.addEventListener('click', () => {
       const icon = refreshBtn.querySelector('svg') as SVGSVGElement;
       if (icon) {
@@ -1166,7 +1428,7 @@ document.addEventListener('DOMContentLoaded', () => {
           icon.style.transform = `rotate(360deg)`;
       }
       
-      fetchReports().then(() => {
+      reloadVisibleReports().then(() => {
           setTimeout(() => {
               if (icon) {
                   icon.style.transition = 'none';
@@ -1177,6 +1439,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initial fetch
+    updateSearchButtonState();
+        syncSearchInputs(createEmptySearchFilters());
     syncAllBulkControls();
-  fetchReports();
+    fetchReports();
 });

@@ -34,6 +34,13 @@ export interface ReportRecord {
   reportPath: string;
 }
 
+export interface ReportSearchFilters {
+  query?: string;
+  selectedDates?: string[];
+  rangeStart?: string;
+  rangeEnd?: string;
+}
+
 const DEFAULT_RUNNER_OPTIONS = {
   headed: false,
   ui: false,
@@ -158,4 +165,76 @@ export const deleteReportRecord = (id: string): void => {
 
 export const updateReportId = (oldId: string, newId: string, newPath: string): void => {
   db.prepare('UPDATE reports SET id = ?, reportPath = ? WHERE id = ?').run(newId, newPath, oldId);
+};
+
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+const normalizeSearchText = (value?: string): string => {
+  if (typeof value !== 'string') return '';
+  return value.trim().slice(0, 256);
+};
+
+const normalizeDateInput = (value?: string): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!DATE_ONLY_PATTERN.test(trimmed)) {
+    throw new Error(`Invalid date value: ${value}`);
+  }
+
+  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date value: ${value}`);
+  }
+
+  return trimmed;
+};
+
+const escapeLikePattern = (value: string): string => value.replace(/[\\%_]/g, '\\$&');
+
+export const searchReports = (filters: ReportSearchFilters): ReportRecord[] => {
+  const normalizedQuery = normalizeSearchText(filters.query);
+  const normalizedSelectedDates = Array.from(new Set((filters.selectedDates || [])
+    .map(value => normalizeDateInput(value))
+    .filter((value): value is string => Boolean(value))));
+  const normalizedRangeStart = normalizeDateInput(filters.rangeStart);
+  const normalizedRangeEnd = normalizeDateInput(filters.rangeEnd);
+
+  if (normalizedRangeStart && normalizedRangeEnd && normalizedRangeStart > normalizedRangeEnd) {
+    throw new Error('Range start must be on or before range end');
+  }
+
+  const whereClauses: string[] = [];
+  const params: Array<string> = [];
+
+  if (normalizedQuery) {
+    whereClauses.push(`metadata LIKE ? ESCAPE '\\' COLLATE NOCASE`);
+    params.push(`%${escapeLikePattern(normalizedQuery)}%`);
+  }
+
+  const dateClauses: string[] = [];
+  if (normalizedSelectedDates.length > 0) {
+    const placeholders = normalizedSelectedDates.map(() => '?').join(', ');
+    dateClauses.push(`substr(dateCreated, 1, 10) IN (${placeholders})`);
+    params.push(...normalizedSelectedDates);
+  }
+
+  if (normalizedRangeStart && normalizedRangeEnd) {
+    dateClauses.push(`substr(dateCreated, 1, 10) BETWEEN ? AND ?`);
+    params.push(normalizedRangeStart, normalizedRangeEnd);
+  } else if (normalizedRangeStart) {
+    dateClauses.push(`substr(dateCreated, 1, 10) >= ?`);
+    params.push(normalizedRangeStart);
+  } else if (normalizedRangeEnd) {
+    dateClauses.push(`substr(dateCreated, 1, 10) <= ?`);
+    params.push(normalizedRangeEnd);
+  }
+
+  if (dateClauses.length > 0) {
+    whereClauses.push(`(${dateClauses.join(' OR ')})`);
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  return db.prepare(
+    `SELECT * FROM reports ${whereSql} ORDER BY dateCreated DESC`
+  ).all(...params) as ReportRecord[];
 };

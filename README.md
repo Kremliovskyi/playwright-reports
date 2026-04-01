@@ -23,6 +23,7 @@
 - **⭐ Test Presets:** Save your favorite project selections as "Presets" to instantly recall specific test groups with one click.
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
+- **🔎 Persistent Report Search:** Open the Spotlight-style search panel from the header to filter saved reports by metadata and created date range. Applied filters stay active after the panel closes, and the Search button highlights when the dashboard is filtered.
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
@@ -91,6 +92,22 @@ Click **Run Tests** from the main dashboard to open the runner interface.
 
 ---
 
+## 🔎 Report Search & Filtering
+
+The dashboard includes a floating search panel in the header for quickly narrowing the visible reports without leaving the main view.
+
+- **Scope:** Search currently matches only persisted report metadata and the report creation date.
+- **Date Range Filtering:** Use the `From` and `To` fields to filter by a bounded or partial date range.
+- **Persistent Applied Filters:** After you run a search, you can close the dialog with `X` and keep the filtered dashboard in place.
+- **Highlighted Search State:** When a filter is applied, the header Search button remains visually highlighted so it is obvious that the dashboard is still filtered.
+- **Reset Behavior:** Use the `Reset` button inside the dialog to clear the form values and restore the full unfiltered dashboard.
+- **Keyboard Shortcut:** Press `Enter` in the search field or date inputs to submit the current filter values.
+- **Refresh Safety:** While the search dialog is open, the Refresh button is temporarily disabled to avoid accidental syncs from that state. Row-level actions such as archive, delete, extract, rename, and metadata editing continue to work on the filtered results.
+
+> **Important:** Search is intentionally read-only. Opening, submitting, closing, or resetting the search dialog does not mutate report files or rewrite report metadata. The search route queries the already persisted report index.
+
+---
+
 ## 📦 Trace Extraction (AI Ready)
 
 Playwright packages test traces (network logs, DOM snapshots) into `.zip` files.
@@ -154,6 +171,7 @@ If you started the server with `npm start`, it runs in the background using PM2.
 The dashboard now automatically tracks every report in its persistent SQLite database.
 
 - **Automated Sync:** Every time you refresh the dashboard, it performs a differential sync between your filesystem and the database.
+- **Read-Only Search Index:** The persisted report rows also power the dashboard search feature. This allows search to stay fast and safe while preserving metadata across refreshes, renames, and archive moves.
 - **Inline Editing:** Just click into the **Metadata** column on any report row to add or edit custom info.
 - **Date Tracking:** Creation dates are captured directly from the filesystem's `birthtime` and persisted, ensuring consistent ordering.
 - **Archive Integrity:** When you move a report to the archive, its metadata and historical record are automatically updated in the database to reflect the new path.

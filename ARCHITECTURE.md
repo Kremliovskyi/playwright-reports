@@ -21,6 +21,14 @@ The application enforces a strictly zero-configuration data model out of the box
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
 - **`reports` Table:** Persists metadata for all scanned reports. It uses the report folder name as the primary `id` — the `id` is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
 
+### Read-only search index
+
+The same `reports` table also powers the dashboard's persistent search/filter UI.
+
+- **Searchable fields:** The search layer currently matches only `metadata` and `dateCreated`.
+- **Read-only contract:** The dedicated search route does not call `scanDirectory()`, does not upsert report rows, and does not mutate the filesystem. It only queries the already persisted `reports` rows.
+- **Why this matters:** Search can stay fast and safe, while normal dashboard load and explicit Refresh remain the only moments when filesystem-to-database sync occurs.
+
 ---
 
 ## 📊 Report Metadata & Syncing
@@ -33,6 +41,15 @@ The application does not use a "dumb" filesystem scan. It implements a different
 - **Archiving Logic:** When a report is moved to the Archive via `/api/archive`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move.
 - **Deleting Logic:** When a user permanently deletes a report via `/api/delete-report`, the backend uses `fs.rm` with `{ recursive: true, force: true }` to completely wipe the report from disk.
 - **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the `scanDirectory` sync to keep the database and UI in perfect alignment.
+
+### Search vs sync boundary
+
+There is an intentional separation between the two dashboard data flows:
+
+- **`GET /api/reports`:** Performs the normal scan-and-sync behavior, merging the filesystem into SQLite before rendering the dashboard.
+- **`GET /api/report-search`:** Queries the persisted SQLite rows only and returns the same `{ current, archive, configStatus }` shape as the main dashboard load so the frontend can reuse the same table renderer.
+
+This keeps the filtering UX consistent while preserving the rule that search itself must not update reports.
 
 ---
 
@@ -49,6 +66,21 @@ The Current and Archived tables now maintain independent, frontend-only selectio
 ### Why selection is frontend-only
 
 Selection is strictly a transient UI concern. Persisting it in SQLite would add state-recovery complexity without improving the underlying report model, since a page refresh or filesystem sync can legitimately re-order, rename, archive, or remove reports.
+
+---
+
+## 🔎 Persistent Search UI Model
+
+The header search panel behaves as a persistent filter control rather than a temporary modal.
+
+- **Draft vs applied state:** The frontend keeps a distinction between the values currently typed into the open dialog and the values currently applied to the dashboard. This is why the dialog can be closed without clearing the filtered result set.
+- **Close behavior:** Clicking the `X` only hides the panel. It does not clear the active filter.
+- **Reset behavior:** The explicit `Reset` action clears the applied filter, clears the form values, and restores the cached unfiltered dashboard.
+- **Header signal:** When a filter is applied, the Search button remains highlighted so the filtered state is visible even when the dialog is closed.
+- **Refresh gating:** Refresh is disabled only while the dialog is open. Once the panel is closed, Refresh is available again even if a filter remains applied.
+- **Row actions remain live:** Archive, delete, extract, rename, and metadata editing are still allowed while the dashboard is filtered.
+
+This model reduces layout disruption because the floating panel can be closed while leaving the filtered table view intact.
 
 ---
 

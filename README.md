@@ -97,6 +97,7 @@ Click **Run Tests** from the main dashboard to open the runner interface.
 The dashboard includes a floating search panel in the header for quickly narrowing the visible reports without leaving the main view.
 
 - **Scope:** Search currently matches only persisted report metadata and the report creation date.
+- **Metadata Matching:** Multi-word metadata queries are case-insensitive and match when all words are present, even if other words appear between them (for example, `UAT e2e` matches `UAT EU e2e`).
 - **Date Range Filtering:** Use the `From` and `To` fields to filter by a bounded or partial date range.
 - **Persistent Applied Filters:** After you run a search, you can close the dialog with `X` and keep the filtered dashboard in place.
 - **Highlighted Search State:** When a filter is applied, the header Search button remains visually highlighted so it is obvious that the dashboard is still filtered.

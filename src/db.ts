@@ -174,6 +174,10 @@ const normalizeSearchText = (value?: string): string => {
   return value.trim().slice(0, 256);
 };
 
+const splitSearchQueryTokens = (value: string): string[] => value
+  .split(/\s+/)
+  .filter(Boolean);
+
 const normalizeDateInput = (value?: string): string | null => {
   if (!value) return null;
   const trimmed = value.trim();
@@ -207,8 +211,11 @@ export const searchReports = (filters: ReportSearchFilters): ReportRecord[] => {
   const params: Array<string> = [];
 
   if (normalizedQuery) {
-    whereClauses.push(`metadata LIKE ? ESCAPE '\\' COLLATE NOCASE`);
-    params.push(`%${escapeLikePattern(normalizedQuery)}%`);
+    const queryTokens = splitSearchQueryTokens(normalizedQuery);
+    if (queryTokens.length > 0) {
+      whereClauses.push(`(${queryTokens.map(() => `metadata LIKE ? ESCAPE '\\' COLLATE NOCASE`).join(' AND ')})`);
+      params.push(...queryTokens.map(token => `%${escapeLikePattern(token)}%`));
+    }
   }
 
   const dateClauses: string[] = [];

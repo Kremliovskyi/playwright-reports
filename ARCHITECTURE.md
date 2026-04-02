@@ -47,7 +47,7 @@ The application does not use a "dumb" filesystem scan. It implements a different
 There is an intentional separation between the two dashboard data flows:
 
 - **`GET /api/reports`:** Performs the normal scan-and-sync behavior, merging the filesystem into SQLite before rendering the dashboard.
-- **`GET /api/report-search`:** Queries the persisted SQLite rows only and returns the same `{ current, archive, configStatus }` shape as the main dashboard load so the frontend can reuse the same table renderer.
+- **`GET /api/report-search`:** Queries the persisted SQLite rows only and returns the same `{ current, archive, configStatus }` shape as the main dashboard load so the frontend can reuse the same table renderer. Metadata text is matched case-insensitively by whitespace-delimited tokens, with all tokens required to match.
 
 This keeps the filtering UX consistent while preserving the rule that search itself must not update reports.
 

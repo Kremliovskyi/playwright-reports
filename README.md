@@ -19,6 +19,7 @@
 
 ## ✨ Features
 
+- **🌐 Serve Local HTML Reports Instantly:** Open Playwright HTML reports directly from the dashboard as locally served pages, and keep multiple reports open side-by-side in separate browser tabs without repeatedly running `npx playwright show-report`.
 - **🚀 Integrated Test Runner:** Run your Playwright tests directly from the dashboard. Select projects, apply greps, configure workers, and watch the live colored terminal output stream in real-time.
 - **⭐ Test Presets:** Save your favorite project selections as "Presets" to instantly recall specific test groups with one click.
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.

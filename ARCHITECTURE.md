@@ -51,6 +51,29 @@ There is an intentional separation between the two dashboard data flows:
 
 This keeps the filtering UX consistent while preserving the rule that search itself must not update reports.
 
+## Agent Discovery Boundary
+
+The dashboard exposes a minimal agent-facing contract for report discovery, but intentionally stops short of trace parsing.
+
+Current endpoints:
+
+- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`.
+- `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
+
+Important contract rules:
+
+- The agent API is local-first. Returned paths are intended for immediate local analysis.
+- `reportRef` is a hub-owned lookup token. Callers should treat it as opaque and should not derive filesystem paths from it manually.
+- The dashboard does not parse traces, compare failures, or implement `summary`, `network`, `dom`, or related analysis flows.
+- Those analysis workflows belong to `playwright-traces-reader`, which consumes the resolved local path after `prepare`.
+
+This keeps responsibilities clean:
+
+- `playwright-reports` owns cataloging, metadata persistence, search, and path resolution.
+- `playwright-traces-reader` owns parsing and higher-level trace analysis.
+
+If remote storage is added later, this boundary still holds. The `prepare` step can evolve to materialize or proxy the correct local analysis target without changing the parsing CLI contract.
+
 ---
 
 ## ☑️ Table Selection & Bulk Actions

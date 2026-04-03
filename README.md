@@ -25,6 +25,7 @@
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
 - **🔎 Persistent Report Search:** Open the Spotlight-style search panel from the header to filter saved reports by metadata and created date range. Applied filters stay active after the panel closes, and the Search button highlights when the dashboard is filtered.
+- **🤖 Agent-Friendly Report Hub:** Expose local-first report discovery and preparation endpoints so `playwright-traces-reader` can search by metadata/date, resolve a selected report, and then parse it locally.
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
@@ -120,6 +121,21 @@ This API is intended to be used by `playwright-traces-reader` helper commands or
 1. Search the dashboard for the intended report.
 2. Prepare the selected report to get its local report root or `data/` directory.
 3. Run the traditional `playwright-traces-reader` CLI commands against that local path.
+
+Typical companion CLI flow:
+
+```bash
+npx playwright-traces-reader search-reports "UAT EU" --latest --limit 1
+npx playwright-traces-reader prepare-report <reportRef>
+npx playwright-traces-reader failures <reportRootPath>
+npx playwright-traces-reader summary <tracePath>
+```
+
+Boundary rules:
+
+- `playwright-reports` owns report inventory, persisted metadata/date search, and local path resolution.
+- `playwright-reports` does not parse traces or reimplement `playwright-traces-reader` analysis commands.
+- `playwright-traces-reader` remains the parser and analysis CLI.
 
 The current implementation is local-first. Future remote storage support should evolve behind the same `prepare` step so the caller does not need to change behavior.
 

@@ -135,6 +135,30 @@ interface ReportInfo {
   metadata: string;
 }
 
+type ReportScope = 'current' | 'archive';
+type AgentAnalysisType = 'failures' | 'summary' | 'network' | 'dom' | 'timeline';
+
+interface AgentReportDescriptor {
+  reportRef: string;
+  id: string;
+  name: string;
+  metadata: string;
+  createdAt: string;
+  scope: ReportScope;
+  dashboardPath: string;
+  reportRootPath: string | null;
+  reportDataPath: string | null;
+  reportIndexPath: string | null;
+  exists: {
+    reportRoot: boolean;
+    dataDir: boolean;
+    indexHtml: boolean;
+  };
+}
+
+const AGENT_API_SCHEMA_VERSION = 1;
+const DASHBOARD_REPORT_PATH_PATTERN = /^\/reports\/(current|archive)\/([^/]+)\/index\.html$/;
+
 const getConfigStatus = () => ({
   hasCurrent: !!appConfig.currentPath,
   hasArchive: !!appConfig.archivePath,
@@ -163,6 +187,102 @@ const getQueryArray = (value: unknown): string[] => {
     return value.split(',').map(item => item.trim()).filter(Boolean);
   }
   return [];
+};
+
+const parseBooleanQuery = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false;
+  return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+};
+
+const parsePositiveIntegerQuery = (value: unknown): number | null => {
+  if (typeof value !== 'string') return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+};
+
+const parseReportScope = (value: unknown): ReportScope | null => {
+  if (value === 'current' || value === 'archive') return value;
+  return null;
+};
+
+const encodeReportRef = (reportPath: string): string => Buffer.from(reportPath, 'utf8').toString('base64url');
+
+const decodeReportRef = (reportRef: string): string | null => {
+  try {
+    return Buffer.from(reportRef, 'base64url').toString('utf8');
+  } catch {
+    return null;
+  }
+};
+
+const parseDashboardReportPath = (reportPath: string): { scope: ReportScope; folderName: string } | null => {
+  const match = reportPath.match(DASHBOARD_REPORT_PATH_PATTERN);
+  if (!match) return null;
+  return {
+    scope: match[1] as ReportScope,
+    folderName: match[2],
+  };
+};
+
+const getBasePathForScope = (scope: ReportScope): string | null => {
+  return scope === 'current' ? appConfig.currentPath || null : appConfig.archivePath || null;
+};
+
+const toAgentReportDescriptor = (record: ReportRecord): AgentReportDescriptor => {
+  const parsed = parseDashboardReportPath(record.reportPath);
+  const basePath = parsed ? getBasePathForScope(parsed.scope) : null;
+  const reportRootPath = parsed && basePath ? path.join(basePath, parsed.folderName) : null;
+  const reportDataPath = reportRootPath ? path.join(reportRootPath, 'data') : null;
+  const reportIndexPath = reportRootPath ? path.join(reportRootPath, 'index.html') : null;
+
+  return {
+    reportRef: encodeReportRef(record.reportPath),
+    id: record.id,
+    name: record.id,
+    metadata: record.metadata,
+    createdAt: record.dateCreated,
+    scope: parsed?.scope || 'current',
+    dashboardPath: record.reportPath,
+    reportRootPath,
+    reportDataPath,
+    reportIndexPath,
+    exists: {
+      reportRoot: Boolean(reportRootPath && fs.existsSync(reportRootPath)),
+      dataDir: Boolean(reportDataPath && fs.existsSync(reportDataPath)),
+      indexHtml: Boolean(reportIndexPath && fs.existsSync(reportIndexPath)),
+    }
+  };
+};
+
+const getReportFromRef = (reportRef: string): ReportRecord | null => {
+  const decodedReportPath = decodeReportRef(reportRef);
+  if (!decodedReportPath) return null;
+
+  const parsed = parseDashboardReportPath(decodedReportPath);
+  if (!parsed) return null;
+
+  const record = getReport(parsed.folderName);
+  if (!record || record.reportPath !== decodedReportPath) return null;
+  return record;
+};
+
+const getPreparedReportDescriptor = (reportRef: string): AgentReportDescriptor => {
+  const record = getReportFromRef(reportRef);
+  if (!record) {
+    throw new Error('Report reference could not be resolved');
+  }
+
+  const descriptor = toAgentReportDescriptor(record);
+  if (!descriptor.reportRootPath || !descriptor.reportDataPath) {
+    throw new Error('Report could not be prepared because its storage path is not configured');
+  }
+
+  if (!descriptor.exists.reportRoot || !descriptor.exists.indexHtml || !descriptor.exists.dataDir) {
+    throw new Error('Report artifact is not available on local disk');
+  }
+
+  return descriptor;
 };
 
 // Helper to scan a directory for valid reports and sync with DB
@@ -277,6 +397,75 @@ app.get('/api/report-search', (req: Request, res: Response): any => {
   } catch (error: any) {
     console.error('Search error:', error);
     return res.status(400).json({ error: error.message || 'Failed to search reports' });
+  }
+});
+
+app.get('/api/agent/reports/search', (req: Request, res: Response): any => {
+  refreshConfigCache();
+
+  try {
+    const query = getQueryString(req.query.query);
+    const selectedDates = getQueryArray(req.query.selectedDates);
+    const rangeStart = getQueryString(req.query.rangeStart);
+    const rangeEnd = getQueryString(req.query.rangeEnd);
+    const scope = parseReportScope(req.query.scope);
+    const latest = parseBooleanQuery(req.query.latest);
+    const limit = parsePositiveIntegerQuery(req.query.limit);
+
+    let matches = searchReports({
+      query,
+      selectedDates,
+      rangeStart,
+      rangeEnd
+    });
+
+    if (scope) {
+      matches = matches.filter(report => report.reportPath.startsWith(`/reports/${scope}/`));
+    }
+
+    if (latest && matches.length > 1) {
+      matches = [matches[0]];
+    } else if (limit !== null) {
+      matches = matches.slice(0, limit);
+    }
+
+    const reports = matches.map(toAgentReportDescriptor);
+
+    return res.json({
+      schemaVersion: AGENT_API_SCHEMA_VERSION,
+      command: 'search-reports',
+      totalCount: reports.length,
+      reports,
+    });
+  } catch (error: any) {
+    console.error('Agent search error:', error);
+    return res.status(400).json({ error: error.message || 'Failed to search reports for agent workflow' });
+  }
+});
+
+app.get('/api/agent/reports/prepare', (req: Request, res: Response): any => {
+  refreshConfigCache();
+
+  try {
+    const reportRef = getQueryString(req.query.reportRef);
+    if (!reportRef) {
+      return res.status(400).json({ error: 'reportRef is required' });
+    }
+
+    const report = getPreparedReportDescriptor(reportRef);
+    return res.json({
+      schemaVersion: AGENT_API_SCHEMA_VERSION,
+      command: 'prepare-report-analysis',
+      mode: 'local',
+      report,
+      analysisTarget: {
+        reportRootPath: report.reportRootPath,
+        reportDataPath: report.reportDataPath,
+      }
+    });
+  } catch (error: any) {
+    console.error('Agent prepare error:', error);
+    return res.status(404).json({ error: error.message || 'Failed to prepare report for analysis' });
   }
 });
 

@@ -7,6 +7,7 @@ export interface AppConfig {
   currentPath: string;
   archivePath: string;
   projectPath: string;
+  vaultPath: string;
   runnerOptions: {
     headed: boolean;
     ui: boolean;
@@ -57,6 +58,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   currentPath: "",
   archivePath: "",
   projectPath: "",
+  vaultPath: "",
   runnerOptions: { ...DEFAULT_RUNNER_OPTIONS },
   selectedProjects: []
 };
@@ -90,11 +92,17 @@ db.exec(`
   );
 `);
 
+// Migration: add vaultPath column if missing
+const configColumns = db.prepare("PRAGMA table_info(config)").all() as { name: string }[];
+if (!configColumns.some(c => c.name === 'vaultPath')) {
+  db.exec("ALTER TABLE config ADD COLUMN vaultPath TEXT NOT NULL DEFAULT ''");
+}
+
 // Ensure default config row exists
 const existing = db.prepare('SELECT id FROM config WHERE id = ?').get('default');
 if (!existing) {
-  db.prepare('INSERT INTO config (id, currentPath, archivePath, projectPath, runnerOptions, selectedProjects) VALUES (?, ?, ?, ?, ?, ?)')
-    .run('default', '', '', '', JSON.stringify(DEFAULT_RUNNER_OPTIONS), '[]');
+  db.prepare('INSERT INTO config (id, currentPath, archivePath, projectPath, vaultPath, runnerOptions, selectedProjects) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run('default', '', '', '', '', JSON.stringify(DEFAULT_RUNNER_OPTIONS), '[]');
 }
 
 // --- Config Operations ---
@@ -106,14 +114,15 @@ export const getConfig = (): AppConfig => {
     currentPath: row.currentPath,
     archivePath: row.archivePath,
     projectPath: row.projectPath,
+    vaultPath: row.vaultPath || '',
     runnerOptions: JSON.parse(row.runnerOptions),
     selectedProjects: JSON.parse(row.selectedProjects)
   };
 };
 
 export const updateConfig = (config: AppConfig): void => {
-  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
-    .run(config.currentPath, config.archivePath, config.projectPath, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
+  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
+    .run(config.currentPath, config.archivePath, config.projectPath, config.vaultPath, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
 };
 
 // --- Preset Operations ---

@@ -153,6 +153,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const currentPathInput = document.getElementById('current-path-input') as HTMLInputElement;
   const archivePathInput = document.getElementById('archive-path-input') as HTMLInputElement;
   const projectPathInput = document.getElementById('project-path-input') as HTMLInputElement;
+  const vaultPathInput = document.getElementById('vault-path-input') as HTMLInputElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
 
   const deleteModal = document.getElementById('delete-modal') as HTMLElement;
@@ -211,6 +212,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let deleteRequest: DeleteRequest | null = null;
   let activeBulkTarget: SectionKey | null = null;
+  let vaultFiles: Set<string> = new Set();
     let cachedReportsData: ReportsResponse | null = null;
     let activeSearchState: SearchState = {
         isOpen: false,
@@ -386,6 +388,15 @@ document.addEventListener('DOMContentLoaded', () => {
           const context = tableContexts[target];
           context.bulkMenuPanel.classList.add('hidden');
           context.bulkMenuTrigger.setAttribute('aria-expanded', 'false');
+      });
+  };
+
+  const closeAllOverflowMenus = () => {
+      document.querySelectorAll('.row-overflow-panel').forEach(panel => {
+          panel.classList.add('hidden');
+      });
+      document.querySelectorAll('.row-overflow-trigger').forEach(trigger => {
+          trigger.setAttribute('aria-expanded', 'false');
       });
   };
 
@@ -586,20 +597,30 @@ document.addEventListener('DOMContentLoaded', () => {
           if (target && target.closest('.btn-open')) return;
           if (target && target.closest('.metadata-input')) return;
           if (target && target.closest('.row-select-control')) return;
+          if (target && target.closest('.row-overflow-menu')) return;
+
           window.open(report.path, '_blank', 'noopener,noreferrer');
       });
 
-      const archiveButtonHtml = isCurrent ? `
-        <button class="btn btn-archive" aria-label="Archive Report">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-folder-output"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/></svg>
+      const fixAriaOverflowHtml = isCurrent ? `
+        <button class="row-overflow-action overflow-fix-aria" aria-label="Fix Aria Snapshots">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+            Fix Snapshots
+        </button>
+      ` : '';
+
+      const archiveOverflowHtml = isCurrent ? `
+        <button class="row-overflow-action overflow-archive" aria-label="Archive Report">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/></svg>
             Archive
         </button>
       ` : '';
 
-      const fixAriaButtonHtml = isCurrent ? `
-        <button class="btn btn-fix-aria" aria-label="Fix Aria Snapshots">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-wrench"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-            Fix Snapshots
+      const hasVaultFile = vaultFiles.has(report.id);
+      const analysisOverflowHtml = hasVaultFile ? `
+        <button class="row-overflow-action overflow-analysis" aria-label="View Analysis">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            Analysis
         </button>
       ` : '';
 
@@ -627,20 +648,27 @@ document.addEventListener('DOMContentLoaded', () => {
           </td>
           <td class="col-action">
               <div class="row-actions">
-                  <button class="btn btn-extract" aria-label="Extract Traces">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-archive"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
-                      Extract
-                  </button>
-                  ${fixAriaButtonHtml}
-                  ${archiveButtonHtml}
-                  <button class="btn btn-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
-                      Delete
-                  </button>
                   <a href="${report.path}" target="_blank" rel="noopener noreferrer" class="btn-open" aria-label="Open Report">
                       View Report
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
                   </a>
+                  <div class="row-overflow-menu">
+                      <button class="row-overflow-trigger" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
+                      <div class="row-overflow-panel hidden" role="menu">
+                          ${analysisOverflowHtml}
+                          <button class="row-overflow-action overflow-extract" aria-label="Extract Traces">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
+                              Extract
+                          </button>
+                          ${fixAriaOverflowHtml}
+                          ${archiveOverflowHtml}
+                          <div class="row-overflow-divider"></div>
+                          <button class="row-overflow-action danger overflow-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
+                              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                              Delete
+                          </button>
+                      </div>
+                  </div>
               </div>
           </td>
       `;
@@ -672,39 +700,82 @@ document.addEventListener('DOMContentLoaded', () => {
           openLink.addEventListener('click', e => e.stopPropagation());
       }
 
-      // Wire up extract button
-      const extractBtn = tr.querySelector('.btn-extract') as HTMLButtonElement;
-      if (extractBtn) {
-          extractBtn.addEventListener('click', async (e) => {
+      // Wire up analysis button in overflow menu
+      const analysisBtn = tr.querySelector('.overflow-analysis') as HTMLButtonElement;
+      if (analysisBtn) {
+          analysisBtn.addEventListener('click', (e) => {
               e.stopPropagation();
-              await handleExtract(report.path, extractBtn);
+              closeAllOverflowMenus();
+              window.open('/vault/' + encodeURIComponent(report.id), '_blank', 'noopener,noreferrer');
+          });
+      }
+
+      // Wire up overflow menu toggle
+      const overflowTrigger = tr.querySelector('.row-overflow-trigger') as HTMLButtonElement;
+      const overflowPanel = tr.querySelector('.row-overflow-panel') as HTMLElement;
+      if (overflowTrigger && overflowPanel) {
+          overflowTrigger.addEventListener('click', (e) => {
+              e.stopPropagation();
+              const isOpen = !overflowPanel.classList.contains('hidden');
+              closeAllOverflowMenus();
+              if (!isOpen) {
+                  overflowPanel.classList.remove('hidden');
+                  overflowTrigger.setAttribute('aria-expanded', 'true');
+                  // Position the fixed panel relative to the trigger button
+                  const triggerRect = overflowTrigger.getBoundingClientRect();
+                  const panelRect = overflowPanel.getBoundingClientRect();
+                  const spaceBelow = window.innerHeight - triggerRect.bottom;
+                  if (spaceBelow < panelRect.height + 8) {
+                      // Flip upward
+                      overflowPanel.style.top = '';
+                      overflowPanel.style.bottom = (window.innerHeight - triggerRect.top + 6) + 'px';
+                  } else {
+                      // Open downward
+                      overflowPanel.style.bottom = '';
+                      overflowPanel.style.top = (triggerRect.bottom + 6) + 'px';
+                  }
+                  overflowPanel.style.right = (window.innerWidth - triggerRect.right) + 'px';
+              }
+          });
+      }
+
+      // Wire up overflow extract button
+      const overflowExtractBtn = tr.querySelector('.overflow-extract') as HTMLButtonElement;
+      if (overflowExtractBtn) {
+          overflowExtractBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              closeAllOverflowMenus();
+              await handleExtract(report.path, overflowExtractBtn);
           });
       }
 
       // Wire up archive button conditionally
       if (isCurrent) {
-        const archiveBtn = tr.querySelector('.btn-archive') as HTMLButtonElement;
+        const archiveBtn = tr.querySelector('.overflow-archive') as HTMLButtonElement;
         if (archiveBtn) {
             archiveBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
+                closeAllOverflowMenus();
                 await handleArchive(report.path, archiveBtn);
             });
         }
         
-        const fixAriaBtn = tr.querySelector('.btn-fix-aria') as HTMLButtonElement;
+        const fixAriaBtn = tr.querySelector('.overflow-fix-aria') as HTMLButtonElement;
         if (fixAriaBtn) {
             fixAriaBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
+                closeAllOverflowMenus();
                 await handleFixAria(report.path, fixAriaBtn);
             });
         }
       }
 
       // Wire up delete button
-      const deleteBtn = tr.querySelector('.btn-delete') as HTMLButtonElement;
+      const deleteBtn = tr.querySelector('.overflow-delete') as HTMLButtonElement;
       if (deleteBtn) {
           deleteBtn.addEventListener('click', (e) => {
               e.stopPropagation();
+              closeAllOverflowMenus();
               openDeleteModal({
                   reportPaths: [report.path],
                   title: 'Delete Report',
@@ -1150,11 +1221,23 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
+  const fetchVaultFiles = async () => {
+      try {
+          const response = await fetch('/api/vault/list');
+          if (!response.ok) return;
+          const data = await response.json();
+          vaultFiles = new Set((data.files || []).map((f: { filename: string }) => f.filename));
+      } catch {
+          vaultFiles = new Set();
+      }
+  };
+
   const fetchReports = async (options: { showLoading?: boolean; render?: boolean } = {}) => {
       const { showLoading = true, render = true } = options;
       resetRenderedState(showLoading);
 
       try {
+          await fetchVaultFiles();
           const data = await requestReports('/api/reports');
           cachedReportsData = data;
           if (render) {
@@ -1268,6 +1351,7 @@ document.addEventListener('DOMContentLoaded', () => {
           currentPathInput.value = data.currentPath || '';
           archivePathInput.value = data.archivePath || '';
           projectPathInput.value = data.projectPath || '';
+          vaultPathInput.value = data.vaultPath || '';
       } catch (err) {
           console.error("Failed to load config:", err);
       }
@@ -1330,6 +1414,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const currentPath = currentPathInput.value.trim();
       const archivePath = archivePathInput.value.trim();
       const projectPath = projectPathInput.value.trim();
+      const vaultPath = vaultPathInput.value.trim();
 
       modalError.classList.add('hidden');
       saveModalBtn.disabled = true;
@@ -1339,7 +1424,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const response = await fetch('/api/config', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ currentPath, archivePath, projectPath })
+              body: JSON.stringify({ currentPath, archivePath, projectPath, vaultPath })
           });
           
           const data = await response.json();
@@ -1441,11 +1526,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!target.closest('.bulk-menu')) {
           closeBulkMenus();
       }
+      if (!target.closest('.row-overflow-menu')) {
+          closeAllOverflowMenus();
+      }
   });
 
   document.addEventListener('keydown', event => {
       if (event.key === 'Escape') {
           closeBulkMenus();
+          closeAllOverflowMenus();
       }
   });
 

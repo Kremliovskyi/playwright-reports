@@ -35,7 +35,8 @@
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
-- **🗃️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
+- **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename for quick access via the row overflow menu.
+- **🗄️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
 
 ---
 
@@ -149,6 +150,18 @@ Having extracted traces as raw JSON/network files allows AI agents to easily rea
 
 - Click **Extract** next to any report to automatically unzip its trace files on the host machine.
 - Trace extraction stays intentionally per-report, while archive and delete workflows are handled through the new multi-select controls in each table.
+
+---
+
+## 📓 Vault Viewer (Markdown Analysis Files)
+
+The dashboard integrates with an Obsidian-style vault directory for storing analysis notes alongside your test reports.
+
+- **Configuration:** Set the vault path in Preferences to point at a directory of `.md` files (e.g., your Obsidian vault's reports folder).
+- **Report Matching:** When a vault filename matches a report origin label, an "Analysis" action appears in that report's overflow menu.
+- **Rendered View:** Markdown is rendered server-side with full support for headings, tables, code blocks, links, and images.
+- **Inline Editing:** Click Edit to switch to a full-height monospace textarea, make your changes, and Save writes back to disk.
+- **Agent Endpoints:** The vault is also exposed via `/api/agent/vault/list` and `/api/agent/vault/:filename` for programmatic access.
 
 ---
 

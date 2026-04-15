@@ -804,7 +804,110 @@ p {
 .row-actions {
   display: flex;
   gap: 8px;
-  flex-wrap: wrap;
+  align-items: center;
+}
+
+.row-actions-primary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row-overflow-menu {
+  position: relative;
+}
+
+.row-overflow-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  line-height: 1;
+}
+
+.row-overflow-trigger:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.row-overflow-panel {
+  position: fixed;
+  min-width: 170px;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+}
+
+.row-overflow-action {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.row-overflow-action:hover {
+  background: var(--bg-surface-hover);
+}
+
+.row-overflow-action.danger {
+  color: #ff7b72;
+}
+
+.row-overflow-action.danger:hover {
+  background: rgba(248, 81, 73, 0.12);
+  color: #ffa198;
+}
+
+.row-overflow-action.success {
+  color: #3fb950;
+}
+
+.row-overflow-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 0.25rem 0.4rem;
+}
+
+.btn-analysis {
+  background: transparent;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  border-color: var(--border-color);
+  color: var(--text-secondary);
+}
+
+.btn-analysis:hover {
+  border-color: #58a6ff;
+  color: #58a6ff;
+  background: rgba(88, 166, 255, 0.08);
 }
 
 .col-metadata {

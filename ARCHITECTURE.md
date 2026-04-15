@@ -232,3 +232,52 @@ When developers fix aria snapshots, it's essential to understand exactly what ch
 - **Dynamic Processing:** The `app.ts` logic detects this checkbox and dynamically prepends `- /children: deep-equal\n` to the top of the diff output. It executes this *without* triggering diff highlighting (so it appears as regular text), ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.
 - **Indentation Normalization:** The expected snapshot (read from the `.yml` file on disk) uses 4-space YAML indentation (as enforced by the project's snapshot rules), while the new snapshot extracted from Playwright's error output always uses 2-space indentation. Before the LCS diff runs, both strings are passed through `normalizeIndent()` which detects the minimum indent unit and normalises everything to 2-space. This ensures virtually all unchanged lines match exactly and the diff highlights only genuine content differences. **The Apply Fix path is not affected** — the 2-space string from Playwright's error output is saved directly, which is what Playwright itself expects when re-running tests.
 - **CRLF Normalization:** On Windows, Git's default `core.autocrlf=true` checks out `.yml` snapshot files with `\r\n` line endings. The new snapshot extracted from Playwright's error log is always LF-only (each extracted line is already stripped of `\r`). Without normalization, `computeDiff` splits by `\n` and compares e.g. `"  - radio \"Passport\"\r"` vs `"  - radio \"Passport\""` — the LCS finds zero matches, causing every line to show as removed/added. To prevent this, `fs.readFileSync` in `server.ts` applies `.replace(/\r\n/g, '\n').replace(/\r/g, '\n')` immediately after reading the expected snapshot from disk. As a belt-and-suspenders measure, `normalizeIndent()` and `computeDiff()` in `app.ts` also normalize their inputs before splitting, making the diff immune to CRLF regardless of data source.
+
+---
+
+## 📓 Vault Integration (Markdown Analysis Files)
+
+The dashboard integrates with an Obsidian-style vault directory for storing per-report analysis notes as Markdown files.
+
+### Configuration
+
+- **Vault Path:** Configured in Preferences alongside other paths. Stored in the `config` table as `vaultPath`. The DB migration adds the column via `ALTER TABLE` with an existence check.
+- **File Matching:** The frontend fetches the vault file list at dashboard load and matches filenames against report origin labels to conditionally show an "Analysis" action in the overflow menu.
+
+### Server-Side Rendering
+
+- **markdown-it:** Markdown files are rendered server-side using `markdown-it` with `html: true`, `linkify: true`, and `typographer: true`.
+- **Vault Page:** `GET /vault/:filename` returns a full standalone HTML page with dark theme, rendered markdown, and an inline edit/save UI.
+- **Edit Mode:** The page includes a `<textarea>` pre-filled with the raw markdown. Save writes back to disk via `PUT /api/vault/:filename`. The textarea uses `min-height: 80vh` for comfortable editing.
+
+### API Routes
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/vault/list` | GET | Lists `.md` files in the vault directory with modification times |
+| `/api/vault/:filename/raw` | GET | Returns raw markdown as `text/markdown` |
+| `/api/vault/:filename` | PUT | Writes `req.body.content` back to disk |
+| `/vault/:filename` | GET | Renders full HTML page with markdown-it |
+| `/api/agent/vault/list` | GET | Agent-facing vault file listing |
+| `/api/agent/vault/:filename` | GET | Agent-facing raw file content |
+
+### Security
+
+- **Path Traversal Guard:** `resolveVaultFile()` applies `path.basename()` then `path.resolve()` and verifies the result starts with the configured vault directory. This prevents directory traversal attacks via crafted filenames.
+
+---
+
+## ⋯ Row Actions: Overflow Menu Pattern
+
+Report row actions use a two-tier pattern: a primary "View Report →" link plus a "⋯" overflow trigger that reveals a dropdown panel.
+
+### Positioning Strategy
+
+- **`position: fixed`:** The overflow panel uses fixed positioning relative to the viewport rather than absolute positioning relative to the table cell. This is necessary because `.table-container` uses `overflow: hidden` for border-radius clipping, which would clip an absolutely-positioned dropdown.
+- **Dynamic Placement:** On click, the panel's `top`/`right` coordinates are calculated from the trigger button's `getBoundingClientRect()`. If the panel would overflow the viewport bottom, it flips upward by setting `bottom` instead of `top`.
+- **Cleanup:** All open panels are closed before opening a new one. Document click and Escape key close any open panel.
+
+### Menu Contents
+
+- **Current Reports:** Analysis (conditional on vault file match), Extract, Fix Snapshots, Archive, divider, Delete (danger style).
+- **Archived Reports:** Analysis (conditional), Extract, divider, Delete (danger style).

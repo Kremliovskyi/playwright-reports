@@ -25,6 +25,7 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "jiti": "^2.6.1",
+    "markdown-it": "^14.1.1",
     "pm2": "^6.0.14",
     "tree-kill": "^1.2.2"
   },
@@ -32,6 +33,7 @@
     "@types/adm-zip": "^0.5.7",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^25.3.3",
     "concurrently": "^9.2.1",
     "typescript": "^5.9.3"

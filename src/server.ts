@@ -694,6 +694,19 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
     updateReportId(folderName, uniqueArchivedName, newReportPath);
 
+    // Rename matching vault .md file if it exists
+    if (appConfig.vaultPath) {
+      const oldVaultFile = path.join(appConfig.vaultPath, folderName + '.md');
+      if (fs.existsSync(oldVaultFile)) {
+        const newVaultFile = path.join(appConfig.vaultPath, uniqueArchivedName + '.md');
+        try {
+          fs.renameSync(oldVaultFile, newVaultFile);
+        } catch (vaultErr) {
+          console.warn('Failed to rename vault file:', vaultErr);
+        }
+      }
+    }
+
     res.json({ success: true, newName: uniqueArchivedName });
     
   } catch (error: any) {

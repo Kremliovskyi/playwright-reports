@@ -265,6 +265,10 @@ The dashboard integrates with an Obsidian-style vault directory for storing per-
 
 - **Path Traversal Guard:** `resolveVaultFile()` applies `path.basename()` then `path.resolve()` and verifies the result starts with the configured vault directory. This prevents directory traversal attacks via crafted filenames.
 
+### Archive-Aware File Renaming
+
+Vault `.md` files are named after the report origin label (e.g., `playwright-report.md`). When a report is archived, the backend renames the origin folder to a timestamped name (e.g., `playwright-report-1773916890669`). The archive endpoint also renames the matching vault file from `<oldName>.md` to `<newArchivedName>.md` so the "Analysis" link continues to work in the Archived Reports table. The rename is wrapped in a try/catch — a vault file failure does not block the archive operation itself.
+
 ---
 
 ## ⋯ Row Actions: Overflow Menu Pattern

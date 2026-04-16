@@ -57,8 +57,9 @@ The dashboard exposes a minimal agent-facing contract for report discovery, but 
 
 Current endpoints:
 
-- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`.
+- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFile` field (non-null when a matching vault `.md` file exists for that report) so agents can discover analysis files without a separate vault listing call.
 - `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
+- `GET /api/agent/vault/:filename` returns raw vault markdown content. This endpoint is used by the `vault-read` CLI command in `playwright-traces-reader` to let agents read vault analysis files that live outside the IDE workspace.
 
 Important contract rules:
 
@@ -259,7 +260,7 @@ The dashboard integrates with an Obsidian-style vault directory for storing per-
 | `/api/vault/:filename` | PUT | Writes `req.body.content` back to disk |
 | `/vault/:filename` | GET | Renders full HTML page with markdown-it |
 | `/api/agent/vault/list` | GET | Agent-facing vault file listing |
-| `/api/agent/vault/:filename` | GET | Agent-facing raw file content |
+| `/api/agent/vault/:filename` | GET | Agent-facing raw file content (used by `vault-read` CLI) |
 
 ### Security
 

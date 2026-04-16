@@ -153,6 +153,7 @@ interface AgentReportDescriptor {
   reportRootPath: string | null;
   reportDataPath: string | null;
   reportIndexPath: string | null;
+  analysisFile: string | null;
   exists: {
     reportRoot: boolean;
     dataDir: boolean;
@@ -251,6 +252,7 @@ const toAgentReportDescriptor = (record: ReportRecord): AgentReportDescriptor =>
     reportRootPath,
     reportDataPath,
     reportIndexPath,
+    analysisFile: resolveVaultFile(record.id) ? record.id : null,
     exists: {
       reportRoot: Boolean(reportRootPath && fs.existsSync(reportRootPath)),
       dataDir: Boolean(reportDataPath && fs.existsSync(reportDataPath)),

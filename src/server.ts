@@ -694,15 +694,22 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
     updateReportId(folderName, uniqueArchivedName, newReportPath);
 
-    // Rename matching vault .md file if it exists
+    // Move matching vault .md file into archivePath/analysis/ directory
     if (appConfig.vaultPath) {
       const oldVaultFile = path.join(appConfig.vaultPath, folderName + '.md');
       if (fs.existsSync(oldVaultFile)) {
-        const newVaultFile = path.join(appConfig.vaultPath, uniqueArchivedName + '.md');
+        const analysisDir = path.join(appConfig.archivePath, 'analysis');
+        fs.mkdirSync(analysisDir, { recursive: true });
+        const newVaultFile = path.join(analysisDir, uniqueArchivedName + '.md');
         try {
           fs.renameSync(oldVaultFile, newVaultFile);
-        } catch (vaultErr) {
-          console.warn('Failed to rename vault file:', vaultErr);
+        } catch (moveErr: any) {
+          if (moveErr.code === 'EXDEV') {
+            fs.copyFileSync(oldVaultFile, newVaultFile);
+            fs.unlinkSync(oldVaultFile);
+          } else {
+            console.warn('Failed to move vault file:', moveErr);
+          }
         }
       }
     }
@@ -1122,33 +1129,53 @@ app.post('/api/fix-aria-snapshot', (req: Request, res: Response): any => {
 // --- Vault API Endpoints ---
 
 const resolveVaultFile = (filename: string): string | null => {
-  if (!appConfig.vaultPath) return null;
   const safeName = path.basename(filename);
-  const resolved = path.resolve(appConfig.vaultPath, safeName + '.md');
-  const base = path.resolve(appConfig.vaultPath);
-  if (!resolved.startsWith(base + path.sep) && resolved !== base) return null;
-  if (!fs.existsSync(resolved)) return null;
-  return resolved;
+  // Check vaultPath first (current reports)
+  if (appConfig.vaultPath) {
+    const resolved = path.resolve(appConfig.vaultPath, safeName + '.md');
+    const base = path.resolve(appConfig.vaultPath);
+    if ((resolved.startsWith(base + path.sep) || resolved === base) && fs.existsSync(resolved)) return resolved;
+  }
+  // Check archivePath/analysis/ (archived reports)
+  if (appConfig.archivePath) {
+    const analysisDir = path.join(appConfig.archivePath, 'analysis');
+    const resolved = path.resolve(analysisDir, safeName + '.md');
+    const base = path.resolve(analysisDir);
+    if ((resolved.startsWith(base + path.sep) || resolved === base) && fs.existsSync(resolved)) return resolved;
+  }
+  return null;
 };
 
 app.get('/api/vault/list', (req: Request, res: Response): any => {
   refreshConfigCache();
-  if (!appConfig.vaultPath || !fs.existsSync(appConfig.vaultPath)) {
-    return res.json({ files: [] });
-  }
   try {
-    const entries = fs.readdirSync(appConfig.vaultPath, { withFileTypes: true });
-    const files = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
-      .map(e => {
-        const filePath = path.join(appConfig.vaultPath, e.name);
-        const stat = fs.statSync(filePath);
-        return {
-          filename: e.name.replace(/\.md$/, ''),
-          mtime: stat.mtime.toISOString()
-        };
-      })
-      .sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
+    const files: { filename: string; mtime: string }[] = [];
+    // Scan vaultPath (current reports)
+    if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
+      const entries = fs.readdirSync(appConfig.vaultPath, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith('.md')) {
+          const filePath = path.join(appConfig.vaultPath, e.name);
+          const stat = fs.statSync(filePath);
+          files.push({ filename: e.name.replace(/\.md$/, ''), mtime: stat.mtime.toISOString() });
+        }
+      }
+    }
+    // Scan archivePath/analysis/ (archived reports)
+    if (appConfig.archivePath) {
+      const analysisDir = path.join(appConfig.archivePath, 'analysis');
+      if (fs.existsSync(analysisDir)) {
+        const entries = fs.readdirSync(analysisDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.isFile() && e.name.endsWith('.md')) {
+            const filePath = path.join(analysisDir, e.name);
+            const stat = fs.statSync(filePath);
+            files.push({ filename: e.name.replace(/\.md$/, ''), mtime: stat.mtime.toISOString() });
+          }
+        }
+      }
+    }
+    files.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime());
     return res.json({ files });
   } catch (error: any) {
     console.error('Vault list error:', error.message);
@@ -1171,16 +1198,30 @@ app.get('/api/vault/:filename/raw', (req: Request, res: Response): any => {
 
 app.put('/api/vault/:filename', (req: Request, res: Response): any => {
   refreshConfigCache();
-  if (!appConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
   const filename = req.params.filename as string;
   const safeName = path.basename(filename);
+  const content = req.body.content;
+  if (typeof content !== 'string') return res.status(400).json({ error: 'content is required' });
+
+  // Try to resolve existing file first (covers both vaultPath and archivePath/analysis/)
+  const existing = resolveVaultFile(safeName.replace(/\.md$/, ''));
+  if (existing) {
+    try {
+      fs.writeFileSync(existing, content, 'utf-8');
+      return res.json({ success: true });
+    } catch (error: any) {
+      console.error('Vault save error:', error.message);
+      return res.status(500).json({ error: 'Failed to save vault file' });
+    }
+  }
+
+  // New file — write to vaultPath
+  if (!appConfig.vaultPath) return res.status(400).json({ error: 'Vault path not configured' });
   const resolved = path.resolve(appConfig.vaultPath, safeName + '.md');
   const base = path.resolve(appConfig.vaultPath);
   if (!resolved.startsWith(base + path.sep) && resolved !== base) {
     return res.status(400).json({ error: 'Invalid file path' });
   }
-  const content = req.body.content;
-  if (typeof content !== 'string') return res.status(400).json({ error: 'content is required' });
   try {
     fs.writeFileSync(resolved, content, 'utf-8');
     return res.json({ success: true });
@@ -1365,21 +1406,31 @@ app.get('/vault/:filename', (req: Request, res: Response): any => {
 // Agent vault endpoints
 app.get('/api/agent/vault/list', (req: Request, res: Response): any => {
   refreshConfigCache();
-  if (!appConfig.vaultPath || !fs.existsSync(appConfig.vaultPath)) {
-    return res.json({ schemaVersion: AGENT_API_SCHEMA_VERSION, files: [] });
-  }
   try {
-    const entries = fs.readdirSync(appConfig.vaultPath, { withFileTypes: true });
-    const files = entries
-      .filter(e => e.isFile() && e.name.endsWith('.md'))
-      .map(e => {
-        const filePath = path.join(appConfig.vaultPath, e.name);
-        const stat = fs.statSync(filePath);
-        return {
-          filename: e.name.replace(/\.md$/, ''),
-          mtime: stat.mtime.toISOString()
-        };
-      });
+    const files: { filename: string; mtime: string }[] = [];
+    if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
+      const entries = fs.readdirSync(appConfig.vaultPath, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && e.name.endsWith('.md')) {
+          const filePath = path.join(appConfig.vaultPath, e.name);
+          const stat = fs.statSync(filePath);
+          files.push({ filename: e.name.replace(/\.md$/, ''), mtime: stat.mtime.toISOString() });
+        }
+      }
+    }
+    if (appConfig.archivePath) {
+      const analysisDir = path.join(appConfig.archivePath, 'analysis');
+      if (fs.existsSync(analysisDir)) {
+        const entries = fs.readdirSync(analysisDir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.isFile() && e.name.endsWith('.md')) {
+            const filePath = path.join(analysisDir, e.name);
+            const stat = fs.statSync(filePath);
+            files.push({ filename: e.name.replace(/\.md$/, ''), mtime: stat.mtime.toISOString() });
+          }
+        }
+      }
+    }
     return res.json({ schemaVersion: AGENT_API_SCHEMA_VERSION, files });
   } catch (error: any) {
     return res.status(500).json({ error: 'Failed to list vault files' });

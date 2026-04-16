@@ -609,18 +609,20 @@ document.addEventListener('DOMContentLoaded', () => {
         </button>
       ` : '';
 
-      const archiveOverflowHtml = isCurrent ? `
-        <button class="row-overflow-action overflow-archive" aria-label="Archive Report">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/></svg>
-            Archive
+      const hasVaultFile = vaultFiles.has(report.id);
+
+      // Inline action buttons (visible directly in the row)
+      const analysisInlineHtml = hasVaultFile ? `
+        <button class="btn-inline-action btn-analysis-inline" aria-label="View Analysis">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+            Analysis
         </button>
       ` : '';
 
-      const hasVaultFile = vaultFiles.has(report.id);
-      const analysisOverflowHtml = hasVaultFile ? `
-        <button class="row-overflow-action overflow-analysis" aria-label="View Analysis">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            Analysis
+      const archiveInlineHtml = isCurrent ? `
+        <button class="btn-inline-action btn-archive-inline" aria-label="Archive Report">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M12 11v6"/><path d="m9 14 3 3 3-3"/></svg>
+            Archive
         </button>
       ` : '';
 
@@ -648,6 +650,8 @@ document.addEventListener('DOMContentLoaded', () => {
           </td>
           <td class="col-action">
               <div class="row-actions">
+                  ${analysisInlineHtml}
+                  ${archiveInlineHtml}
                   <a href="${report.path}" target="_blank" rel="noopener noreferrer" class="btn-open" aria-label="Open Report">
                       View Report
                       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
@@ -655,13 +659,11 @@ document.addEventListener('DOMContentLoaded', () => {
                   <div class="row-overflow-menu">
                       <button class="row-overflow-trigger" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">⋯</button>
                       <div class="row-overflow-panel hidden" role="menu">
-                          ${analysisOverflowHtml}
                           <button class="row-overflow-action overflow-extract" aria-label="Extract Traces">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="3" rx="1" ry="1"/><path d="M4 11v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="10 15 12 17 14 15"/><line x1="12" x2="12" y1="11" y2="17"/></svg>
                               Extract
                           </button>
                           ${fixAriaOverflowHtml}
-                          ${archiveOverflowHtml}
                           <div class="row-overflow-divider"></div>
                           <button class="row-overflow-action danger overflow-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
@@ -669,6 +671,10 @@ document.addEventListener('DOMContentLoaded', () => {
                           </button>
                       </div>
                   </div>
+              </div>
+              <div class="row-progress-overlay hidden">
+                  <div class="spinner" style="width: 16px; height: 16px; border-width: 2px;"></div>
+                  <span class="row-progress-text">Working...</span>
               </div>
           </td>
       `;
@@ -700,14 +706,24 @@ document.addEventListener('DOMContentLoaded', () => {
           openLink.addEventListener('click', e => e.stopPropagation());
       }
 
-      // Wire up analysis button in overflow menu
-      const analysisBtn = tr.querySelector('.overflow-analysis') as HTMLButtonElement;
+      // Wire up inline analysis button
+      const analysisBtn = tr.querySelector('.btn-analysis-inline') as HTMLButtonElement;
       if (analysisBtn) {
           analysisBtn.addEventListener('click', (e) => {
               e.stopPropagation();
-              closeAllOverflowMenus();
               window.open('/vault/' + encodeURIComponent(report.id), '_blank', 'noopener,noreferrer');
           });
+      }
+
+      // Wire up inline archive button
+      if (isCurrent) {
+          const archiveInlineBtn = tr.querySelector('.btn-archive-inline') as HTMLButtonElement;
+          if (archiveInlineBtn) {
+              archiveInlineBtn.addEventListener('click', async (e) => {
+                  e.stopPropagation();
+                  await handleArchive(report.path, tr);
+              });
+          }
       }
 
       // Wire up overflow menu toggle
@@ -745,27 +761,18 @@ document.addEventListener('DOMContentLoaded', () => {
           overflowExtractBtn.addEventListener('click', async (e) => {
               e.stopPropagation();
               closeAllOverflowMenus();
-              await handleExtract(report.path, overflowExtractBtn);
+              await handleExtract(report.path, tr);
           });
       }
 
-      // Wire up archive button conditionally
+      // Wire up fix aria button conditionally
       if (isCurrent) {
-        const archiveBtn = tr.querySelector('.overflow-archive') as HTMLButtonElement;
-        if (archiveBtn) {
-            archiveBtn.addEventListener('click', async (e) => {
-                e.stopPropagation();
-                closeAllOverflowMenus();
-                await handleArchive(report.path, archiveBtn);
-            });
-        }
-        
         const fixAriaBtn = tr.querySelector('.overflow-fix-aria') as HTMLButtonElement;
         if (fixAriaBtn) {
             fixAriaBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 closeAllOverflowMenus();
-                await handleFixAria(report.path, fixAriaBtn);
+                await handleFixAria(report.path, tr);
             });
         }
       }
@@ -914,12 +921,32 @@ document.addEventListener('DOMContentLoaded', () => {
       return tr;
   };
 
+  // Row progress overlay helpers
+  const showRowProgress = (row: HTMLElement, message: string) => {
+      const overlay = row.querySelector('.row-progress-overlay') as HTMLElement;
+      if (!overlay) return;
+      const textEl = overlay.querySelector('.row-progress-text') as HTMLElement;
+      if (textEl) textEl.textContent = message;
+      overlay.classList.remove('hidden', 'progress-success', 'progress-error');
+      overlay.classList.add('progress-active');
+  };
+
+  const hideRowProgress = (row: HTMLElement, status: 'success' | 'error', message: string) => {
+      const overlay = row.querySelector('.row-progress-overlay') as HTMLElement;
+      if (!overlay) return;
+      const textEl = overlay.querySelector('.row-progress-text') as HTMLElement;
+      if (textEl) textEl.textContent = message;
+      overlay.classList.remove('progress-active');
+      overlay.classList.add(status === 'success' ? 'progress-success' : 'progress-error');
+      setTimeout(() => {
+          overlay.classList.add('hidden');
+          overlay.classList.remove('progress-success', 'progress-error');
+      }, 2000);
+  };
+
   // Logic to handle individual extraction
-  const handleExtract = async (reportPath: string, btnElement: HTMLElement) => {
-      const originalHtml = btnElement.innerHTML;
-      (btnElement as HTMLButtonElement).disabled = true;
-      btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Extracting...`;
-      
+  const handleExtract = async (reportPath: string, row: HTMLElement) => {
+      showRowProgress(row, 'Extracting...');
       try {
           const response = await fetch('/api/extract', {
               method: 'POST',
@@ -927,30 +954,17 @@ document.addEventListener('DOMContentLoaded', () => {
               body: JSON.stringify({ reportPath })
           });
           const data = await response.json();
-          
           if (!response.ok) throw new Error(data.error);
-          
-          btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Extracted`;
-          btnElement.classList.add('success');
+          hideRowProgress(row, 'success', 'Extracted');
       } catch (err: any) {
           console.error("Extraction failed API call:", err);
-          btnElement.innerHTML = `Error`;
-          btnElement.classList.add('error');
-      } finally {
-          setTimeout(() => {
-              (btnElement as HTMLButtonElement).disabled = false;
-              btnElement.innerHTML = originalHtml;
-              btnElement.classList.remove('success', 'error');
-          }, 3000);
+          hideRowProgress(row, 'error', 'Extraction failed');
       }
   };
 
   // Logic to handle moving current to archive
-  const handleArchive = async (reportPath: string, btnElement: HTMLElement) => {
-      const originalHtml = btnElement.innerHTML;
-      (btnElement as HTMLButtonElement).disabled = true;
-      btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Archiving...`;
-      
+  const handleArchive = async (reportPath: string, row: HTMLElement) => {
+      showRowProgress(row, 'Archiving...');
       try {
           const response = await fetch('/api/archive', {
               method: 'POST',
@@ -958,41 +972,25 @@ document.addEventListener('DOMContentLoaded', () => {
               body: JSON.stringify({ reportPath })
           });
           const data = await response.json();
-          
           if (!response.ok) {
-              // Custom alert for unconfigured archive
               if (data.error && data.error.includes("Archive directory is not configured")) {
                  alert("⚠️ " + data.error);
               }
               throw new Error(data.error);
           }
-          
-          btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Archiving Complete`;
-          btnElement.classList.add('success');
-          
-          // Refresh entire UI to slide it into bottom table!
+          hideRowProgress(row, 'success', 'Archived');
           setTimeout(() => {
               void reloadVisibleReports();
           }, 800);
-
       } catch (err: any) {
           console.error("Archive failed API call:", err);
-          btnElement.innerHTML = `Error`;
-          btnElement.classList.add('error');
-          setTimeout(() => {
-              (btnElement as HTMLButtonElement).disabled = false;
-              btnElement.innerHTML = originalHtml;
-              btnElement.classList.remove('success', 'error');
-          }, 3000);
-      } 
+          hideRowProgress(row, 'error', 'Archive failed');
+      }
   };
   
   // Logic to handle Aria snapshots extraction
-  const handleFixAria = async (reportPath: string, btnElement: HTMLElement) => {
-      const originalHtml = btnElement.innerHTML;
-      (btnElement as HTMLButtonElement).disabled = true;
-      btnElement.innerHTML = `<div class="spinner" style="width: 12px; height: 12px; margin-right: 4px; border-width: 2px;"></div> Checking...`;
-      
+  const handleFixAria = async (reportPath: string, row: HTMLElement) => {
+      showRowProgress(row, 'Checking snapshots...');
       try {
           const response = await fetch('/api/aria-snapshots', {
               method: 'POST',
@@ -1000,20 +998,17 @@ document.addEventListener('DOMContentLoaded', () => {
               body: JSON.stringify({ reportPath })
           });
           const data = await response.json();
-          
           if (!response.ok) throw new Error(data.error);
 
           const failures = data.ariaFailures || [];
           if (failures.length === 0) {
-              btnElement.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> No Failures`;
-              btnElement.classList.add('success');
-              setTimeout(() => {
-                  btnElement.innerHTML = originalHtml;
-                  btnElement.classList.remove('success');
-                  (btnElement as HTMLButtonElement).disabled = false;
-              }, 3000);
+              hideRowProgress(row, 'success', 'No failures found');
               return;
           }
+
+          // Hide overlay immediately — we're opening a modal
+          const overlay = row.querySelector('.row-progress-overlay') as HTMLElement;
+          if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('progress-active'); }
 
           // Render failures in modal
           ariaTbody.innerHTML = '';
@@ -1037,20 +1032,11 @@ document.addEventListener('DOMContentLoaded', () => {
               ariaTbody.appendChild(tr);
           });
           
-          btnElement.innerHTML = originalHtml;
-          (btnElement as HTMLButtonElement).disabled = false;
-          
           ariaModal.classList.remove('hidden');
 
       } catch (err: any) {
           console.error("Aria extraction failed:", err);
-          btnElement.innerHTML = `Error`;
-          btnElement.classList.add('error');
-          setTimeout(() => {
-              (btnElement as HTMLButtonElement).disabled = false;
-              btnElement.innerHTML = originalHtml;
-              btnElement.classList.remove('success', 'error');
-          }, 3000);
+          hideRowProgress(row, 'error', 'Check failed');
       }
   };
 

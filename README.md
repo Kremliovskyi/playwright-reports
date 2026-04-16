@@ -35,7 +35,7 @@
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
-- **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename for quick access via the row overflow menu.
+- **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename. Current reports' analysis files live in the configured vault directory; archived reports' analysis files are automatically moved to an `analysis/` subdirectory inside the archive path for quick access via the inline Analysis button.
 - **🗄️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
 
 ---
@@ -158,7 +158,8 @@ Having extracted traces as raw JSON/network files allows AI agents to easily rea
 The dashboard integrates with an Obsidian-style vault directory for storing analysis notes alongside your test reports.
 
 - **Configuration:** Set the vault path in Preferences to point at a directory of `.md` files (e.g., your Obsidian vault's reports folder).
-- **Report Matching:** When a vault filename matches a report origin label, an "Analysis" action appears in that report's overflow menu.
+- **Report Matching:** When a vault filename matches a report origin label, an "Analysis" button appears directly in that report's row for quick access.
+- **Archived Reports:** When a report is archived, its analysis file is moved to `<archivePath>/analysis/`. The Analysis button continues to work for archived reports.
 - **Rendered View:** Markdown is rendered server-side with full support for headings, tables, code blocks, links, and images.
 - **Inline Editing:** Click Edit to switch to a full-height monospace textarea, make your changes, and Save writes back to disk.
 - **Agent Endpoints:** The vault is also exposed via `/api/agent/vault/list` and `/api/agent/vault/:filename` for programmatic access.
@@ -183,6 +184,7 @@ Keep your active workspace clean by archiving old runs.
 - Click **Archive** on any report in the "Current Test Reports" table for a one-off archive.
 - Or select multiple rows with the new checkboxes, click **Select All** when you want the whole table, then use **Actions → Archive selected**.
 - The report folder is safely moved to your configured Archive path and appended with a unique timestamp (`playwright-report-174000...`) to absolutely guarantee no collisions.
+- If a matching vault analysis file exists, it is automatically moved to an `analysis/` subdirectory inside the archive path.
 
 ---
 

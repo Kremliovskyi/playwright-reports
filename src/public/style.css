@@ -896,6 +896,87 @@ p {
   margin: 0.25rem 0.4rem;
 }
 
+/* Inline action buttons (Analysis, Archive) */
+.btn-inline-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-inline-action:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.btn-archive-inline:hover {
+  border-color: #d29922;
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.08);
+}
+
+/* Row progress overlay */
+.report-row {
+  position: relative;
+}
+
+.row-progress-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  background: rgba(13, 17, 23, 0.82);
+  backdrop-filter: blur(3px);
+  z-index: 5;
+  transition: opacity 0.25s ease;
+}
+
+.row-progress-overlay.hidden {
+  display: none;
+}
+
+.row-progress-text {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.row-progress-overlay.progress-success {
+  background: rgba(63, 185, 80, 0.14);
+}
+
+.row-progress-overlay.progress-success .row-progress-text {
+  color: #3fb950;
+}
+
+.row-progress-overlay.progress-success .spinner {
+  display: none;
+}
+
+.row-progress-overlay.progress-error {
+  background: rgba(248, 81, 73, 0.14);
+}
+
+.row-progress-overlay.progress-error .row-progress-text {
+  color: #f85149;
+}
+
+.row-progress-overlay.progress-error .spinner {
+  display: none;
+}
+
 .btn-analysis {
   background: transparent;
   padding: 4px 8px;

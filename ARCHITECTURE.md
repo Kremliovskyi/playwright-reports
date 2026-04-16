@@ -38,7 +38,7 @@ The application does not use a "dumb" filesystem scan. It implements a different
 - **Sync During Scan:** Every time `scanDirectory` is called (during dashboard load or refresh), the system builds a list of reports from the disk and immediately `upserts` them into the `reports` table.
 - **Metadata Persistence:** User-entered metadata is stored only in the database. During the sync, the system merges the existing DB metadata back into the scanned objects. This ensures that manually added info like 'UAT NA' remains attached to the report even if the server restarts.
 - **Renaming Logic:** Users can rename a current report's origin label directly from the dashboard. The `/api/report-rename` endpoint validates the new name (rejects forbidden filesystem characters: `/ \ : * ? " < > |`, null bytes, and `.`/`..`), performs a path-traversal guard by confirming both source and destination resolve within `appConfig.currentPath`, checks that no folder with the new name already exists (conflict guard), then calls `fs.renameSync` to rename the physical folder. The database record's `id` and `reportPath` are updated atomically via `updateReportId()`. Live validation feedback is shown in the UI before any server call is made.
-- **Archiving Logic:** When a report is moved to the Archive via `/api/archive`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move.
+- **Archiving Logic:** When a report is moved to the Archive via `/api/archive`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move. If a matching vault analysis file exists, it is moved from the vault directory to `<archivePath>/analysis/`.
 - **Deleting Logic:** When a user permanently deletes a report via `/api/delete-report`, the backend uses `fs.rm` with `{ recursive: true, force: true }` to completely wipe the report from disk.
 - **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the `scanDirectory` sync to keep the database and UI in perfect alignment.
 
@@ -265,23 +265,45 @@ The dashboard integrates with an Obsidian-style vault directory for storing per-
 
 - **Path Traversal Guard:** `resolveVaultFile()` applies `path.basename()` then `path.resolve()` and verifies the result starts with the configured vault directory. This prevents directory traversal attacks via crafted filenames.
 
-### Archive-Aware File Renaming
+### Archive-Aware File Relocation
 
-Vault `.md` files are named after the report origin label (e.g., `playwright-report.md`). When a report is archived, the backend renames the origin folder to a timestamped name (e.g., `playwright-report-1773916890669`). The archive endpoint also renames the matching vault file from `<oldName>.md` to `<newArchivedName>.md` so the "Analysis" link continues to work in the Archived Reports table. The rename is wrapped in a try/catch — a vault file failure does not block the archive operation itself.
+Vault `.md` files are named after the report origin label (e.g., `playwright-report.md`). When a report is archived, the backend renames the origin folder to a timestamped name (e.g., `playwright-report-1773916890669`). The archive endpoint moves the matching vault file from `<vaultPath>/<oldName>.md` to `<archivePath>/analysis/<newArchivedName>.md`, creating the `analysis/` directory if it does not exist. This keeps archived analysis files co-located with their archived reports rather than cluttering the active vault directory. The move includes an EXDEV cross-drive fallback (copy + delete) and is wrapped in a try/catch — a vault file failure does not block the archive operation itself.
+
+### Dual-Location Vault Resolution
+
+`resolveVaultFile()` checks both `<vaultPath>` (for current reports) and `<archivePath>/analysis/` (for archived reports) when resolving a filename. The vault list endpoints (`/api/vault/list` and `/api/agent/vault/list`) merge files from both locations. The save endpoint (`PUT /api/vault/:filename`) resolves existing files from either location before writing; new files default to `vaultPath`.
 
 ---
 
-## ⋯ Row Actions: Overflow Menu Pattern
+## Row Actions: Inline Buttons + Overflow Menu
 
-Report row actions use a two-tier pattern: a primary "View Report →" link plus a "⋯" overflow trigger that reveals a dropdown panel.
+Report row actions use a three-tier pattern: inline action buttons for frequently used operations, a primary "View Report →" link, and a "⋯" overflow trigger for less common actions.
 
-### Positioning Strategy
+### Inline Buttons
+
+- **Analysis** (conditional on vault file match): Opens the vault viewer in a new tab. Rendered as a compact `btn-inline-action` button.
+- **Archive** (current reports only): Triggers the archive flow with a row progress overlay. Rendered as a compact `btn-inline-action` button.
+
+### Overflow Menu
+
+The "⋯" trigger reveals a dropdown panel for secondary actions.
+
+#### Positioning Strategy
 
 - **`position: fixed`:** The overflow panel uses fixed positioning relative to the viewport rather than absolute positioning relative to the table cell. This is necessary because `.table-container` uses `overflow: hidden` for border-radius clipping, which would clip an absolutely-positioned dropdown.
 - **Dynamic Placement:** On click, the panel's `top`/`right` coordinates are calculated from the trigger button's `getBoundingClientRect()`. If the panel would overflow the viewport bottom, it flips upward by setting `bottom` instead of `top`.
 - **Cleanup:** All open panels are closed before opening a new one. Document click and Escape key close any open panel.
 
-### Menu Contents
+#### Menu Contents
 
-- **Current Reports:** Analysis (conditional on vault file match), Extract, Fix Snapshots, Archive, divider, Delete (danger style).
-- **Archived Reports:** Analysis (conditional), Extract, divider, Delete (danger style).
+- **Current Reports:** Extract, Fix Snapshots, divider, Delete (danger style).
+- **Archived Reports:** Extract, divider, Delete (danger style).
+
+### Row Progress Overlay
+
+All single-row async actions (Extract, Archive, Fix Snapshots) display a unified progress overlay that covers the entire table row instead of modifying individual button text.
+
+- **Overlay Element:** A `div.row-progress-overlay` inside each row's `<td class="col-action">`, containing a spinner and status text.
+- **States:** `progress-active` (spinner + message), `progress-success` (green background, success text, no spinner), `progress-error` (red background, error text, no spinner).
+- **Auto-Dismiss:** Success and error states auto-dismiss after 2 seconds.
+- **Helpers:** `showRowProgress(row, message)` and `hideRowProgress(row, status, message)` encapsulate the overlay lifecycle.

@@ -453,7 +453,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (optUpdateSnapshots.checked) args.push('--update-snapshots');
         
         if (optGrep.value) {
-           const escapedGrep = optGrep.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+           // First escape regex special characters, then replace double quotes with a dot wildcard (.)
+           // This completely sidesteps shell quoting nightmares by matching the quote via a regex dot instead.
+           const escapedGrep = optGrep.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '.');
            args.push('--grep', escapedGrep);
         }
         

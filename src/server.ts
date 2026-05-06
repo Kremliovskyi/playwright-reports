@@ -560,15 +560,28 @@ app.post('/api/run-tests', async (req: Request, res: Response): Promise<any> => 
   const customEnv = { ...process.env, FORCE_COLOR: '1', ...env };
   const command = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 
+  // We explicitly wrap the argument following --grep in double quotes
+  // so that all OS shells (and UI logging) treat it as a single contiguous string.
+  const finalArgs: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--grep' && i + 1 < args.length) {
+      finalArgs.push(args[i]);
+      finalArgs.push(`"${args[i + 1]}"`);
+      i++; // Skip the next argument since we just processed it
+    } else {
+      finalArgs.push(args[i]);
+    }
+  }
+
   try {
-    const child = spawn(command, ['playwright', 'test', ...args], {
+    const child = spawn(command, ['playwright', 'test', ...finalArgs], {
       cwd: appConfig.projectPath,
       env: customEnv,
       shell: process.platform === 'win32' // On Windows we usually need shell for npx
     });
 
     activeProcess = child;
-    broadcastLog('start', `Running npx playwright test ${args.join(' ')}\n`);
+    broadcastLog('start', `Running npx playwright test ${finalArgs.join(' ')}\n`);
 
     child.stdout?.on('data', (data) => broadcastLog('output', data.toString()));
     child.stderr?.on('data', (data) => broadcastLog('output', data.toString()));

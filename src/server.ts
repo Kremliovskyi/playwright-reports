@@ -473,7 +473,8 @@ app.get('/api/agent/reports/prepare', (req: Request, res: Response): any => {
 });
 
 // Test Runner Integrations
-app.get('/api/projects', (req: Request, res: Response): any => {
+app.get('/api/projects', async (req: Request, res: Response): Promise<any> => {
+  refreshConfigCache();
   if (!appConfig.projectPath || !fs.existsSync(appConfig.projectPath)) {
     return res.json({ projects: [] });
   }
@@ -487,8 +488,10 @@ app.get('/api/projects', (req: Request, res: Response): any => {
     else if (fs.existsSync(configJs)) configPath = configJs;
     else return res.json({ projects: [] });
 
-    // Clear cache by deleting require.cache is not needed for jiti usually with moduleCache false
-    const config = jiti(configPath);
+    // Create a fresh Jiti instance with cache: false and moduleCache: false.
+    // We use the recommended async `localJiti.import()` to avoid deprecated sync warning.
+    const localJiti = createJiti(__filename, { moduleCache: false, cache: false });
+    const config = await localJiti.import(configPath) as any;
     const cfg = config.default || config;
 
     if (cfg.projects && Array.isArray(cfg.projects)) {
@@ -833,11 +836,27 @@ app.post('/api/report-rename', (req: Request, res: Response): any => {
 });
 
 // Aria Snapshot Extraction Endpoint
-app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
+app.post('/api/aria-snapshots', async (req: Request, res: Response): Promise<any> => {
+  refreshConfigCache();
   const { reportPath } = req.body;
   
   if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
   if (!appConfig.projectPath) return res.status(400).json({ error: "Project path is not configured" });
+
+  // Load playwright config once at the beginning of the request using async localJiti.import
+  let resolvedCfg: any = null;
+  try {
+      const configTs = path.join(appConfig.projectPath, 'playwright.config.ts');
+      const configJs = path.join(appConfig.projectPath, 'playwright.config.js');
+      const configPath = fs.existsSync(configTs) ? configTs : fs.existsSync(configJs) ? configJs : '';
+      if (configPath) {
+          const localJiti = createJiti(__filename, { moduleCache: false, cache: false });
+          const cfg = await localJiti.import(configPath) as any;
+          resolvedCfg = cfg.default || cfg;
+      }
+  } catch (e) {
+      console.error("Failed to load playwright config for aria snapshots:", e);
+  }
 
   try {
     const isArchive = reportPath.startsWith('/reports/archive/');
@@ -1014,24 +1033,15 @@ app.post('/api/aria-snapshots', (req: Request, res: Response): any => {
                 
                 // Determine aria snapshots directory
                 let testAriaDir = `src/test-data/aria-snapshots/${test.location.file}`;
-                try {
-                    const configTs = path.join(appConfig.projectPath!, 'playwright.config.ts');
-                    const configJs = path.join(appConfig.projectPath!, 'playwright.config.js');
-                    const configPath = fs.existsSync(configTs) ? configTs : fs.existsSync(configJs) ? configJs : '';
-                    if (configPath) {
-                        const cfg = jiti(configPath);
-                        const resolvedCfg = cfg.default || cfg;
-                        if (resolvedCfg.expect?.toMatchAriaSnapshot?.pathTemplate) {
-                            const template = resolvedCfg.expect.toMatchAriaSnapshot.pathTemplate;
-                            const parsedRelPath = path.parse(test.location.file);
-                            let resolvedDirTemplate = template
-                                .replace(/\{(.)?testFilePath\}/g, test.location.file)
-                                .replace(/\{(.)?testFileName\}/g, parsedRelPath.base)
-                                .replace(/\{(.)?testFileDir\}/g, parsedRelPath.dir);
-                            testAriaDir = resolvedDirTemplate.substring(0, resolvedDirTemplate.lastIndexOf('/'));
-                        }
-                    }
-                } catch(e) { /* fallback to default */ }
+                if (resolvedCfg && resolvedCfg.expect?.toMatchAriaSnapshot?.pathTemplate) {
+                    const template = resolvedCfg.expect.toMatchAriaSnapshot.pathTemplate;
+                    const parsedRelPath = path.parse(test.location.file);
+                    let resolvedDirTemplate = template
+                        .replace(/\{(.)?testFilePath\}/g, test.location.file)
+                        .replace(/\{(.)?testFileName\}/g, parsedRelPath.base)
+                        .replace(/\{(.)?testFileDir\}/g, parsedRelPath.dir);
+                    testAriaDir = resolvedDirTemplate.substring(0, resolvedDirTemplate.lastIndexOf('/'));
+                }
                 
                 let expectedPath = expectedFilename ? path.join(testAriaDir, expectedFilename) : '';
                 

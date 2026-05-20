@@ -415,7 +415,6 @@ app.get('/api/agent/reports/search', (req: Request, res: Response): any => {
     const rangeStart = getQueryString(req.query.rangeStart);
     const rangeEnd = getQueryString(req.query.rangeEnd);
     const scope = parseReportScope(req.query.scope);
-    const latest = parseBooleanQuery(req.query.latest);
     const limit = parsePositiveIntegerQuery(req.query.limit);
 
     let matches = searchReports({
@@ -429,9 +428,7 @@ app.get('/api/agent/reports/search', (req: Request, res: Response): any => {
       matches = matches.filter(report => report.reportPath.startsWith(`/reports/${scope}/`));
     }
 
-    if (latest && matches.length > 1) {
-      matches = [matches[0]];
-    } else if (limit !== null) {
+    if (limit !== null) {
       matches = matches.slice(0, limit);
     }
 

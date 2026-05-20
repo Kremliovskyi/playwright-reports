@@ -127,7 +127,7 @@ This API is intended to be used by `playwright-traces-reader` helper commands or
 Typical companion CLI flow:
 
 ```bash
-npx playwright-traces-reader search-reports "UAT EU" --latest --limit 1
+npx playwright-traces-reader search-reports "UAT EU" --limit 1
 npx playwright-traces-reader prepare-report <reportRef>
 npx playwright-traces-reader failures <reportRootPath>
 npx playwright-traces-reader summary <tracePath>

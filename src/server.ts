@@ -767,6 +767,12 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     // Delete the directory and its contents
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
+    // Delete associated analysis (vault) file if it exists
+    const analysisFile = resolveVaultFile(folderName);
+    if (analysisFile) {
+      fs.unlinkSync(analysisFile);
+    }
+
     // Remove DB record
     deleteReportRecord(folderName);
 

@@ -591,16 +591,6 @@ document.addEventListener('DOMContentLoaded', () => {
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;');
 
-      tr.addEventListener('click', (e: MouseEvent) => {
-          const target = e.target as HTMLElement;
-          if (target && target.closest('.btn')) return;
-          if (target && target.closest('.btn-open')) return;
-          if (target && target.closest('.metadata-input')) return;
-          if (target && target.closest('.row-select-control')) return;
-          if (target && target.closest('.row-overflow-menu')) return;
-
-          window.open(report.path, '_blank', 'noopener,noreferrer');
-      });
 
       const fixAriaOverflowHtml = isCurrent ? `
         <button class="row-overflow-action overflow-fix-aria" aria-label="Fix Aria Snapshots">

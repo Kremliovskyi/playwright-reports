@@ -241,12 +241,32 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
+  const runTestsTooltip = document.getElementById('run-tests-tooltip') as HTMLDivElement;
+
+  let isProjectPathMissing = true;
+  let isRunnerOpen = false;
+
+  const updateRunTestsBtnForProjectPath = (projectPath: string) => {
+      isProjectPathMissing = !projectPath;
+      if (isProjectPathMissing) {
+          runTestsBtn.disabled = true;
+          runTestsBtn.style.opacity = '0.7';
+          runTestsTooltip?.classList.add('show-tooltip');
+      } else {
+          runTestsTooltip?.classList.remove('show-tooltip');
+          if (!isRunnerOpen) {
+              runTestsBtn.disabled = false;
+              runTestsBtn.style.opacity = '1';
+          }
+      }
+  };
 
   if (runTestsBtn) {
       const channel = new BroadcastChannel('runner_state');
       
       channel.onmessage = (event) => {
           if (event.data.state === 'open') {
+              isRunnerOpen = true;
               runTestsBtn.disabled = true;
               runTestsBtn.innerHTML = `
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-square-terminal"><path d="m7 11 2-2-2-2"/><path d="M11 13h4"/><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/></svg>
@@ -254,12 +274,15 @@ document.addEventListener('DOMContentLoaded', () => {
               `;
               runTestsBtn.style.opacity = '0.7';
           } else if (event.data.state === 'closed') {
-              runTestsBtn.disabled = false;
+              isRunnerOpen = false;
               runTestsBtn.innerHTML = `
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
                 Run Tests
               `;
-              runTestsBtn.style.opacity = '1';
+              if (!isProjectPathMissing) {
+                  runTestsBtn.disabled = false;
+                  runTestsBtn.style.opacity = '1';
+              }
           }
       };
 
@@ -271,6 +294,12 @@ document.addEventListener('DOMContentLoaded', () => {
           runTestsBtn.disabled = true;
           window.open('/runner.html', '_blank', 'noopener,noreferrer');
       });
+
+      // Check project path on load to set initial button state
+      fetch('/api/config')
+          .then(res => res.json())
+          .then(data => updateRunTestsBtnForProjectPath(data.projectPath || ''))
+          .catch(() => updateRunTestsBtnForProjectPath(''));
   }
 
   // Format date nicely
@@ -1432,6 +1461,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           
           closeModal();
+          updateRunTestsBtnForProjectPath(projectPath);
           await reloadVisibleReports();
           
       } catch (err: any) {

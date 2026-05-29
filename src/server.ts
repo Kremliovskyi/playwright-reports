@@ -889,6 +889,12 @@ app.post('/api/aria-snapshots', async (req: Request, res: Response): Promise<any
         const scriptMatch = indexHtml.match(/<script id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/script>/);
         if (scriptMatch) {
             base64Data = scriptMatch[1];
+        } else {
+            // Check template format <template id="playwrightReportBase64">data:application/zip;base64,...</template>
+            const templateMatch = indexHtml.match(/<template id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/template>/);
+            if (templateMatch) {
+                base64Data = templateMatch[1];
+            }
         }
     }
     

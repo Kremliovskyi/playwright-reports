@@ -220,31 +220,58 @@
         </div>
         
         <div class="modal-body">
-          <div class="form-group">
-            <label for="current-path-input">Current Reports Directory Path</label>
-            <p class="form-hint">Absolute path to your active Playwright reports folder.</p>
-            <input type="text" id="current-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\reports">
+          <div class="modal-tabs">
+            <button class="modal-tab active" data-tab="paths">Paths</button>
+            <button class="modal-tab" data-tab="browserstack">BrowserStack</button>
+          </div>
+
+          <div class="modal-tab-content active" data-tab-content="paths">
+            <div class="form-group">
+              <label for="current-path-input">Current Reports Directory Path</label>
+              <p class="form-hint">Absolute path to your active Playwright reports folder.</p>
+              <input type="text" id="current-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\reports">
+            </div>
+            
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="archive-path-input">Archived Reports Directory Path</label>
+              <p class="form-hint">Absolute path to your historical/archived reports folder.</p>
+              <input type="text" id="archive-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\archive">
+            </div>
+            
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="project-path-input">Playwright Project Path</label>
+              <p class="form-hint">Absolute path to your Playwright project containing playwright.config.ts.</p>
+              <input type="text" id="project-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\my-project">
+            </div>
+            
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="vault-path-input">Obsidian Vault Path</label>
+              <p class="form-hint">Absolute path to your Obsidian vault folder with report analysis .md files.</p>
+              <input type="text" id="vault-path-input" class="path-input full-width" placeholder="e.g., /Users/you/vault/report-analyses">
+            </div>
+          </div>
+
+          <div class="modal-tab-content" data-tab-content="browserstack">
+            <div class="form-group">
+              <label for="browserstack-username-input">BrowserStack Username</label>
+              <p class="form-hint">Your BrowserStack username (e.g., yourname_Ab1cDe).</p>
+              <input type="text" id="browserstack-username-input" class="path-input full-width" placeholder="e.g., yourname_Ab1cDe">
+            </div>
+
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="browserstack-key-input">BrowserStack Access Key</label>
+              <p class="form-hint">Your BrowserStack access key.</p>
+              <input type="password" id="browserstack-key-input" class="path-input full-width" placeholder="Your access key">
+            </div>
+
+            <div class="form-group" style="margin-top: 1.5rem;">
+              <label for="browserstack-config-input">BrowserStack Config</label>
+              <p class="form-hint">Config filename relative to project root (e.g., browserstack.falcons.yml).</p>
+              <input type="text" id="browserstack-config-input" class="path-input full-width" placeholder="e.g., browserstack.falcons.yml">
+            </div>
           </div>
           
-          <div class="form-group" style="margin-top: 1.5rem;">
-            <label for="archive-path-input">Archived Reports Directory Path</label>
-            <p class="form-hint">Absolute path to your historical/archived reports folder.</p>
-            <input type="text" id="archive-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\archive">
-          </div>
-          
-          <div class="form-group" style="margin-top: 1.5rem;">
-            <label for="project-path-input">Playwright Project Path</label>
-            <p class="form-hint">Absolute path to your Playwright project containing playwright.config.ts.</p>
-            <input type="text" id="project-path-input" class="path-input full-width" placeholder="e.g., C:\Playwright\my-project">
-          </div>
-          
-          <div class="form-group" style="margin-top: 1.5rem;">
-            <label for="vault-path-input">Obsidian Vault Path</label>
-            <p class="form-hint">Absolute path to your Obsidian vault folder with report analysis .md files.</p>
-            <input type="text" id="vault-path-input" class="path-input full-width" placeholder="e.g., /Users/you/vault/report-analyses">
-          </div>
-          
-          <div id="modal-error" class="path-error static-error hidden"></div>
+          <div id="modal-error" class="path-error static-error hidden" style="padding: 0 var(--space-5, 1.25rem) var(--space-4, 1rem);"></div>
         </div>
         
         <div class="modal-footer">

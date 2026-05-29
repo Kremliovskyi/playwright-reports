@@ -17,7 +17,7 @@ This document outlines the core architecture, data flows, and critical design de
 The application enforces a strictly zero-configuration data model out of the box. Instead of using a heavy ORM or requiring a running database server, we utilize `better-sqlite3` to maintain a localized, synchronous `app.db` file.
 
 - **WAL Mode:** The database is initialized with `journal_mode = WAL` (Write-Ahead Logging) to ensure high concurrent read performance when the frontend dashboard aggressively polls.
-- **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, as well as the serialized JSON payload for user-selected Test Runner Options.
+- **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, the serialized JSON payload for user-selected Test Runner Options, and BrowserStack credentials (`browserstackUsername`, `browserstackAccessKey`, `browserstackConfig`). BrowserStack columns are added via `ALTER TABLE` with existence checks during migration.
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
 - **`reports` Table:** Persists metadata for all scanned reports. It uses the report folder name as the primary `id` — the `id` is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
 
@@ -50,6 +50,20 @@ There is an intentional separation between the two dashboard data flows:
 - **`GET /api/report-search`:** Queries the persisted SQLite rows only and returns the same `{ current, archive, configStatus }` shape as the main dashboard load so the frontend can reuse the same table renderer. Metadata text is matched case-insensitively by whitespace-delimited tokens, with all tokens required to match.
 
 This keeps the filtering UX consistent while preserving the rule that search itself must not update reports.
+
+---
+
+## ⚙️ Preferences Modal — Tabbed Interface
+
+The Preferences modal uses a tabbed layout to organize settings into logical groups without overwhelming a single scrollable form.
+
+- **Tab Structure:** Two tabs — "Paths" (directory configuration) and "BrowserStack" (cloud credentials). The first tab is active by default.
+- **Sticky Tab Bar:** The `.modal-tabs` container uses `position: sticky; top: 0` within the scrollable `.modal-body` so tabs remain visible if content overflows.
+- **Scrollable Body:** The modal body uses `overflow-y: auto` with `flex: 1; min-height: 0` inside a flex column layout capped at `max-height: 85vh`. This ensures the modal never exceeds viewport bounds regardless of content length.
+- **Tab Switching:** Vanilla JS click handlers on `.modal-tab` buttons toggle `active` class on both the button and the corresponding `.modal-tab-content[data-tab-content]` panel.
+- **Data Flow:** All fields across all tabs are read/written in a single `GET /api/config` and `POST /api/config` round-trip. Tab selection is purely a presentation concern and is not persisted.
+
+---
 
 ## Agent Discovery Boundary
 
@@ -155,7 +169,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 
 ---
 
-## �🚀 Integrated Test Runner
+## 🚀 Integrated Test Runner
 
 The execution engine runs Playwright tests natively on the host machine, piping the output live to the dashboard browser window.
 
@@ -163,6 +177,15 @@ The execution engine runs Playwright tests natively on the host machine, piping 
 - **Windows Polish:** It dynamically handles pathing anomalies by executing `npx.cmd` with `shell: true` exclusively on `win32` platforms.
 - **Server-Sent Events (SSE):** The frontend opens an EventSource connection to `/api/logs`. The backend captures stdout/stderr buffers from the spawn output and pushes them down instantly. The UI layer (`xterm.js`) renders these buffers preserving their original ANSI color codes for a perfect native terminal replica.
 - **Zombie Process Protection:** Standard `child.kill()` fails to wipe out deep nested browser threads spawned by Playwright, leaving zombie Chromium processes hanging in the background. We imported `tree-kill` to aggressively trace the process PID tree and issue a clean `SIGKILL` when the user clicks 'Stop Tests'.
+
+### BrowserStack Cloud Execution
+
+When the user enables the BrowserStack checkbox in the runner, the spawned command changes from `npx playwright test ...` to `npx browserstack-node-sdk playwright test ...`. The SDK wraps the local Playwright execution and tunnels it through BrowserStack's infrastructure.
+
+- **Credential Injection:** `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY` are injected into the child process `env` from the persisted config (never exposed in the command line or frontend source).
+- **Config Argument:** The `--browserstack.config=<filename>` argument is appended to point the SDK at the correct YAML config (e.g., `browserstack.falcons.yml`).
+- **Incompatible Options:** BrowserStack cloud runs do not support local-only Playwright flags. When the checkbox is active, the frontend disables Headed, UI Mode, and Debug toggles, and locks the Workers and Repeat inputs. Visual cues (`.bs-disabled` class, tooltip) clearly communicate why these options are unavailable.
+- **State Restoration:** When BrowserStack is unchecked, previously selected options are restored to their prior state. The frontend remembers the pre-BrowserStack values so the user does not lose their local configuration.
 
 ---
 

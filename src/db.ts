@@ -8,6 +8,9 @@ export interface AppConfig {
   archivePath: string;
   projectPath: string;
   vaultPath: string;
+  browserstackUsername: string;
+  browserstackAccessKey: string;
+  browserstackConfig: string;
   runnerOptions: {
     headed: boolean;
     ui: boolean;
@@ -59,6 +62,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   archivePath: "",
   projectPath: "",
   vaultPath: "",
+  browserstackUsername: "",
+  browserstackAccessKey: "",
+  browserstackConfig: "",
   runnerOptions: { ...DEFAULT_RUNNER_OPTIONS },
   selectedProjects: []
 };
@@ -98,6 +104,17 @@ if (!configColumns.some(c => c.name === 'vaultPath')) {
   db.exec("ALTER TABLE config ADD COLUMN vaultPath TEXT NOT NULL DEFAULT ''");
 }
 
+// Migration: add BrowserStack columns if missing
+if (!configColumns.some(c => c.name === 'browserstackUsername')) {
+  db.exec("ALTER TABLE config ADD COLUMN browserstackUsername TEXT NOT NULL DEFAULT ''");
+}
+if (!configColumns.some(c => c.name === 'browserstackAccessKey')) {
+  db.exec("ALTER TABLE config ADD COLUMN browserstackAccessKey TEXT NOT NULL DEFAULT ''");
+}
+if (!configColumns.some(c => c.name === 'browserstackConfig')) {
+  db.exec("ALTER TABLE config ADD COLUMN browserstackConfig TEXT NOT NULL DEFAULT ''");
+}
+
 // Ensure default config row exists
 const existing = db.prepare('SELECT id FROM config WHERE id = ?').get('default');
 if (!existing) {
@@ -115,14 +132,17 @@ export const getConfig = (): AppConfig => {
     archivePath: row.archivePath,
     projectPath: row.projectPath,
     vaultPath: row.vaultPath || '',
+    browserstackUsername: row.browserstackUsername || '',
+    browserstackAccessKey: row.browserstackAccessKey || '',
+    browserstackConfig: row.browserstackConfig || '',
     runnerOptions: JSON.parse(row.runnerOptions),
     selectedProjects: JSON.parse(row.selectedProjects)
   };
 };
 
 export const updateConfig = (config: AppConfig): void => {
-  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
-    .run(config.currentPath, config.archivePath, config.projectPath, config.vaultPath, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
+  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, browserstackConfig = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
+    .run(config.currentPath, config.archivePath, config.projectPath, config.vaultPath, config.browserstackUsername, config.browserstackAccessKey, config.browserstackConfig, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
 };
 
 // --- Preset Operations ---

@@ -236,6 +236,85 @@
         color: var(--text-secondary);
         margin-bottom: 5px;
       }
+
+      /* BrowserStack Checkbox */
+      .browserstack-wrapper {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .browserstack-wrapper .checkbox-label {
+        transition: opacity 0.2s;
+      }
+      .browserstack-wrapper .checkbox-label.is-disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+      .browserstack-wrapper .checkbox-label.is-disabled input {
+        pointer-events: none;
+      }
+      .browserstack-tooltip {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 10px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 12px 16px;
+        width: 280px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        z-index: 100;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--text-secondary);
+      }
+      .browserstack-tooltip::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 6px solid transparent;
+        border-top-color: var(--border-color);
+      }
+      .browserstack-wrapper:hover .browserstack-tooltip.show-tooltip {
+        display: block;
+      }
+      .browserstack-tooltip .tooltip-title {
+        font-weight: 600;
+        color: var(--text-color);
+        margin-bottom: 6px;
+        font-size: 12px;
+      }
+      .browserstack-tooltip ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .browserstack-tooltip li {
+        padding: 2px 0;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .browserstack-tooltip li::before {
+        content: '○';
+        color: var(--danger);
+        font-size: 10px;
+      }
+      .browserstack-tooltip li.is-set::before {
+        content: '●';
+        color: var(--success);
+      }
+
+      /* Disabled options when BrowserStack is active */
+      .options-grid .checkbox-label.bs-disabled,
+      .input-wrapper.bs-disabled {
+        opacity: 0.4;
+        pointer-events: none;
+      }
     </style>
 </head>
 <body>
@@ -292,10 +371,21 @@
           </div>
           
           <div class="options-grid">
-            <label class="checkbox-label"><input type="checkbox" id="opt-headed"> Headed</label>
-            <label class="checkbox-label"><input type="checkbox" id="opt-ui"> UI Mode</label>
-            <label class="checkbox-label"><input type="checkbox" id="opt-debug"> Debug</label>
-            <label class="checkbox-label"><input type="checkbox" id="opt-update-snapshots"> Update Snapshots</label>
+            <label class="checkbox-label" id="label-headed"><input type="checkbox" id="opt-headed"> Headed</label>
+            <label class="checkbox-label" id="label-ui"><input type="checkbox" id="opt-ui"> UI Mode</label>
+            <label class="checkbox-label" id="label-debug"><input type="checkbox" id="opt-debug"> Debug</label>
+            <label class="checkbox-label" id="label-update-snapshots"><input type="checkbox" id="opt-update-snapshots"> Update Snapshots</label>
+            <div class="browserstack-wrapper" id="browserstack-wrapper">
+              <label class="checkbox-label is-disabled" id="label-browserstack"><input type="checkbox" id="opt-browserstack" disabled> BrowserStack Run</label>
+              <div class="browserstack-tooltip show-tooltip" id="browserstack-tooltip">
+                <div class="tooltip-title">Configure in Preferences to enable:</div>
+                <ul>
+                  <li id="bs-tip-username">BrowserStack Username</li>
+                  <li id="bs-tip-key">BrowserStack Access Key</li>
+                  <li id="bs-tip-config">BrowserStack Config</li>
+                </ul>
+              </div>
+            </div>
           </div>
           
           <div class="input-group">
@@ -303,11 +393,11 @@
               <span class="input-label">Grep (Filter)</span>
               <input type="text" id="opt-grep" class="text-input" placeholder="e.g. login">
             </div>
-            <div class="input-wrapper">
+            <div class="input-wrapper" id="wrapper-repeat">
               <span class="input-label">Repeat Each</span>
               <input type="number" id="opt-repeat" class="text-input" placeholder="1" min="1">
             </div>
-            <div class="input-wrapper">
+            <div class="input-wrapper" id="wrapper-workers">
               <span class="input-label">Workers</span>
               <input type="number" id="opt-workers" class="text-input" placeholder="Max" min="1">
             </div>

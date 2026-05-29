@@ -154,7 +154,23 @@ document.addEventListener('DOMContentLoaded', () => {
   const archivePathInput = document.getElementById('archive-path-input') as HTMLInputElement;
   const projectPathInput = document.getElementById('project-path-input') as HTMLInputElement;
   const vaultPathInput = document.getElementById('vault-path-input') as HTMLInputElement;
+  const browserstackUsernameInput = document.getElementById('browserstack-username-input') as HTMLInputElement;
+  const browserstackKeyInput = document.getElementById('browserstack-key-input') as HTMLInputElement;
+  const browserstackConfigInput = document.getElementById('browserstack-config-input') as HTMLInputElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
+
+  // Tab switching in preferences modal
+  const modalTabs = settingsModal.querySelectorAll('.modal-tab') as NodeListOf<HTMLButtonElement>;
+  const modalTabContents = settingsModal.querySelectorAll('.modal-tab-content') as NodeListOf<HTMLElement>;
+  modalTabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+          const target = tab.dataset.tab;
+          modalTabs.forEach(t => t.classList.remove('active'));
+          modalTabContents.forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          settingsModal.querySelector(`.modal-tab-content[data-tab-content="${target}"]`)?.classList.add('active');
+      });
+  });
 
   const deleteModal = document.getElementById('delete-modal') as HTMLElement;
     const deleteModalTitle = document.getElementById('delete-modal-title') as HTMLElement;
@@ -1328,6 +1344,9 @@ document.addEventListener('DOMContentLoaded', () => {
           archivePathInput.value = data.archivePath || '';
           projectPathInput.value = data.projectPath || '';
           vaultPathInput.value = data.vaultPath || '';
+          browserstackUsernameInput.value = data.browserstackUsername || '';
+          browserstackKeyInput.value = data.browserstackAccessKey || '';
+          browserstackConfigInput.value = data.browserstackConfig || '';
       } catch (err) {
           console.error("Failed to load config:", err);
       }
@@ -1391,6 +1410,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const archivePath = archivePathInput.value.trim();
       const projectPath = projectPathInput.value.trim();
       const vaultPath = vaultPathInput.value.trim();
+      const browserstackUsername = browserstackUsernameInput.value.trim();
+      const browserstackAccessKey = browserstackKeyInput.value.trim();
+      const browserstackConfig = browserstackConfigInput.value.trim();
 
       modalError.classList.add('hidden');
       saveModalBtn.disabled = true;
@@ -1400,7 +1422,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const response = await fetch('/api/config', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ currentPath, archivePath, projectPath, vaultPath })
+              body: JSON.stringify({ currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig })
           });
           
           const data = await response.json();

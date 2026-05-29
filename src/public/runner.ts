@@ -34,6 +34,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const optWorkers = document.getElementById('opt-workers') as HTMLInputElement;
     const optEnv = document.getElementById('opt-env') as HTMLInputElement;
     
+    const optBrowserstack = document.getElementById('opt-browserstack') as HTMLInputElement;
+    const labelBrowserstack = document.getElementById('label-browserstack') as HTMLLabelElement;
+    const browserstackTooltip = document.getElementById('browserstack-tooltip') as HTMLDivElement;
+    const bsTipUsername = document.getElementById('bs-tip-username') as HTMLLIElement;
+    const bsTipKey = document.getElementById('bs-tip-key') as HTMLLIElement;
+    const bsTipConfig = document.getElementById('bs-tip-config') as HTMLLIElement;
+
+    // Elements that get disabled when BrowserStack is active
+    const labelHeaded = document.getElementById('label-headed') as HTMLLabelElement;
+    const labelUi = document.getElementById('label-ui') as HTMLLabelElement;
+    const labelDebug = document.getElementById('label-debug') as HTMLLabelElement;
+    const labelUpdateSnapshots = document.getElementById('label-update-snapshots') as HTMLLabelElement;
+    const wrapperRepeat = document.getElementById('wrapper-repeat') as HTMLDivElement;
+    const wrapperWorkers = document.getElementById('wrapper-workers') as HTMLDivElement;
+
     const runBtn = document.getElementById('run-btn') as HTMLButtonElement;
     const clearLogBtn = document.getElementById('clear-log-btn') as HTMLButtonElement;
 
@@ -81,6 +96,81 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let saveTimeout: any = null;
 
+    // BrowserStack config state (loaded from preferences, not persisted in runner)
+    let bsUsername = '';
+    let bsAccessKey = '';
+    let bsConfig = '';
+
+    // Saved state for options that get disabled during BrowserStack mode
+    let savedHeaded = false;
+    let savedUi = false;
+    let savedDebug = false;
+    let savedUpdateSnapshots = false;
+    let savedRepeat = '';
+    let savedWorkers = '';
+
+    const updateBrowserstackCheckbox = () => {
+        const allSet = !!(bsUsername && bsAccessKey && bsConfig);
+        
+        if (allSet) {
+            optBrowserstack.disabled = false;
+            labelBrowserstack.classList.remove('is-disabled');
+            browserstackTooltip.classList.remove('show-tooltip');
+        } else {
+            optBrowserstack.disabled = true;
+            optBrowserstack.checked = false;
+            labelBrowserstack.classList.add('is-disabled');
+            browserstackTooltip.classList.add('show-tooltip');
+            setBrowserstackDisabledOptions(false);
+        }
+
+        // Update tooltip indicators
+        bsTipUsername.classList.toggle('is-set', !!bsUsername);
+        bsTipKey.classList.toggle('is-set', !!bsAccessKey);
+        bsTipConfig.classList.toggle('is-set', !!bsConfig);
+    };
+
+    const setBrowserstackDisabledOptions = (disabled: boolean) => {
+        const elements = [labelHeaded, labelUi, labelDebug, labelUpdateSnapshots];
+        const wrappers = [wrapperRepeat, wrapperWorkers];
+
+        if (disabled) {
+            // Save current state before disabling
+            savedHeaded = optHeaded.checked;
+            savedUi = optUi.checked;
+            savedDebug = optDebug.checked;
+            savedUpdateSnapshots = optUpdateSnapshots.checked;
+            savedRepeat = optRepeat.value;
+            savedWorkers = optWorkers.value;
+
+            // Disable and clear
+            optHeaded.checked = false;
+            optUi.checked = false;
+            optDebug.checked = false;
+            optUpdateSnapshots.checked = false;
+            optRepeat.value = '';
+            optWorkers.value = '';
+
+            elements.forEach(el => el.classList.add('bs-disabled'));
+            wrappers.forEach(el => el.classList.add('bs-disabled'));
+        } else {
+            // Restore saved state
+            optHeaded.checked = savedHeaded;
+            optUi.checked = savedUi;
+            optDebug.checked = savedDebug;
+            optUpdateSnapshots.checked = savedUpdateSnapshots;
+            optRepeat.value = savedRepeat;
+            optWorkers.value = savedWorkers;
+
+            elements.forEach(el => el.classList.remove('bs-disabled'));
+            wrappers.forEach(el => el.classList.remove('bs-disabled'));
+        }
+    };
+
+    optBrowserstack.addEventListener('change', () => {
+        setBrowserstackDisabledOptions(optBrowserstack.checked);
+    });
+
     // Load state from backend config
     const loadState = async () => {
         try {
@@ -100,6 +190,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (config.selectedProjects) {
                 selectedProjects = config.selectedProjects || [];
             }
+
+            // BrowserStack config
+            bsUsername = config.browserstackUsername || '';
+            bsAccessKey = config.browserstackAccessKey || '';
+            bsConfig = config.browserstackConfig || '';
+            updateBrowserstackCheckbox();
             
             // Re-render projects if they were loaded before state
             if (allProjects.length > 0) {
@@ -446,7 +542,7 @@ document.addEventListener('DOMContentLoaded', () => {
           args.push('--project', p);
         });
         
-        // Options
+        // Options (skipped when BrowserStack is active — they're already disabled/cleared)
         if (optHeaded.checked) args.push('--headed');
         if (optUi.checked) args.push('--ui');
         if (optDebug.checked) args.push('--debug');
@@ -475,12 +571,21 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
+        // BrowserStack mode
+        const useBrowserstack = optBrowserstack.checked;
+        if (useBrowserstack) {
+            env['BROWSERSTACK_USERNAME'] = bsUsername;
+            env['BROWSERSTACK_ACCESS_KEY'] = bsAccessKey;
+            env['PLAYWRIGHT_HTML_OPEN'] = 'never';
+            args.push(`--browserstack.config=${bsConfig}`);
+        }
+
         runBtn.disabled = true;
         try {
             await fetch('/api/run-tests', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ args, env })
+                body: JSON.stringify({ args, env, useBrowserstack })
             });
             // start is handled by SSE event 'start'
         } catch (err: any) {

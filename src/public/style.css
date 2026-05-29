@@ -321,6 +321,9 @@ p {
   border-radius: var(--radius-lg);
   width: 90%;
   max-width: 500px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   transform: translateY(0);
   transition: transform 0.2s ease;
@@ -360,7 +363,51 @@ p {
 }
 
 .modal-body {
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.modal-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 var(--space-5);
+  background: var(--bg-surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.modal-tab {
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.modal-tab:hover {
+  color: var(--text-primary);
+}
+
+.modal-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.modal-tab-content {
+  display: none;
   padding: var(--space-5);
+}
+
+.modal-tab-content.active {
+  display: block;
 }
 
 .form-group {

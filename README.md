@@ -21,6 +21,7 @@
 
 - **🌐 Serve Local HTML Reports Instantly:** Open Playwright HTML reports directly from the dashboard as locally served pages, and keep multiple reports open side-by-side in separate browser tabs without repeatedly running `npx playwright show-report`.
 - **🚀 Integrated Test Runner:** Run your Playwright tests directly from the dashboard. Select projects, apply greps, configure workers, and watch the live colored terminal output stream in real-time.
+- **☁️ BrowserStack Integration:** Run tests on BrowserStack's cloud device grid directly from the runner. A single checkbox toggles cloud execution, automatically disabling incompatible local-only options and injecting the necessary credentials and config.
 - **⭐ Test Presets:** Save your favorite project selections as "Presets" to instantly recall specific test groups with one click.
 - **🛡️ Preset Validation:** Automatically detects if a preset refers to projects that have been removed from your `playwright.config.ts`, preventing execution errors.
 - **📊 Unified Dashboard:** View all your Playwright HTML reports in one beautifully styled, dark-mode native interface.
@@ -34,7 +35,7 @@
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
-- **⚙️ Centralized Configuration:** Manage all your workspace paths and persistent runner options through a visual Preferences UI.
+- **⚙️ Centralized Configuration:** Manage all your workspace paths, BrowserStack credentials, and persistent runner options through a tabbed Preferences UI.
 - **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename. Current reports' analysis files live in the configured vault directory; archived reports' analysis files are automatically moved to an `analysis/` subdirectory inside the archive path for quick access via the inline Analysis button.
 - **🗄️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
 
@@ -72,10 +73,16 @@ Once started, open your browser and navigate to:
 When you first launch the app, you'll need to configure your workspaces:
 
 1. Click the **⚙️ Preferences** button in the top right.
-2. Set your directory paths (use absolute paths):
-   - **Current Reports Directory:** The folder where your Playwright project outputs new runs (e.g., `playwright-report`).
-   - **Archived Reports Directory:** A folder where you want to store historical test runs.
-   - **Playwright Project Path:** The directory containing your `playwright.config.ts` (required for the Test Runner).
+2. The modal uses a **tabbed interface**:
+   - **Paths tab** — Set your directory paths (use absolute paths):
+     - **Current Reports Directory:** The folder where your Playwright project outputs new runs (e.g., `playwright-report`).
+     - **Archived Reports Directory:** A folder where you want to store historical test runs.
+     - **Playwright Project Path:** The directory containing your `playwright.config.ts` (required for the Test Runner).
+     - **Obsidian Vault Path:** (Optional) Directory containing `.md` analysis files.
+   - **BrowserStack tab** — Configure cloud testing credentials:
+     - **BrowserStack Username:** Your BrowserStack username.
+     - **BrowserStack Access Key:** Your access key (stored as password field).
+     - **BrowserStack Config:** Config filename relative to the project root (e.g., `browserstack.falcons.yml`).
 3. Click **Save Changes**. The dashboard will instantly scan the directories and display any valid reports.
 
 > **Note:** Configuration and Presets are stored in a local **SQLite** database (`app.db`), ensuring high reliability and zero-configuration data management.
@@ -90,6 +97,7 @@ Click **Run Tests** from the main dashboard to open the runner interface.
 - **Presets System:** Save your current selection of projects as a named preset for instant reuse later.
 - **Discrepancy Checks:** If you apply a preset but the underlying projects in your config have changed, the runner will notify you exactly what is missing via a clear dialog.
 - **Options Persistence:** Your selections (Headed, UI Mode, custom Greps, Workers, Env Variables) are safely saved so they persist across reboots.
+- **BrowserStack Mode:** Check the "BrowserStack" option to run tests on BrowserStack's cloud device grid. When enabled, the runner automatically disables incompatible local-only options (Headed, UI Mode, Debug) and locks Workers/Repeat inputs. The command is dispatched via `browserstack-node-sdk` with credentials from Preferences.
 - **Live Output:** Features an integrated `xterm.js` terminal to stream your test execution exactly as it looks in a native console.
 - **Graceful Termination:** You can stop running tests at any time without leaving zombie Node processes.
 

@@ -66,7 +66,7 @@ app.get('/api/config', (req: Request, res: Response) => {
 });
 
 app.post('/api/config', (req: Request, res: Response): any => {
-  const { currentPath, archivePath, projectPath, vaultPath, runnerOptions, selectedProjects } = req.body;
+  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, runnerOptions, selectedProjects } = req.body;
   
   try {
     if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
@@ -80,6 +80,9 @@ app.post('/api/config', (req: Request, res: Response): any => {
       archivePath: archivePath !== undefined ? archivePath.trim() : appConfig.archivePath,
       projectPath: projectPath !== undefined ? projectPath.trim() : appConfig.projectPath,
       vaultPath: vaultPath !== undefined ? vaultPath.trim() : appConfig.vaultPath,
+      browserstackUsername: browserstackUsername !== undefined ? browserstackUsername.trim() : appConfig.browserstackUsername,
+      browserstackAccessKey: browserstackAccessKey !== undefined ? browserstackAccessKey.trim() : appConfig.browserstackAccessKey,
+      browserstackConfig: browserstackConfig !== undefined ? browserstackConfig.trim() : appConfig.browserstackConfig,
       runnerOptions: runnerOptions !== undefined ? { ...appConfig.runnerOptions, ...runnerOptions } : appConfig.runnerOptions,
       selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
@@ -552,7 +555,7 @@ app.post('/api/run-tests', async (req: Request, res: Response): Promise<any> => 
     await stopTests();
   }
 
-  const { args = [], env = {} } = req.body;
+  const { args = [], env = {}, useBrowserstack = false } = req.body;
   if (!appConfig.projectPath) {
     return res.status(400).json({ error: "Project path is not configured" });
   }
@@ -573,15 +576,21 @@ app.post('/api/run-tests', async (req: Request, res: Response): Promise<any> => 
     }
   }
 
+  const spawnArgs = useBrowserstack
+    ? ['browserstack-node-sdk', 'playwright', 'test', ...finalArgs]
+    : ['playwright', 'test', ...finalArgs];
+
+  const logPrefix = useBrowserstack ? 'browserstack-node-sdk playwright test' : 'npx playwright test';
+
   try {
-    const child = spawn(command, ['playwright', 'test', ...finalArgs], {
+    const child = spawn(command, spawnArgs, {
       cwd: appConfig.projectPath,
       env: customEnv,
       shell: process.platform === 'win32' // On Windows we usually need shell for npx
     });
 
     activeProcess = child;
-    broadcastLog('start', `Running npx playwright test ${finalArgs.join(' ')}\n`);
+    broadcastLog('start', `Running ${logPrefix} ${finalArgs.join(' ')}\n`);
 
     child.stdout?.on('data', (data) => broadcastLog('output', data.toString()));
     child.stderr?.on('data', (data) => broadcastLog('output', data.toString()));

@@ -29,6 +29,7 @@
 - **🤖 Agent-Friendly Report Hub:** Expose local-first report discovery and preparation endpoints so `playwright-traces-reader` can search by metadata/date, resolve a selected report, and then parse it locally.
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
+- **🧪 Failure Analysis:** Run the `playwright-traces-reader` `failures` command on any current report with a single click. Results are written to a `tmp` folder inside your Current Reports Directory as self-contained per-failure folders ready for AI agents, with a live row progress bar that handles slow (antivirus-scanned or large) reports gracefully.
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
 - **🧰 Contextual Bulk Actions:** When one or more rows are selected, the table reveals bulk actions for the selected set. Current reports support bulk archive and delete; Archived reports support bulk delete.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
@@ -160,6 +161,17 @@ Having extracted traces as raw JSON/network files allows AI agents to easily rea
 
 - Click **Extract** next to any report to automatically unzip its trace files on the host machine.
 - Trace extraction stays intentionally per-report, while archive and delete workflows are handled through the new multi-select controls in each table.
+
+---
+
+## 🧪 Failure Analysis
+
+Digest a report's failing tests into self-contained, agent-ready folders without leaving the dashboard.
+
+- Open the **⋯** overflow menu on any current report and click **Analyze Failures**.
+- The dashboard runs the installed `@andrii_kremlovskyi/playwright-traces-reader` `failures` command against the report and writes the results to a `tmp` directory inside your **Current Reports Directory** (e.g. `<currentPath>/tmp/run-<timestamp>/`).
+- Each run produces one folder per failed attempt — including retries — with `failure.json`, screenshots, network/console errors, and an `error.md`, plus an `index.json` manifest.
+- The action reuses the per-row progress bar. Because the command can be slow on machines with aggressive antivirus scanning or very large reports, the spinner stays active until the analysis finishes, then reports how many failures were found.
 
 ---
 

@@ -208,6 +208,19 @@ Playwright generates static HTML reports. Instead of trying to parse pure HTML t
 
 ---
 
+## 🧪 Failure Analysis (`playwright-traces-reader` `failures`)
+
+The **Analyze Failures** overflow action (current reports only) runs the installed `@andrii_kremlovskyi/playwright-traces-reader` CLI to digest a report's failing tests into self-contained per-failure folders for AI agents.
+
+- **Endpoint:** `POST /api/failures { reportPath }`.
+- **CLI Resolution:** The server resolves the CLI entry via `require.resolve('@andrii_kremlovskyi/playwright-traces-reader')` and joins `cli.js` next to the resolved package main, so it always runs the version installed in `node_modules` (no global dependency).
+- **Execution:** It spawns `node cli.js failures <reportRoot> <outputDir> --format json` with `cwd` set to `currentPath`. The request stays open for the full duration — on machines where antivirus scanning or large reports make the command slow, the row progress overlay keeps spinning until the manifest returns.
+- **Output Location:** Results are always written to `<currentPath>/tmp` (the Current Reports Directory + `tmp`), created with `fs.mkdirSync(..., { recursive: true })`. The CLI writes a timestamped `run-<timestamp>/` subfolder containing one folder per failed attempt plus an `index.json` manifest.
+- **Response:** The server parses the CLI's stdout JSON manifest and returns `{ success, count, runDir, outputDir }`. The frontend surfaces `count` as the overlay success message (`N failures` / `No failures`).
+- **Boundary Note:** This is the one place `playwright-reports` shells out to the parser CLI directly (for a one-click convenience action). The agent discovery API still does not parse traces itself — see the Agent Discovery Boundary section.
+
+---
+
 ## 🛡️ Playwright Config Resolution (`jiti`)
 
 To reliably know where a given test project's aria snapshots are stored, and to execute tests accurately, **the dashboard requires Playwright to be installed in the underlying project workspace.**
@@ -329,12 +342,12 @@ The "⋯" trigger reveals a dropdown panel for secondary actions.
 
 #### Menu Contents
 
-- **Current Reports:** Extract, Fix Snapshots, divider, Delete (danger style).
+- **Current Reports:** Extract, Fix Snapshots, Analyze Failures, divider, Delete (danger style).
 - **Archived Reports:** Extract, divider, Delete (danger style).
 
 ### Row Progress Overlay
 
-All single-row async actions (Extract, Archive, Fix Snapshots) display a unified progress overlay that covers the entire table row instead of modifying individual button text.
+All single-row async actions (Extract, Archive, Fix Snapshots, Analyze Failures) display a unified progress overlay that covers the entire table row instead of modifying individual button text.
 
 - **Overlay Element:** A `div.row-progress-overlay` inside each row's `<td class="col-action">`, containing a spinner and status text.
 - **States:** `progress-active` (spinner + message), `progress-success` (green background, success text, no spinner), `progress-error` (red background, error text, no spinner).

@@ -670,6 +670,71 @@ app.post('/api/extract', (req: Request, res: Response): any => {
   }
 });
 
+// Failure digest endpoint — runs the playwright-traces-reader `failures` command
+app.post('/api/failures', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportPath } = req.body;
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+
+  try {
+    // Determine which base directory this report lives in (current vs archive)
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+    if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+
+    // Extract the report folder name from the URL path
+    // e.g. /reports/current/my-test-run/index.html -> my-test-run
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    const folderName = urlParts[3];
+
+    const reportRootPath = path.join(basePath, folderName);
+    if (!fs.existsSync(reportRootPath)) {
+      return res.status(404).json({ error: "Report folder not found on disk" });
+    }
+
+    // Output goes into the Current Reports Directory + tmp dir
+    if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
+    const outputDir = path.join(appConfig.currentPath, 'tmp');
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    // Resolve the installed CLI entry (dist/cli.js) next to the package main
+    const pkgMain = require.resolve('@andrii_kremlovskyi/playwright-traces-reader');
+    const cliPath = path.join(path.dirname(pkgMain), 'cli.js');
+
+    const child = spawn(process.execPath, [cliPath, 'failures', reportRootPath, outputDir, '--format', 'json'], {
+      cwd: appConfig.currentPath,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('error', (err) => {
+      console.error("Failures command spawn error:", err);
+      res.status(500).json({ error: "Failed to start failures command: " + err.message });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.error("Failures command failed:", stderr || stdout);
+        return res.status(500).json({ error: "Failures command failed: " + (stderr.trim() || stdout.trim() || `exit code ${code}`) });
+      }
+      try {
+        const manifest = JSON.parse(stdout);
+        res.json({ success: true, count: manifest.count ?? 0, runDir: manifest.runDir, outputDir: manifest.outputDir });
+      } catch {
+        res.json({ success: true, output: stdout.trim(), outputDir });
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Failures endpoint error:", error);
+    res.status(500).json({ error: "Failed to analyze failures: " + error.message });
+  }
+});
+
 // Auto-archive report endpoint
 app.post('/api/archive', (req: Request, res: Response): any => {
   const { reportPath } = req.body;

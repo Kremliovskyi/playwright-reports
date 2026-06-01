@@ -644,6 +644,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </button>
       ` : '';
 
+      const failuresOverflowHtml = isCurrent ? `
+        <button class="row-overflow-action overflow-failures" aria-label="Analyze Failures">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            Analyze Failures
+        </button>
+      ` : '';
+
       const hasVaultFile = vaultFiles.has(report.id);
 
       // Inline action buttons (visible directly in the row)
@@ -699,6 +706,7 @@ document.addEventListener('DOMContentLoaded', () => {
                               Extract
                           </button>
                           ${fixAriaOverflowHtml}
+                          ${failuresOverflowHtml}
                           <div class="row-overflow-divider"></div>
                           <button class="row-overflow-action danger overflow-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
@@ -808,6 +816,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 e.stopPropagation();
                 closeAllOverflowMenus();
                 await handleFixAria(report.path, tr);
+            });
+        }
+      }
+
+      // Wire up analyze failures button conditionally
+      if (isCurrent) {
+        const failuresBtn = tr.querySelector('.overflow-failures') as HTMLButtonElement;
+        if (failuresBtn) {
+            failuresBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                closeAllOverflowMenus();
+                await handleFailures(report.path, tr);
             });
         }
       }
@@ -994,6 +1014,26 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Extraction failed API call:", err);
           hideRowProgress(row, 'error', 'Extraction failed');
+      }
+  };
+
+  // Logic to handle failure analysis (playwright-traces-reader `failures`)
+  const handleFailures = async (reportPath: string, row: HTMLElement) => {
+      showRowProgress(row, 'Analyzing failures...');
+      try {
+          const response = await fetch('/api/failures', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error);
+          const count = data.count ?? 0;
+          const label = count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'}`;
+          hideRowProgress(row, 'success', label);
+      } catch (err: any) {
+          console.error("Failure analysis API call:", err);
+          hideRowProgress(row, 'error', 'Analysis failed');
       }
   };
 

@@ -184,12 +184,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const ariaTbody = document.getElementById('aria-tbody') as HTMLElement;
   const closeAriaModalBtn = document.getElementById('close-aria-modal-btn') as HTMLButtonElement;
   
+  const digestModal = document.getElementById('digest-modal') as HTMLElement;
+  const digestTbody = document.getElementById('digest-tbody') as HTMLElement;
+  const closeDigestModalBtn = document.getElementById('close-digest-modal-btn') as HTMLButtonElement;
+  const digestSearchInput = document.getElementById('digest-search-input') as HTMLInputElement;
+  const digestSearchBtn = document.getElementById('digest-search-btn') as HTMLButtonElement;
+  
+  let activeDigestRows: { element: HTMLTableRowElement; title: string }[] = [];
+  
   const ariaPreviewModal = document.getElementById('aria-preview-modal') as HTMLElement;
   const ariaPreviewBody = document.getElementById('aria-preview-body') as HTMLElement;
   const closeAriaPreviewBtn = document.getElementById('close-aria-preview-btn') as HTMLButtonElement;
   const closeAriaPreviewFooterBtn = document.getElementById('close-aria-preview-footer-btn') as HTMLButtonElement;
   const ariaDeepEqualCheckbox = document.getElementById('aria-deep-equal-checkbox') as HTMLInputElement;
   const ariaPreviewSubtitle = document.getElementById('aria-preview-subtitle') as HTMLElement;
+
+  const failuresModal = document.getElementById('failures-modal') as HTMLElement;
+  const closeFailuresModalBtn = document.getElementById('close-failures-modal-btn') as HTMLButtonElement;
+  const closeFailuresModalFooterBtn = document.getElementById('close-failures-modal-footer-btn') as HTMLButtonElement;
+  const failuresModalStatusText = document.getElementById('failures-modal-status-text') as HTMLElement;
+  const failuresModalPathValue = document.getElementById('failures-modal-path-value') as HTMLElement;
+  const failuresModalCopyBtn = document.getElementById('failures-modal-copy-btn') as HTMLButtonElement;
+  const failuresModalViewLink = document.getElementById('failures-modal-view-link') as HTMLAnchorElement;
 
   const tableContexts: Record<SectionKey, TableContext> = {
       current: {
@@ -651,6 +667,13 @@ document.addEventListener('DOMContentLoaded', () => {
         </button>
       ` : '';
 
+      const digestOverflowHtml = `
+        <button class="row-overflow-action overflow-digest" aria-label="Digest Traces">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-activity"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            Digest
+        </button>
+      `;
+
       const hasVaultFile = vaultFiles.has(report.id);
 
       // Inline action buttons (visible directly in the row)
@@ -707,6 +730,7 @@ document.addEventListener('DOMContentLoaded', () => {
                           </button>
                           ${fixAriaOverflowHtml}
                           ${failuresOverflowHtml}
+                          ${digestOverflowHtml}
                           <div class="row-overflow-divider"></div>
                           <button class="row-overflow-action danger overflow-delete" aria-label="Delete Report" data-date="${formatDate(report.createdAt)}">
                               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
@@ -830,6 +854,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 await handleFailures(report.path, tr);
             });
         }
+      }
+
+      // Wire up digest button
+      const digestBtn = tr.querySelector('.overflow-digest') as HTMLButtonElement;
+      if (digestBtn) {
+          digestBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              closeAllOverflowMenus();
+              await handleDigest(report.path, tr);
+          });
       }
 
       // Wire up delete button
@@ -1031,6 +1065,12 @@ document.addEventListener('DOMContentLoaded', () => {
           const count = data.count ?? 0;
           const label = count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'}`;
           hideRowProgress(row, 'success', label);
+
+          // Populate and open the failures modal
+          failuresModalStatusText.textContent = `Analyzed failures successfully! ${count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'} found.`}`;
+          failuresModalPathValue.textContent = data.relativeRunDir || '';
+          failuresModalViewLink.href = data.failuresUrl || '#';
+          failuresModal.classList.remove('hidden');
       } catch (err: any) {
           console.error("Failure analysis API call:", err);
           hideRowProgress(row, 'error', 'Analysis failed');
@@ -1197,6 +1237,191 @@ document.addEventListener('DOMContentLoaded', () => {
   closeAriaModalBtn.addEventListener('click', () => ariaModal.classList.add('hidden'));
   closeAriaPreviewBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
   closeAriaPreviewFooterBtn.addEventListener('click', () => ariaPreviewModal.classList.add('hidden'));
+  closeDigestModalBtn.addEventListener('click', () => digestModal.classList.add('hidden'));
+
+  closeFailuresModalBtn.addEventListener('click', () => failuresModal.classList.add('hidden'));
+  closeFailuresModalFooterBtn.addEventListener('click', () => failuresModal.classList.add('hidden'));
+  failuresModalCopyBtn.addEventListener('click', async () => {
+      const pathText = failuresModalPathValue.textContent || '';
+      try {
+          await navigator.clipboard.writeText(pathText);
+          const originalCopyHtml = failuresModalCopyBtn.innerHTML;
+          failuresModalCopyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Copied!`;
+          setTimeout(() => { failuresModalCopyBtn.innerHTML = originalCopyHtml; }, 2000);
+      } catch (err) {
+          console.error('Failed to copy text: ', err);
+      }
+  });
+
+  const filterDigestTests = () => {
+      const query = (digestSearchInput?.value || '').toLowerCase().trim();
+      activeDigestRows.forEach(row => {
+          const matches = row.title.includes(query);
+          row.element.classList.toggle('hidden', !matches);
+      });
+  };
+
+  if (digestSearchInput) {
+      digestSearchInput.addEventListener('input', filterDigestTests);
+      digestSearchInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+              e.preventDefault();
+              filterDigestTests();
+          }
+      });
+  }
+
+  if (digestSearchBtn) {
+      digestSearchBtn.addEventListener('click', filterDigestTests);
+  }
+
+  // Logic to handle selective test trace digestion
+  const handleDigest = async (reportPath: string, row: HTMLElement) => {
+      showRowProgress(row, 'Listing tests...');
+      try {
+          const response = await fetch('/api/report-tests', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error);
+
+          const tests = data.tests || [];
+          if (tests.length === 0) {
+              hideRowProgress(row, 'success', 'No traces found');
+              return;
+          }
+
+          // Hide overlay immediately — we're opening a modal
+          const overlay = row.querySelector('.row-progress-overlay') as HTMLElement;
+          if (overlay) { overlay.classList.add('hidden'); overlay.classList.remove('progress-active'); }
+
+          // Reset search state
+          if (digestSearchInput) {
+              digestSearchInput.value = '';
+          }
+          activeDigestRows = [];
+
+          // Render tests in modal
+          digestTbody.innerHTML = '';
+          tests.forEach((test: any) => {
+              const tr = document.createElement('tr');
+              tr.className = 'report-row';
+              
+              const outcomeClass = (test.outcome || 'skipped').toLowerCase();
+              
+              const hasTrace = !!test.tracePath;
+              const actionButtonHtml = hasTrace 
+                  ? `<button class="btn primary-btn btn-digest-test">Digest</button>`
+                  : `<span class="form-hint" style="margin: 0;">No trace</span>`;
+
+              tr.innerHTML = `
+                  <td style="width: 15%;">
+                      <span style="font-family: monospace; font-size: 0.8rem; color: var(--text-secondary);">${test.projectName || 'default'}</span>
+                  </td>
+                  <td style="width: 50%;">
+                      <div style="font-weight: 500;">${test.testTitle}</div>
+                      <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace; margin-top: 4px;">${test.file}</div>
+                      <div class="digest-result-container"></div>
+                  </td>
+                  <td style="width: 15%;">
+                      <span class="outcome-badge ${outcomeClass}">${test.outcome || 'unknown'}</span>
+                  </td>
+                  <td style="width: 20%; text-align: right;" class="col-action-cell">
+                      ${actionButtonHtml}
+                  </td>
+              `;
+              
+              if (hasTrace) {
+                  const digestBtn = tr.querySelector('.btn-digest-test') as HTMLButtonElement;
+                  const resultContainer = tr.querySelector('.digest-result-container') as HTMLElement;
+                  
+                  digestBtn.addEventListener('click', async (e) => {
+                      e.stopPropagation();
+                      await handleDigestTest(digestBtn, resultContainer, reportPath, test.tracePath);
+                  });
+              }
+
+              digestTbody.appendChild(tr);
+              activeDigestRows.push({ element: tr, title: test.testTitle.toLowerCase() });
+          });
+          
+          digestModal.classList.remove('hidden');
+
+      } catch (err: any) {
+          console.error("Failed to list tests for digest:", err);
+          hideRowProgress(row, 'error', 'Check failed');
+      }
+  };
+
+  const handleDigestTest = async (btn: HTMLButtonElement, container: HTMLElement, reportPath: string, tracePath: string) => {
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Digesting...`;
+      container.innerHTML = '';
+      
+      try {
+          const res = await fetch('/api/digest-test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportPath, tracePath })
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error);
+
+          btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Digested`;
+          btn.style.backgroundColor = '#238636';
+          btn.style.borderColor = '#238636';
+          
+          container.innerHTML = `
+              <div class="digest-success-info">
+                  <div class="digest-status-title">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                      Trace parsed successfully!
+                  </div>
+                  <div class="digest-path-label">Workspace Folder Location:</div>
+                  <div class="digest-path-value">${data.digestFolder}</div>
+                  <div class="digest-actions-row">
+                      <button class="btn-copy-path" data-path="${data.digestFolder}">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-clipboard"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+                          Copy Relative Path
+                      </button>
+                      <a href="${data.digestUrl}/digest.json" target="_blank" rel="noopener noreferrer" class="digest-link-btn">
+                          View digest.json
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-external-link"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>
+                      </a>
+                  </div>
+              </div>
+          `;
+          
+          const copyBtn = container.querySelector('.btn-copy-path') as HTMLButtonElement;
+          copyBtn.addEventListener('click', async () => {
+              try {
+                  await navigator.clipboard.writeText(data.digestFolder);
+                  const originalCopyHtml = copyBtn.innerHTML;
+                  copyBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Copied!`;
+                  setTimeout(() => { copyBtn.innerHTML = originalCopyHtml; }, 2000);
+              } catch (err) {
+                  console.error('Failed to copy text: ', err);
+              }
+          });
+
+      } catch (err: any) {
+          console.error("Failed to digest trace:", err);
+          btn.innerHTML = `Failed`;
+          btn.style.backgroundColor = '#f85149';
+          btn.style.borderColor = '#f85149';
+          container.innerHTML = `<div class="path-error static-error" style="margin-top: 8px;">Digestion failed: ${err.message || err}</div>`;
+      } finally {
+          setTimeout(() => {
+              btn.innerHTML = originalHtml;
+              btn.disabled = false;
+              btn.style.backgroundColor = '';
+              btn.style.borderColor = '';
+          }, 4000);
+      }
+  };
 
   const renderAllDiffs = () => {
       const blocks = document.querySelectorAll('.aria-snapshot-block') as NodeListOf<HTMLElement>;

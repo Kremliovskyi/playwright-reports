@@ -216,8 +216,25 @@ The **Analyze Failures** overflow action (current reports only) runs the install
 - **CLI Resolution:** The server resolves the CLI entry via `require.resolve('@andrii_kremlovskyi/playwright-traces-reader')` and joins `cli.js` next to the resolved package main, so it always runs the version installed in `node_modules` (no global dependency).
 - **Execution:** It spawns `node cli.js failures <reportRoot> <outputDir> --format json` with `cwd` set to `currentPath`. The request stays open for the full duration — on machines where antivirus scanning or large reports make the command slow, the row progress overlay keeps spinning until the manifest returns.
 - **Output Location:** Results are always written to `<currentPath>/tmp` (the Current Reports Directory + `tmp`), created with `fs.mkdirSync(..., { recursive: true })`. The CLI writes a timestamped `run-<timestamp>/` subfolder containing one folder per failed attempt plus an `index.json` manifest.
-- **Response:** The server parses the CLI's stdout JSON manifest and returns `{ success, count, runDir, outputDir }`. The frontend surfaces `count` as the overlay success message (`N failures` / `No failures`).
-- **Boundary Note:** This is the one place `playwright-reports` shells out to the parser CLI directly (for a one-click convenience action). The agent discovery API still does not parse traces itself — see the Agent Discovery Boundary section.
+- **Response:** The server parses the CLI's stdout JSON manifest and returns `{ success, count, runDir, relativeRunDir, failuresUrl, manifest }`. The frontend displays a dedicated Failure Analysis Result Modal upon success, letting the developer copy the relative path to their clipboard or click to view the `index.json` manifest.
+- **Boundary Note:** This is one place `playwright-reports` shells out to the parser CLI directly (for a one-click convenience action). The agent discovery API still does not parse traces itself — see the Agent Discovery Boundary section.
+
+---
+
+## 🔍 Selective Trace Digestion (`playwright-traces-reader` `digest`)
+
+Digesting a full test suite with 300–600 tests bulk-style is extremely resource-intensive and produces massive filesystem clutter. To solve this, the dashboard provides a **Selective Trace Digestion** flow:
+
+### 1. Test Discovery (`POST /api/report-tests`)
+- **Request payload:** `{ reportPath: string }`
+- **Mechanism:** The server runs `playwright-traces-reader find-traces <reportRootPath> ""` to list all tests and trace locations in the report without extracting any traces.
+- **UI Presentation:** The frontend renders these tests in a scrollable, searchable list. Searching by test title is performed instantly in-browser to avoid server round-trips.
+
+### 2. On-Demand Digestion (`POST /api/digest-test`)
+- **Request payload:** `{ reportPath, tracePath }`
+- **Execution:** Spawns `node cli.js digest <tracePath> <outputDir> --report <reportRootPath> --format json` in-memory.
+- **Output:** The CLI unzips the targeted trace, parses step events, builds the network NDJSON, and outputs a clean step tree to `<currentPath>/tmp/run-<timestamp>/<test-name>__retry<index>/digest.json`.
+- **Token Efficiency & Workflows:** The digested outputs (step tree + companion console & network NDJSONs) are designed for AI agents to reason about test execution without consuming excessive tokens. Providing a structured chronological step tree and parsed HTTP exchanges simplifies complex automation workflows, such as parsing trace API calls to automatically scaffold a `k6` load test from E2E test runs.
 
 ---
 

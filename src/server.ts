@@ -723,7 +723,16 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       }
       try {
         const manifest = JSON.parse(stdout);
-        res.json({ success: true, count: manifest.count ?? 0, runDir: manifest.runDir, outputDir: manifest.outputDir });
+        const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
+        const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
+        res.json({ 
+          success: true, 
+          count: manifest.count ?? 0, 
+          runDir: manifest.runDir, 
+          relativeRunDir, 
+          failuresUrl, 
+          manifest 
+        });
       } catch {
         res.json({ success: true, output: stdout.trim(), outputDir });
       }
@@ -732,6 +741,130 @@ app.post('/api/failures', (req: Request, res: Response): any => {
   } catch (error: any) {
     console.error("Failures endpoint error:", error);
     res.status(500).json({ error: "Failed to analyze failures: " + error.message });
+  }
+});
+
+// Find tests in a report — runs the playwright-traces-reader `find-traces` command
+app.post('/api/report-tests', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportPath } = req.body;
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+
+  try {
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+    if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    const folderName = urlParts[3];
+
+    const reportRootPath = path.join(basePath, folderName);
+    if (!fs.existsSync(reportRootPath)) {
+      return res.status(404).json({ error: "Report folder not found on disk" });
+    }
+
+    const pkgMain = require.resolve('@andrii_kremlovskyi/playwright-traces-reader');
+    const cliPath = path.join(path.dirname(pkgMain), 'cli.js');
+
+    // grep is passed as an empty string to list all tests in the report
+    const child = spawn(process.execPath, [cliPath, 'find-traces', reportRootPath, '', '--format', 'json'], {
+      cwd: basePath,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('error', (err) => {
+      console.error("find-traces command spawn error:", err);
+      res.status(500).json({ error: "Failed to start find-traces command: " + err.message });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.error("find-traces command failed:", stderr || stdout);
+        return res.status(500).json({ error: "find-traces command failed: " + (stderr.trim() || `exit code ${code}`) });
+      }
+      try {
+        const result = JSON.parse(stdout);
+        res.json({ success: true, tests: result.traces || [] });
+      } catch (e: any) {
+        console.error("Failed to parse find-traces JSON:", e);
+        res.status(500).json({ error: "Invalid JSON response from find-traces command" });
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Report tests endpoint error:", error);
+    res.status(500).json({ error: "Failed to search report tests: " + error.message });
+  }
+});
+
+// Digest a single trace — runs the playwright-traces-reader `digest` command
+app.post('/api/digest-test', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportPath, tracePath } = req.body;
+  if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
+  if (!tracePath) return res.status(400).json({ error: "tracePath is required" });
+
+  try {
+    const isArchive = reportPath.startsWith('/reports/archive/');
+    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+    if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+
+    const urlParts = reportPath.split('/');
+    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+    const folderName = urlParts[3];
+
+    const reportRootPath = path.join(basePath, folderName);
+    if (!fs.existsSync(reportRootPath)) {
+      return res.status(404).json({ error: "Report folder not found on disk" });
+    }
+
+    // Output goes into the Current Reports Directory + tmp dir
+    if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
+    const outputDir = path.join(appConfig.currentPath, 'tmp');
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    const pkgMain = require.resolve('@andrii_kremlovskyi/playwright-traces-reader');
+    const cliPath = path.join(path.dirname(pkgMain), 'cli.js');
+
+    const child = spawn(process.execPath, [cliPath, 'digest', tracePath, outputDir, '--report', reportRootPath, '--format', 'json'], {
+      cwd: appConfig.currentPath,
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('error', (err) => {
+      console.error("digest command spawn error:", err);
+      res.status(500).json({ error: "Failed to start digest command: " + err.message });
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        console.error("digest command failed:", stderr || stdout);
+        return res.status(500).json({ error: "digest command failed: " + (stderr.trim() || `exit code ${code}`) });
+      }
+      try {
+        const manifest = JSON.parse(stdout);
+        const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
+        const digestUrl = `/reports/current/${relativeRunDir}/${manifest.folder}`;
+        const digestFolder = path.join(relativeRunDir, manifest.folder);
+        res.json({ success: true, digestFolder, digestUrl, manifest });
+      } catch (e: any) {
+        console.error("Failed to parse digest JSON:", e);
+        res.status(500).json({ error: "Invalid JSON response from digest command" });
+      }
+    });
+
+  } catch (error: any) {
+    console.error("Digest test endpoint error:", error);
+    res.status(500).json({ error: "Failed to digest test: " + error.message });
   }
 });
 

@@ -40,6 +40,10 @@
             <h1>Test Reports Central</h1>
           </div>
           <div class="actions">
+            <button id="copilot-status-chip" class="copilot-status-chip checking" type="button" title="Checking Copilot status...">
+              <span class="copilot-status-dot"></span>
+              <span id="copilot-status-text">Copilot…</span>
+            </button>
             <div class="run-tests-wrapper" id="run-tests-wrapper">
               <button id="run-tests-btn" class="btn primary-btn" style="background-color: #10b981; border-color: #10b981; color: white;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-play"><polygon points="6 3 20 12 6 21 6 3"/></svg>
@@ -231,6 +235,7 @@
           <div class="modal-tabs">
             <button class="modal-tab active" data-tab="paths">Paths</button>
             <button class="modal-tab" data-tab="browserstack">BrowserStack</button>
+            <button class="modal-tab" data-tab="copilot">Copilot</button>
           </div>
 
           <div class="modal-tab-content active" data-tab-content="paths">
@@ -276,6 +281,14 @@
               <label for="browserstack-config-input">BrowserStack Config</label>
               <p class="form-hint">Config filename relative to project root (e.g., browserstack.falcons.yml).</p>
               <input type="text" id="browserstack-config-input" class="path-input full-width" placeholder="e.g., browserstack.falcons.yml">
+            </div>
+          </div>
+
+          <div class="modal-tab-content" data-tab-content="copilot">
+            <div class="form-group">
+              <label for="copilot-token-input">GitHub Token (optional)</label>
+              <p class="form-hint">Used to authenticate the Copilot SDK for AI failure analysis. If left blank, the dashboard falls back to the host's Copilot CLI / GitHub CLI login.</p>
+              <input type="password" id="copilot-token-input" class="path-input full-width" placeholder="ghp_… (leave blank to use Copilot CLI login)">
             </div>
           </div>
           

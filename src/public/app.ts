@@ -157,6 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const browserstackUsernameInput = document.getElementById('browserstack-username-input') as HTMLInputElement;
   const browserstackKeyInput = document.getElementById('browserstack-key-input') as HTMLInputElement;
   const browserstackConfigInput = document.getElementById('browserstack-config-input') as HTMLInputElement;
+  const copilotTokenInput = document.getElementById('copilot-token-input') as HTMLInputElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
 
   // Tab switching in preferences modal
@@ -316,6 +317,37 @@ document.addEventListener('DOMContentLoaded', () => {
           .then(res => res.json())
           .then(data => updateRunTestsBtnForProjectPath(data.projectPath || ''))
           .catch(() => updateRunTestsBtnForProjectPath(''));
+
+      // Copilot status chip — preflight check (auth + configured model availability)
+      const copilotChip = document.getElementById('copilot-status-chip') as HTMLButtonElement | null;
+      const copilotChipText = document.getElementById('copilot-status-text');
+      const checkCopilotStatus = async () => {
+          if (!copilotChip || !copilotChipText) return;
+          copilotChip.className = 'copilot-status-chip checking';
+          copilotChip.title = 'Checking Copilot status…';
+          copilotChipText.textContent = 'Copilot…';
+          try {
+              const res = await fetch('/api/copilot-status');
+              const s = await res.json();
+              if (s.ok) {
+                  copilotChip.className = 'copilot-status-chip ok';
+                  copilotChipText.textContent = `Copilot: ${s.model}`;
+                  copilotChip.title = `Authenticated as ${s.login || 'user'} (${s.authType || 'user'}). Model "${s.model}" available. Click to re-check.`;
+              } else {
+                  copilotChip.className = 'copilot-status-chip error';
+                  copilotChipText.textContent = s.authenticated ? 'Copilot: model N/A' : 'Copilot: sign in';
+                  copilotChip.title = (s.error || 'Copilot unavailable') + ' — click to re-check.';
+              }
+          } catch {
+              copilotChip.className = 'copilot-status-chip error';
+              copilotChipText.textContent = 'Copilot: error';
+              copilotChip.title = 'Failed to query Copilot status — click to re-check.';
+          }
+      };
+      if (copilotChip) {
+          copilotChip.addEventListener('click', () => void checkCopilotStatus());
+          void checkCopilotStatus();
+      }
   }
 
   // Format date nicely
@@ -1051,9 +1083,28 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
-  // Logic to handle failure analysis (playwright-traces-reader `failures`)
+  // Logic to handle failure analysis (playwright-traces-reader `failures` + Copilot SDK per-trace records)
   const handleFailures = async (reportPath: string, row: HTMLElement) => {
-      showRowProgress(row, 'Analyzing failures...');
+      showRowProgress(row, 'Digesting failures...');
+
+      // Subscribe to per-trace AI analysis progress over SSE.
+      let aiEvents: EventSource | null = null;
+      try {
+          aiEvents = new EventSource('/api/logs');
+          aiEvents.addEventListener('failure-analysis', (e: MessageEvent) => {
+              try {
+                  const p = JSON.parse(e.data);
+                  if (p.phase === 'start') {
+                      showRowProgress(row, p.total > 0 ? `Analyzing 0/${p.total}...` : 'Analyzing...');
+                  } else if (p.phase === 'progress' && p.status === 'start') {
+                      showRowProgress(row, `Analyzing ${p.index}/${p.total}...`);
+                  } else if (p.phase === 'complete') {
+                      showRowProgress(row, 'Finalizing...');
+                  }
+              } catch { /* ignore malformed event */ }
+          });
+      } catch { /* SSE is optional progress sugar */ }
+
       try {
           const response = await fetch('/api/failures', {
               method: 'POST',
@@ -1066,14 +1117,24 @@ document.addEventListener('DOMContentLoaded', () => {
           const label = count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'}`;
           hideRowProgress(row, 'success', label);
 
-          // Populate and open the failures modal
-          failuresModalStatusText.textContent = `Analyzed failures successfully! ${count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'} found.`}`;
+          // Populate and open the failures modal, including AI record outcome.
+          let statusText = `Analyzed failures successfully! ${count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'} found.`}`;
+          if (data.ai) {
+              statusText += ` AI records: ${data.ai.analyzed} written`
+                  + (data.ai.failed ? `, ${data.ai.failed} failed` : '')
+                  + (data.ai.skipped ? `, ${data.ai.skipped} skipped` : '') + '.';
+          } else if (data.aiError) {
+              statusText += ` AI analysis skipped: ${data.aiError}`;
+          }
+          failuresModalStatusText.textContent = statusText;
           failuresModalPathValue.textContent = data.relativeRunDir || '';
           failuresModalViewLink.href = data.failuresUrl || '#';
           failuresModal.classList.remove('hidden');
       } catch (err: any) {
           console.error("Failure analysis API call:", err);
           hideRowProgress(row, 'error', 'Analysis failed');
+      } finally {
+          if (aiEvents) aiEvents.close();
       }
   };
 
@@ -1641,6 +1702,7 @@ document.addEventListener('DOMContentLoaded', () => {
           browserstackUsernameInput.value = data.browserstackUsername || '';
           browserstackKeyInput.value = data.browserstackAccessKey || '';
           browserstackConfigInput.value = data.browserstackConfig || '';
+          copilotTokenInput.value = data.copilotToken || '';
       } catch (err) {
           console.error("Failed to load config:", err);
       }
@@ -1707,6 +1769,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const browserstackUsername = browserstackUsernameInput.value.trim();
       const browserstackAccessKey = browserstackKeyInput.value.trim();
       const browserstackConfig = browserstackConfigInput.value.trim();
+      const copilotToken = copilotTokenInput.value.trim();
 
       modalError.classList.add('hidden');
       saveModalBtn.disabled = true;
@@ -1716,7 +1779,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const response = await fetch('/api/config', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig })
+              body: JSON.stringify({ currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken })
           });
           
           const data = await response.json();
@@ -1728,6 +1791,7 @@ document.addEventListener('DOMContentLoaded', () => {
           closeModal();
           updateRunTestsBtnForProjectPath(projectPath);
           await reloadVisibleReports();
+          document.getElementById('copilot-status-chip')?.click();
           
       } catch (err: any) {
           modalError.textContent = err.message;

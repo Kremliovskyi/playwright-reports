@@ -29,7 +29,7 @@
 - **🤖 Agent-Friendly Report Hub:** Expose local-first report discovery and preparation endpoints so `playwright-traces-reader` can search by metadata/date, resolve a selected report, and then parse it locally.
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
-- **🧪 Failure Analysis:** Run the `playwright-traces-reader` `failures` command on any current report with a single click. Results are written to a `tmp` folder inside your Current Reports Directory as self-contained per-failure folders ready for AI agents, with a live row progress bar that handles slow (antivirus-scanned or large) reports gracefully.
+- **🧪 Failure Analysis:** Run the `playwright-traces-reader` `failures` command on any current report with a single click. Results are written to a `tmp` folder inside your Current Reports Directory as self-contained per-failure folders ready for AI agents, with a live row progress bar that handles slow (antivirus-scanned or large) reports gracefully. Each analyzable failure also gets an AI-generated `ai-analysis.md` — a distilled per-failure understanding record written next to `error.md`.
 - **🔍 Selective Trace Digestion:** Open a dedicated test selector modal on any report to parse individual test traces selectively on-demand. Saves resources and context tokens by producing structured chronological step trees and network NDJSON files for targeted reasoning (e.g., enabling AI agents to trace all network traffic and automatically generate `k6` load tests).
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
 - **🧰 Contextual Bulk Actions:** When one or more rows are selected, the table reveals bulk actions for the selected set. Current reports support bulk archive and delete; Archived reports support bulk delete.
@@ -171,7 +171,7 @@ Digest a report's failing tests into self-contained, agent-ready folders without
 
 - Open the **⋯** overflow menu on any current report and click **Analyze Failures**.
 - The dashboard runs the installed `@andrii_kremlovskyi/playwright-traces-reader` `failures` command against the report and writes the results to a `tmp` directory inside your **Current Reports Directory** (e.g. `<currentPath>/tmp/run-<timestamp>/`).
-- Each run produces one folder per failed attempt — including retries — with `failure.json`, screenshots, network/console errors, and an `error.md`, plus an `index.json` manifest.
+- Each run produces one folder per failed attempt — including retries — with `failure.json`, screenshots, network/console errors, an `error.md`, and an AI-generated `ai-analysis.md` (a distilled per-failure understanding record, written for each analyzable failure), plus an `index.json` manifest.
 - The action reuses the per-row progress bar. Because the command can be slow on machines with aggressive antivirus scanning or very large reports, the spinner stays active until the analysis finishes.
 - **Completion Dialog:** On completion, a new dialog pops up displaying the workspace output folder path, a **"Copy Relative Path"** button, and a **"View index.json"** link to inspect the failures manifest directly.
 

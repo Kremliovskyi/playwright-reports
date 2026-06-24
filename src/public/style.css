@@ -1516,3 +1516,64 @@ p {
 .modal-body .reports-table {
   min-width: 0;
 }
+
+/* Copilot status chip (header) */
+.copilot-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-surface-hover);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.copilot-status-chip:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+.copilot-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.copilot-status-chip.ok {
+  border-color: rgba(63, 185, 80, 0.4);
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.copilot-status-chip.ok .copilot-status-dot {
+  background: #3fb950;
+}
+
+.copilot-status-chip.error {
+  border-color: rgba(248, 81, 73, 0.4);
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.copilot-status-chip.error .copilot-status-dot {
+  background: #f85149;
+}
+
+.copilot-status-chip.checking .copilot-status-dot {
+  background: var(--primary);
+  animation: copilot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes copilot-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}

@@ -7,6 +7,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
 import MarkdownIt from 'markdown-it';
+import { analyzeRun, isAnalyzableEntry, copilotPreflight, COPILOT_ANALYSIS_MODEL, AnalyzeRunSummary } from './copilot-analyzer';
 
 const jiti = createJiti(__filename, { moduleCache: false });
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
@@ -66,7 +67,7 @@ app.get('/api/config', (req: Request, res: Response) => {
 });
 
 app.post('/api/config', (req: Request, res: Response): any => {
-  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, runnerOptions, selectedProjects } = req.body;
+  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken, runnerOptions, selectedProjects } = req.body;
   
   try {
     if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
@@ -83,6 +84,7 @@ app.post('/api/config', (req: Request, res: Response): any => {
       browserstackUsername: browserstackUsername !== undefined ? browserstackUsername.trim() : appConfig.browserstackUsername,
       browserstackAccessKey: browserstackAccessKey !== undefined ? browserstackAccessKey.trim() : appConfig.browserstackAccessKey,
       browserstackConfig: browserstackConfig !== undefined ? browserstackConfig.trim() : appConfig.browserstackConfig,
+      copilotToken: copilotToken !== undefined ? copilotToken.trim() : appConfig.copilotToken,
       runnerOptions: runnerOptions !== undefined ? { ...appConfig.runnerOptions, ...runnerOptions } : appConfig.runnerOptions,
       selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
@@ -517,6 +519,13 @@ const broadcastLog = (type: string, data: string) => {
   });
 };
 
+// Broadcast a structured JSON payload (single JSON.parse on the client side).
+const broadcastJson = (type: string, payload: unknown) => {
+  sseClients.forEach(client => {
+    client.write(`event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`);
+  });
+};
+
 app.get('/api/logs', (req: Request, res: Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -670,6 +679,17 @@ app.post('/api/extract', (req: Request, res: Response): any => {
   }
 });
 
+// Copilot preflight — verifies the host Copilot CLI is authenticated and the model is available
+app.get('/api/copilot-status', async (_req: Request, res: Response): Promise<any> => {
+  refreshConfigCache();
+  try {
+    const status = await copilotPreflight(COPILOT_ANALYSIS_MODEL, appConfig.copilotToken || undefined);
+    res.json(status);
+  } catch (error: any) {
+    res.json({ ok: false, authenticated: false, model: COPILOT_ANALYSIS_MODEL, modelAvailable: false, availableModels: [], error: error?.message || String(error) });
+  }
+});
+
 // Failure digest endpoint — runs the playwright-traces-reader `failures` command
 app.post('/api/failures', (req: Request, res: Response): any => {
   refreshConfigCache();
@@ -716,26 +736,48 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       res.status(500).json({ error: "Failed to start failures command: " + err.message });
     });
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       if (code !== 0) {
         console.error("Failures command failed:", stderr || stdout);
         return res.status(500).json({ error: "Failures command failed: " + (stderr.trim() || stdout.trim() || `exit code ${code}`) });
       }
+
+      let manifest: any;
       try {
-        const manifest = JSON.parse(stdout);
-        const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
-        const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
-        res.json({ 
-          success: true, 
-          count: manifest.count ?? 0, 
-          runDir: manifest.runDir, 
-          relativeRunDir, 
-          failuresUrl, 
-          manifest 
-        });
+        manifest = JSON.parse(stdout);
       } catch {
-        res.json({ success: true, output: stdout.trim(), outputDir });
+        return res.json({ success: true, output: stdout.trim(), outputDir });
       }
+
+      const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
+      const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
+
+      // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
+      let aiSummary: AnalyzeRunSummary | null = null;
+      let aiError: string | null = null;
+      try {
+        const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
+        broadcastJson('failure-analysis', { phase: 'start', total: analyzableTotal });
+        aiSummary = await analyzeRun(manifest.runDir, manifest, COPILOT_ANALYSIS_MODEL, (p) => {
+          broadcastJson('failure-analysis', { phase: 'progress', ...p });
+        }, appConfig.copilotToken || undefined);
+        broadcastJson('failure-analysis', { phase: 'complete', ...aiSummary });
+      } catch (err: any) {
+        aiError = err?.message || String(err);
+        console.error('AI analysis failed:', err);
+        broadcastJson('failure-analysis', { phase: 'failed', error: aiError });
+      }
+
+      res.json({
+        success: true,
+        count: manifest.count ?? 0,
+        runDir: manifest.runDir,
+        relativeRunDir,
+        failuresUrl,
+        manifest,
+        ai: aiSummary,
+        aiError
+      });
     });
 
   } catch (error: any) {

@@ -124,7 +124,7 @@ The dashboard includes a floating search panel in the header for quickly narrowi
 
 The dashboard now has a small agent-oriented API surface for local-first report discovery and preparation.
 
-- `GET /api/agent/reports/search`: searches the persisted report index and returns report descriptors with a stable `reportRef`. Each descriptor includes an `analysisFile` field that is non-null when a vault `.md` file exists for that report.
+- `GET /api/agent/reports/search`: searches the persisted report index and returns report descriptors with a stable `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose vault `.md` file exists for that report (analysis files are mapped by run-directory basename, not report name).
 - `GET /api/agent/reports/prepare?reportRef=...`: resolves a selected report into a local analysis-ready descriptor.
 
 This API is intended to be used by `playwright-traces-reader` helper commands or skills:
@@ -132,7 +132,7 @@ This API is intended to be used by `playwright-traces-reader` helper commands or
 1. Search the dashboard for the intended report.
 2. Prepare the selected report to get its local report root or `data/` directory.
 3. Run the traditional `playwright-traces-reader` CLI commands against that local path.
-4. If `analysisFile` is present, read the vault analysis file via `vault-read`.
+4. If `analysisFiles` is non-empty, read a vault analysis file via `vault-read` (each entry is a `run-<timestamp>` name).
 
 Typical companion CLI flow:
 
@@ -141,7 +141,7 @@ npx playwright-traces-reader search-reports "UAT EU" --limit 1
 npx playwright-traces-reader prepare-report <reportRef>
 npx playwright-traces-reader failures <reportRootPath>
 npx playwright-traces-reader summary <tracePath>
-npx playwright-traces-reader vault-read <analysisFile>
+npx playwright-traces-reader vault-read <runName>
 ```
 
 Boundary rules:

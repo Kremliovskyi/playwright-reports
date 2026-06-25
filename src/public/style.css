@@ -1035,6 +1035,100 @@ p {
   background: rgba(210, 153, 34, 0.08);
 }
 
+/* Inline analysis run dropdown */
+.analysis-menu {
+  position: relative;
+  display: inline-block;
+}
+
+.analysis-menu-panel {
+  position: fixed;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: 0.35rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  z-index: 30;
+}
+
+.analysis-menu-panel.hidden {
+  display: none;
+}
+
+.analysis-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.analysis-menu-item:hover {
+  background: var(--bg-surface-hover);
+}
+
+.analysis-menu-name {
+  font-size: 0.8rem;
+  font-family: monospace;
+}
+
+.analysis-menu-date {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Right-click context menu for analysis run items */
+.analysis-context-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 140px;
+  padding: 0.3rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.analysis-context-menu.hidden {
+  display: none;
+}
+
+.analysis-context-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.analysis-context-item:hover {
+  background: var(--bg-surface-hover);
+}
+
 /* Row progress overlay */
 .report-row {
   position: relative;

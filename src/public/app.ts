@@ -245,7 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let deleteRequest: DeleteRequest | null = null;
   let activeBulkTarget: SectionKey | null = null;
-  let vaultFiles: Set<string> = new Set();
+  let analysisRunsByReport: Map<string, { runName: string; mtime: string; runDir: string }[]> = new Map();
     let cachedReportsData: ReportsResponse | null = null;
     let activeSearchState: SearchState = {
         isOpen: false,
@@ -493,6 +493,58 @@ document.addEventListener('DOMContentLoaded', () => {
       });
   };
 
+  const closeAllAnalysisMenus = () => {
+      document.querySelectorAll('.analysis-menu-panel').forEach(panel => {
+          panel.classList.add('hidden');
+      });
+      document.querySelectorAll('.btn-analysis-inline').forEach(trigger => {
+          trigger.setAttribute('aria-expanded', 'false');
+      });
+  };
+
+  // Shared right-click context menu for analysis run items ("Copy path").
+  let analysisContextPath = '';
+  const analysisContextMenu = document.createElement('div');
+  analysisContextMenu.className = 'analysis-context-menu hidden';
+  analysisContextMenu.setAttribute('role', 'menu');
+  analysisContextMenu.innerHTML = `
+      <button class="analysis-context-item" type="button" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+          <span class="analysis-context-label">Copy path</span>
+      </button>
+  `;
+  document.body.appendChild(analysisContextMenu);
+  const analysisContextCopyBtn = analysisContextMenu.querySelector('.analysis-context-item') as HTMLButtonElement;
+  const analysisContextLabel = analysisContextMenu.querySelector('.analysis-context-label') as HTMLElement;
+
+  const hideAnalysisContextMenu = () => {
+      analysisContextMenu.classList.add('hidden');
+  };
+
+  const showAnalysisContextMenu = (x: number, y: number, pathValue: string) => {
+      analysisContextPath = pathValue;
+      analysisContextLabel.textContent = 'Copy path';
+      analysisContextMenu.classList.remove('hidden');
+      // Clamp to viewport so the menu stays fully visible.
+      const rect = analysisContextMenu.getBoundingClientRect();
+      const left = Math.min(x, window.innerWidth - rect.width - 8);
+      const top = Math.min(y, window.innerHeight - rect.height - 8);
+      analysisContextMenu.style.left = Math.max(8, left) + 'px';
+      analysisContextMenu.style.top = Math.max(8, top) + 'px';
+  };
+
+  analysisContextCopyBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      try {
+          await navigator.clipboard.writeText(analysisContextPath);
+          analysisContextLabel.textContent = 'Copied!';
+          setTimeout(hideAnalysisContextMenu, 700);
+      } catch {
+          hideAnalysisContextMenu();
+      }
+  });
+
+
   const syncBulkControls = (target: SectionKey) => {
       const context = tableContexts[target];
       const selectionCount = selectedReports[target].size;
@@ -706,14 +758,36 @@ document.addEventListener('DOMContentLoaded', () => {
         </button>
       `;
 
-      const hasVaultFile = vaultFiles.has(report.id);
+      const analysisRuns = analysisRunsByReport.get(report.id) || [];
+      const hasAnalysis = analysisRuns.length > 0;
 
       // Inline action buttons (visible directly in the row)
-      const analysisInlineHtml = hasVaultFile ? `
-        <button class="btn-inline-action btn-analysis-inline" aria-label="View Analysis">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-            Analysis
-        </button>
+      const analysisMenuItems = analysisRuns.map(run => {
+          const safeRun = run.runName
+              .replace(/&/g, '&amp;')
+              .replace(/"/g, '&quot;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;');
+          const safeDir = (run.runDir || '')
+              .replace(/&/g, '&amp;')
+              .replace(/"/g, '&quot;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;');
+          return `
+        <button class="analysis-menu-item" role="menuitem" data-run-name="${safeRun}" data-run-dir="${safeDir}">
+            <span class="analysis-menu-name">${safeRun}</span>
+            <span class="analysis-menu-date">${formatDate(run.mtime)}</span>
+        </button>`;
+      }).join('');
+
+      const analysisInlineHtml = hasAnalysis ? `
+        <div class="analysis-menu">
+            <button class="btn-inline-action btn-analysis-inline" aria-label="View Analysis" aria-haspopup="menu" aria-expanded="false">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                Analysis${analysisRuns.length > 1 ? ` (${analysisRuns.length})` : ''}
+            </button>
+            <div class="analysis-menu-panel hidden" role="menu">${analysisMenuItems}</div>
+        </div>
       ` : '';
 
       const archiveInlineHtml = isCurrent ? `
@@ -805,12 +879,50 @@ document.addEventListener('DOMContentLoaded', () => {
           openLink.addEventListener('click', e => e.stopPropagation());
       }
 
-      // Wire up inline analysis button
+      // Wire up inline analysis menu (lists each failure-analysis run, newest first)
       const analysisBtn = tr.querySelector('.btn-analysis-inline') as HTMLButtonElement;
-      if (analysisBtn) {
+      const analysisPanel = tr.querySelector('.analysis-menu-panel') as HTMLElement;
+      if (analysisBtn && analysisPanel) {
           analysisBtn.addEventListener('click', (e) => {
               e.stopPropagation();
-              window.open('/vault/' + encodeURIComponent(report.id), '_blank', 'noopener,noreferrer');
+              const isOpen = !analysisPanel.classList.contains('hidden');
+              closeAllAnalysisMenus();
+              closeAllOverflowMenus();
+              hideAnalysisContextMenu();
+              if (!isOpen) {
+                  analysisPanel.classList.remove('hidden');
+                  analysisBtn.setAttribute('aria-expanded', 'true');
+                  // Position the fixed panel relative to the trigger so it escapes table/row clipping.
+                  const triggerRect = analysisBtn.getBoundingClientRect();
+                  const panelRect = analysisPanel.getBoundingClientRect();
+                  const spaceBelow = window.innerHeight - triggerRect.bottom;
+                  if (spaceBelow < panelRect.height + 8) {
+                      analysisPanel.style.top = '';
+                      analysisPanel.style.bottom = (window.innerHeight - triggerRect.top + 6) + 'px';
+                  } else {
+                      analysisPanel.style.bottom = '';
+                      analysisPanel.style.top = (triggerRect.bottom + 6) + 'px';
+                  }
+                  analysisPanel.style.left = triggerRect.left + 'px';
+              }
+          });
+          analysisPanel.querySelectorAll('.analysis-menu-item').forEach(item => {
+              item.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  const runName = (item as HTMLElement).dataset.runName || '';
+                  if (runName) {
+                      window.open('/vault/' + encodeURIComponent(runName), '_blank', 'noopener,noreferrer');
+                  }
+                  analysisPanel.classList.add('hidden');
+                  analysisBtn.setAttribute('aria-expanded', 'false');
+              });
+              item.addEventListener('contextmenu', (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const mouseEvent = e as MouseEvent;
+                  const runDir = (item as HTMLElement).dataset.runDir || '';
+                  showAnalysisContextMenu(mouseEvent.clientX, mouseEvent.clientY, runDir);
+              });
           });
       }
 
@@ -1568,14 +1680,16 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
-  const fetchVaultFiles = async () => {
+  const fetchAnalysisRuns = async () => {
       try {
-          const response = await fetch('/api/vault/list');
-          if (!response.ok) return;
+          const response = await fetch('/api/analysis-runs');
+          if (!response.ok) { analysisRunsByReport = new Map(); return; }
           const data = await response.json();
-          vaultFiles = new Set((data.files || []).map((f: { filename: string }) => f.filename));
+          analysisRunsByReport = new Map(
+              Object.entries(data.runs || {}) as [string, { runName: string; mtime: string; runDir: string }[]][]
+          );
       } catch {
-          vaultFiles = new Set();
+          analysisRunsByReport = new Map();
       }
   };
 
@@ -1584,7 +1698,7 @@ document.addEventListener('DOMContentLoaded', () => {
       resetRenderedState(showLoading);
 
       try {
-          await fetchVaultFiles();
+          await fetchAnalysisRuns();
           const data = await requestReports('/api/reports');
           cachedReportsData = data;
           if (render) {
@@ -1886,12 +2000,20 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!target.closest('.row-overflow-menu')) {
           closeAllOverflowMenus();
       }
+      if (!target.closest('.analysis-menu')) {
+          closeAllAnalysisMenus();
+      }
+      if (!target.closest('.analysis-context-menu')) {
+          hideAnalysisContextMenu();
+      }
   });
 
   document.addEventListener('keydown', event => {
       if (event.key === 'Escape') {
           closeBulkMenus();
           closeAllOverflowMenus();
+          closeAllAnalysisMenus();
+          hideAnalysisContextMenu();
       }
   });
 

@@ -71,7 +71,7 @@ The dashboard exposes a minimal agent-facing contract for report discovery, but 
 
 Current endpoints:
 
-- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFile` field (non-null when a matching vault `.md` file exists for that report) so agents can discover analysis files without a separate vault listing call.
+- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose matching vault `.md` file exists for that report — so agents can discover analysis files without a separate vault listing call. Run directories are persisted per report in the `analysis_runs` table each time **Analyze Failures** runs, and analysis files are mapped by run-directory basename (`run-<timestamp>.md`) rather than by report name.
 - `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
 - `GET /api/agent/vault/:filename` returns raw vault markdown content. This endpoint is used by the `vault-read` CLI command in `playwright-traces-reader` to let agents read vault analysis files that live outside the IDE workspace.
 

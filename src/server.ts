@@ -2,11 +2,12 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, renameAnalysisRunsReport } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
 import MarkdownIt from 'markdown-it';
+import { randomUUID } from 'node:crypto';
 import { analyzeRun, isAnalyzableEntry, copilotPreflight, COPILOT_ANALYSIS_MODEL, AnalyzeRunSummary } from './copilot-analyzer';
 
 const jiti = createJiti(__filename, { moduleCache: false });
@@ -158,7 +159,7 @@ interface AgentReportDescriptor {
   reportRootPath: string | null;
   reportDataPath: string | null;
   reportIndexPath: string | null;
-  analysisFile: string | null;
+  analysisFiles: string[];
   exists: {
     reportRoot: boolean;
     dataDir: boolean;
@@ -257,7 +258,7 @@ const toAgentReportDescriptor = (record: ReportRecord): AgentReportDescriptor =>
     reportRootPath,
     reportDataPath,
     reportIndexPath,
-    analysisFile: resolveVaultFile(record.id) ? record.id : null,
+    analysisFiles: getReportAnalysisFiles(record.id).map(f => f.runName),
     exists: {
       reportRoot: Boolean(reportRootPath && fs.existsSync(reportRootPath)),
       dataDir: Boolean(reportDataPath && fs.existsSync(reportDataPath)),
@@ -364,6 +365,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
     // Only clean up records that belong to this prefix (check reportPath)
     if (dbReport.reportPath.startsWith(`/reports/${prefix}/`) && !diskIds.has(dbReport.id)) {
       deleteReportRecord(dbReport.id);
+      deleteAnalysisRunsByReport(dbReport.id);
     }
   }
 
@@ -752,6 +754,19 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
       const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
 
+      // Persist this run directory against the report (one report -> many runs; never overwrite previous).
+      try {
+        addAnalysisRun({
+          id: randomUUID(),
+          reportId: folderName,
+          runDir: manifest.runDir,
+          runName: path.basename(manifest.runDir),
+          createdAt: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error('Failed to persist analysis run:', err);
+      }
+
       // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
       let aiSummary: AnalyzeRunSummary | null = null;
       let aiError: string | null = null;
@@ -957,6 +972,7 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     // Update DB record: transfer from old folder name to new archived folder name
     const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
     updateReportId(folderName, uniqueArchivedName, newReportPath);
+    renameAnalysisRunsReport(folderName, uniqueArchivedName);
 
     // Move matching vault .md file into archivePath/analysis/ directory
     if (appConfig.vaultPath) {
@@ -1016,14 +1032,17 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     // Delete the directory and its contents
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
-    // Delete associated analysis (vault) file if it exists
-    const analysisFile = resolveVaultFile(folderName);
-    if (analysisFile) {
-      fs.unlinkSync(analysisFile);
+    // Delete associated analysis (vault) files for every persisted run of this report.
+    for (const run of getAnalysisRuns(folderName)) {
+      const runFile = resolveVaultFile(run.runName);
+      if (runFile) {
+        try { fs.unlinkSync(runFile); } catch { /* already gone */ }
+      }
     }
 
     // Remove DB record
     deleteReportRecord(folderName);
+    deleteAnalysisRunsByReport(folderName);
 
     res.json({ success: true });
     
@@ -1082,6 +1101,7 @@ app.post('/api/report-rename', (req: Request, res: Response): any => {
     fs.renameSync(oldFolder, newFolder);
     const newReportPath = `/reports/current/${trimmed}/index.html`;
     updateReportId(reportId, trimmed, newReportPath);
+    renameAnalysisRunsReport(reportId, trimmed);
 
     res.json({ success: true, newId: trimmed, newPath: newReportPath });
   } catch (error: any) {
@@ -1428,6 +1448,38 @@ const resolveVaultFile = (filename: string): string | null => {
   }
   return null;
 };
+
+// Resolve the persisted failure-analysis runs for a report into existing vault files (newest first).
+const getReportAnalysisFiles = (reportId: string): { runName: string; mtime: string; runDir: string }[] => {
+  const files: { runName: string; mtime: string; runDir: string }[] = [];
+  for (const run of getAnalysisRuns(reportId)) {
+    const resolved = resolveVaultFile(run.runName);
+    if (!resolved) continue;
+    try {
+      const stat = fs.statSync(resolved);
+      files.push({ runName: run.runName, mtime: stat.mtime.toISOString(), runDir: run.runDir });
+    } catch {
+      // Skip runs whose vault file became unreadable.
+    }
+  }
+  return files;
+};
+
+// List, per report, the failure-analysis run files that exist in the vault (newest first).
+app.get('/api/analysis-runs', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  try {
+    const runs: Record<string, { runName: string; mtime: string; runDir: string }[]> = {};
+    for (const report of getAllReports()) {
+      const files = getReportAnalysisFiles(report.id);
+      if (files.length > 0) runs[report.id] = files;
+    }
+    return res.json({ runs });
+  } catch (error: any) {
+    console.error('Analysis runs list error:', error.message);
+    return res.status(500).json({ error: 'Failed to list analysis runs' });
+  }
+});
 
 app.get('/api/vault/list', (req: Request, res: Response): any => {
   refreshConfigCache();

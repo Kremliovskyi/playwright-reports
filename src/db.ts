@@ -39,6 +39,14 @@ export interface ReportRecord {
   reportPath: string;
 }
 
+export interface AnalysisRun {
+  id: string;
+  reportId: string;
+  runDir: string;
+  runName: string;
+  createdAt: string;
+}
+
 export interface ReportSearchFilters {
   query?: string;
   selectedDates?: string[];
@@ -120,6 +128,18 @@ if (!configColumns.some(c => c.name === 'copilotToken')) {
   db.exec("ALTER TABLE config ADD COLUMN copilotToken TEXT NOT NULL DEFAULT ''");
 }
 
+// Migration: add analysis_runs table (one report -> many failure-analysis run directories)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS analysis_runs (
+    id TEXT PRIMARY KEY,
+    reportId TEXT NOT NULL,
+    runDir TEXT NOT NULL UNIQUE,
+    runName TEXT NOT NULL,
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_analysis_runs_reportId ON analysis_runs(reportId);
+`);
+
 // Ensure default config row exists
 const existing = db.prepare('SELECT id FROM config WHERE id = ?').get('default');
 if (!existing) {
@@ -200,6 +220,30 @@ export const deleteReportRecord = (id: string): void => {
 
 export const updateReportId = (oldId: string, newId: string, newPath: string): void => {
   db.prepare('UPDATE reports SET id = ?, reportPath = ? WHERE id = ?').run(newId, newPath, oldId);
+};
+
+// --- Analysis Run Operations ---
+export const addAnalysisRun = (run: AnalysisRun): void => {
+  db.prepare(
+    `INSERT OR IGNORE INTO analysis_runs (id, reportId, runDir, runName, createdAt)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(run.id, run.reportId, run.runDir, run.runName, run.createdAt);
+};
+
+export const getAnalysisRuns = (reportId: string): AnalysisRun[] => {
+  return db.prepare('SELECT * FROM analysis_runs WHERE reportId = ? ORDER BY createdAt DESC').all(reportId) as AnalysisRun[];
+};
+
+export const getAllAnalysisRuns = (): AnalysisRun[] => {
+  return db.prepare('SELECT * FROM analysis_runs ORDER BY createdAt DESC').all() as AnalysisRun[];
+};
+
+export const deleteAnalysisRunsByReport = (reportId: string): void => {
+  db.prepare('DELETE FROM analysis_runs WHERE reportId = ?').run(reportId);
+};
+
+export const renameAnalysisRunsReport = (oldReportId: string, newReportId: string): void => {
+  db.prepare('UPDATE analysis_runs SET reportId = ? WHERE reportId = ?').run(newReportId, oldReportId);
 };
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

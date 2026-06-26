@@ -34,11 +34,13 @@
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
 - **🧰 Contextual Bulk Actions:** When one or more rows are selected, the table reveals bulk actions for the selected set. Current reports support bulk archive and delete; Archived reports support bulk delete.
 - **🗃️ Single-Click Archiving:** Move important runs out of your cluttered active folder and safely into a historical Archive directory.
+- **🧮 Archive Capacity Limit:** The archive is capped at **20 reports**. When archiving would exceed the cap, a dialog offers to delete the oldest archived reports to make room before continuing; trying to bulk-archive more than 20 at once is blocked with a warning.
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
 - **⚙️ Centralized Configuration:** Manage all your workspace paths, BrowserStack credentials, and persistent runner options through a tabbed Preferences UI.
-- **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename. Current reports' analysis files live in the configured vault directory; archived reports' analysis files are automatically moved to an `analysis/` subdirectory inside the archive path for quick access via the inline Analysis button.
+- **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename. Current reports' analysis files live in the configured vault directory; archived reports' analysis files are automatically moved to an `analysis/` subdirectory inside the archive path for quick access from the report's Info dialog.
+- **ℹ️ Report Info Dialog:** Every report row has an always-on **Info** button that opens a dialog showing the report's size on disk (calculated once, then cached) and a card per analysis run. Each run lists its failure-analysis output directory and its mapped analysis `.md` file, with copy (button + right-click), open links, and independent delete buttons. Deleting an output directory keeps the analysis file mapped; deleting the analysis file removes the note.
 - **🗄️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
 
 ---
@@ -195,8 +197,8 @@ For large reports containing hundreds of tests, digesting the entire run is too 
 The dashboard integrates with an Obsidian-style vault directory for storing analysis notes alongside your test reports.
 
 - **Configuration:** Set the vault path in Preferences to point at a directory of `.md` files (e.g., your Obsidian vault's reports folder).
-- **Report Matching:** When a vault filename matches a report origin label, an "Analysis" button appears directly in that report's row for quick access.
-- **Archived Reports:** When a report is archived, its analysis file is moved to `<archivePath>/analysis/`. The Analysis button continues to work for archived reports.
+- **Report Matching:** Each report row has an always-on **Info** button. The Report Info dialog lists every analysis run with its output directory and mapped vault `.md` file, and links straight to the rendered analysis page.
+- **Archived Reports:** When a report is archived, its analysis file is moved to `<archivePath>/analysis/`. The Info dialog continues to resolve and open it for archived reports.
 - **Rendered View:** Markdown is rendered server-side with full support for headings, tables, code blocks, links, and images.
 - **Inline Editing:** Click Edit to switch to a full-height monospace textarea, make your changes, and Save writes back to disk.
 - **Agent Endpoints:** The vault is also exposed via `/api/agent/vault/list` and `/api/agent/vault/:filename` for programmatic access.
@@ -222,6 +224,15 @@ Keep your active workspace clean by archiving old runs.
 - Or select multiple rows with the new checkboxes, click **Select All** when you want the whole table, then use **Actions → Archive selected**.
 - The report folder is safely moved to your configured Archive path and appended with a unique timestamp (`playwright-report-174000...`) to absolutely guarantee no collisions.
 - If a matching vault analysis file exists, it is automatically moved to an `analysis/` subdirectory inside the archive path.
+- Each analysis run's ephemeral output directory is removed and its reference cleared, while the run's analysis `.md` mapping is preserved so the archived report's Info dialog still resolves it.
+
+### Archive Limit (max 20)
+
+The archive holds at most **20 reports**. The limit is checked against a fresh count each time you archive:
+
+- If archiving fits within 20, it proceeds as usual with no extra prompt.
+- If it would exceed 20, a dialog warns you and offers to delete the **oldest** archived reports (the bottom of the Archived table) to make room — at least 5 at a time for breathing room, and always enough to stay within the limit. Click **Yes, delete N** to prune and continue archiving, or **Cancel** to stop and prune manually.
+- Bulk-archiving more than 20 reports at once is not allowed; a warning explains you must select fewer reports.
 
 ---
 

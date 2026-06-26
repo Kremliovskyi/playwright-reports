@@ -242,6 +242,17 @@ export const deleteAnalysisRunsByReport = (reportId: string): void => {
   db.prepare('DELETE FROM analysis_runs WHERE reportId = ?').run(reportId);
 };
 
+// Detach the (ephemeral) output directory reference from a run while keeping the
+// report <-> analysis-file mapping intact.
+export const clearAnalysisRunDir = (reportId: string, runName: string): void => {
+  db.prepare("UPDATE analysis_runs SET runDir = '' WHERE reportId = ? AND runName = ?").run(reportId, runName);
+};
+
+// Remove a single run row entirely (used once both artifacts are gone).
+export const deleteAnalysisRun = (reportId: string, runName: string): void => {
+  db.prepare('DELETE FROM analysis_runs WHERE reportId = ? AND runName = ?').run(reportId, runName);
+};
+
 export const renameAnalysisRunsReport = (oldReportId: string, newReportId: string): void => {
   db.prepare('UPDATE analysis_runs SET reportId = ? WHERE reportId = ?').run(newReportId, oldReportId);
 };

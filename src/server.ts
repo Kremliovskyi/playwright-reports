@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, renameAnalysisRunsReport } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, renameAnalysisRunsReport, clearAnalysisRunDir, deleteAnalysisRun } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -28,6 +28,12 @@ app.use(express.static(publicDir));
 
 // Global AppConfig cache for fast synchronous access in middlewares
 let appConfig: AppConfig = getConfig();
+
+// Cache of computed report-folder sizes (recursive disk scans are expensive). The report folder is a
+// sibling of the ephemeral output dirs (currentPath/tmp/...), so deleting analysis runs never changes
+// it — the cache only needs clearing when the report folder itself is mutated (extract/archive/rename/delete).
+const reportSizeCache = new Map<string, number>();
+const invalidateReportSize = (reportId: string): void => { reportSizeCache.delete(reportId); };
 
 const refreshConfigCache = () => {
   appConfig = getConfig();
@@ -673,6 +679,7 @@ app.post('/api/extract', (req: Request, res: Response): any => {
       }
     }
 
+    if (extractedCount > 0) invalidateReportSize(folderName);
     res.json({ success: true, extractedCount });
     
   } catch (error: any) {
@@ -974,26 +981,39 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     const archivedRuns = getAnalysisRuns(folderName);
     updateReportId(folderName, uniqueArchivedName, newReportPath);
     renameAnalysisRunsReport(folderName, uniqueArchivedName);
+    invalidateReportSize(folderName);
 
     // Move each run's analysis (vault) file into archivePath/analysis/, keeping the run-<timestamp> name
     // so the run-based mapping (and the report's Analysis dropdown) keeps resolving after archival.
-    if (appConfig.vaultPath) {
-      const analysisDir = path.join(appConfig.archivePath, 'analysis');
-      for (const run of archivedRuns) {
+    // The output directory is ephemeral, so it is removed and its DB reference cleared on archive.
+    const analysisDir = path.join(appConfig.archivePath, 'analysis');
+    for (const run of archivedRuns) {
+      if (appConfig.vaultPath) {
         const oldVaultFile = path.join(appConfig.vaultPath, run.runName + '.md');
-        if (!fs.existsSync(oldVaultFile)) continue;
-        fs.mkdirSync(analysisDir, { recursive: true });
-        const newVaultFile = path.join(analysisDir, run.runName + '.md');
-        try {
-          fs.renameSync(oldVaultFile, newVaultFile);
-        } catch (moveErr: any) {
-          if (moveErr.code === 'EXDEV') {
-            fs.copyFileSync(oldVaultFile, newVaultFile);
-            fs.unlinkSync(oldVaultFile);
-          } else {
-            console.warn('Failed to move vault file:', moveErr);
+        if (fs.existsSync(oldVaultFile)) {
+          fs.mkdirSync(analysisDir, { recursive: true });
+          const newVaultFile = path.join(analysisDir, run.runName + '.md');
+          try {
+            fs.renameSync(oldVaultFile, newVaultFile);
+          } catch (moveErr: any) {
+            if (moveErr.code === 'EXDEV') {
+              fs.copyFileSync(oldVaultFile, newVaultFile);
+              fs.unlinkSync(oldVaultFile);
+            } else {
+              console.warn('Failed to move vault file:', moveErr);
+            }
           }
         }
+      }
+
+      // Remove the ephemeral output directory and detach its reference (keep the analysis mapping).
+      try {
+        if (run.runDir && fs.existsSync(run.runDir)) {
+          fs.rmSync(run.runDir, { recursive: true, force: true });
+        }
+        clearAnalysisRunDir(uniqueArchivedName, run.runName);
+      } catch (rmErr) {
+        console.warn('Failed to remove output directory during archive:', rmErr);
       }
     }
 
@@ -1045,6 +1065,7 @@ app.post('/api/delete', (req: Request, res: Response): any => {
 
     // Remove DB record
     deleteReportRecord(folderName);
+    invalidateReportSize(folderName);
     deleteAnalysisRunsByReport(folderName);
 
     res.json({ success: true });
@@ -1105,6 +1126,7 @@ app.post('/api/report-rename', (req: Request, res: Response): any => {
     const newReportPath = `/reports/current/${trimmed}/index.html`;
     updateReportId(reportId, trimmed, newReportPath);
     renameAnalysisRunsReport(reportId, trimmed);
+    invalidateReportSize(reportId);
 
     res.json({ success: true, newId: trimmed, newPath: newReportPath });
   } catch (error: any) {
@@ -1481,6 +1503,176 @@ app.get('/api/analysis-runs', (req: Request, res: Response): any => {
   } catch (error: any) {
     console.error('Analysis runs list error:', error.message);
     return res.status(500).json({ error: 'Failed to list analysis runs' });
+  }
+});
+
+// Recursively sum the byte size of a directory tree (best-effort; unreadable entries are skipped).
+const dirSizeBytes = (dir: string): number => {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        total += dirSizeBytes(full);
+      } else if (entry.isFile()) {
+        total += fs.statSync(full).size;
+      }
+    } catch {
+      // Skip entries that disappear or are unreadable mid-scan.
+    }
+  }
+  return total;
+};
+
+// True when `target` resolves to `base` itself or a path nested inside it.
+const isWithin = (base: string, target: string): boolean => {
+  const resolvedBase = path.resolve(base);
+  const resolvedTarget = path.resolve(target);
+  return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + path.sep);
+};
+
+// Resolve a report's physical folder on disk from its DB record.
+const resolveReportFolder = (report: ReportRecord): string | null => {
+  const isArchive = report.reportPath.startsWith('/reports/archive/');
+  const base = isArchive ? appConfig.archivePath : appConfig.currentPath;
+  if (!base) return null;
+  return path.join(base, report.id);
+};
+
+// Detailed per-report info for the Info dialog: every analysis run's artifacts (size is fetched
+// separately via /api/report-size so the runs render without waiting on a recursive disk scan).
+app.get('/api/report-info', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const reportId = typeof req.query.reportId === 'string' ? req.query.reportId : '';
+  if (!reportId) return res.status(400).json({ error: 'reportId is required' });
+
+  try {
+    const report = getReport(reportId);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    const folder = resolveReportFolder(report);
+    const folderExists = !!folder && fs.existsSync(folder);
+
+    const runs = getAnalysisRuns(reportId).map(run => {
+      const runDir = run.runDir || '';
+      const runDirExists = !!runDir && fs.existsSync(runDir);
+      const analysisFile = resolveVaultFile(run.runName);
+      let failuresUrl: string | null = null;
+      if (runDirExists && appConfig.currentPath && isWithin(appConfig.currentPath, runDir)) {
+        const relativeRunDir = path.relative(appConfig.currentPath, runDir);
+        failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join('/')}/index.json`;
+      }
+      return {
+        runName: run.runName,
+        createdAt: run.createdAt,
+        runDir,
+        runDirExists,
+        analysisFile: analysisFile || '',
+        analysisFileExists: !!analysisFile,
+        failuresUrl,
+        vaultUrl: `/vault/${encodeURIComponent(run.runName)}`
+      };
+    });
+
+    return res.json({ reportId, folder: folder || '', folderExists, runs });
+  } catch (error: any) {
+    console.error('Report info error:', error.message);
+    return res.status(500).json({ error: 'Failed to load report info' });
+  }
+});
+
+// Recursive report-folder size, cached after the first calculation. Pass ?refresh=1 to recompute.
+app.get('/api/report-size', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const reportId = typeof req.query.reportId === 'string' ? req.query.reportId : '';
+  if (!reportId) return res.status(400).json({ error: 'reportId is required' });
+
+  try {
+    const report = getReport(reportId);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    const folder = resolveReportFolder(report);
+    const folderExists = !!folder && fs.existsSync(folder);
+    if (!folderExists) {
+      invalidateReportSize(reportId);
+      return res.json({ reportId, folderExists: false, sizeBytes: 0, cached: false });
+    }
+
+    const refresh = req.query.refresh === '1' || req.query.refresh === 'true';
+    if (!refresh && reportSizeCache.has(reportId)) {
+      return res.json({ reportId, folderExists: true, sizeBytes: reportSizeCache.get(reportId), cached: true });
+    }
+
+    const sizeBytes = dirSizeBytes(folder!);
+    reportSizeCache.set(reportId, sizeBytes);
+    return res.json({ reportId, folderExists: true, sizeBytes, cached: false });
+  } catch (error: any) {
+    console.error('Report size error:', error.message);
+    return res.status(500).json({ error: 'Failed to calculate report size' });
+  }
+});
+
+// Delete the (ephemeral) output directory of a run, detaching its DB reference while keeping the
+// report <-> analysis-file mapping intact.
+app.delete('/api/analysis-run/output-dir', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportId, runName } = req.body || {};
+  if (!reportId || !runName) return res.status(400).json({ error: 'reportId and runName are required' });
+
+  try {
+    const run = getAnalysisRuns(reportId).find(r => r.runName === runName);
+    if (!run) return res.status(404).json({ error: 'Analysis run not found' });
+
+    if (run.runDir) {
+      if (!appConfig.currentPath || !isWithin(appConfig.currentPath, run.runDir)) {
+        return res.status(400).json({ error: 'Output directory is outside the configured current path' });
+      }
+      if (fs.existsSync(run.runDir)) fs.rmSync(run.runDir, { recursive: true, force: true });
+    }
+    clearAnalysisRunDir(reportId, runName);
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('Delete output dir error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete output directory: ' + error.message });
+  }
+});
+
+// Delete a run's analysis (vault) file. If the output dir reference is already gone, prune the row.
+app.delete('/api/analysis-run/analysis-file', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportId, runName } = req.body || {};
+  if (!reportId || !runName) return res.status(400).json({ error: 'reportId and runName are required' });
+
+  try {
+    const run = getAnalysisRuns(reportId).find(r => r.runName === runName);
+    if (!run) return res.status(404).json({ error: 'Analysis run not found' });
+
+    const resolved = resolveVaultFile(runName);
+    if (resolved) {
+      const vaultRoots = [
+        appConfig.vaultPath,
+        appConfig.archivePath ? path.join(appConfig.archivePath, 'analysis') : null
+      ].filter((p): p is string => !!p);
+      if (!vaultRoots.some(root => isWithin(root, resolved))) {
+        return res.status(400).json({ error: 'Analysis file is outside the configured vault paths' });
+      }
+      fs.unlinkSync(resolved);
+    }
+
+    // Once the analysis file is gone and no output dir remains, the row has no purpose.
+    if (!run.runDir || !fs.existsSync(run.runDir)) {
+      deleteAnalysisRun(reportId, runName);
+    }
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('Delete analysis file error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete analysis file: ' + error.message });
   }
 });
 

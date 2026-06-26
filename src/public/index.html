@@ -326,6 +326,30 @@
       </div>
     </div>
 
+    <!-- Archive Limit Modal overlay -->
+    <div id="archive-limit-modal" class="modal-backdrop hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="archive-limit-modal-title">Archive Limit Reached</h2>
+          <button id="close-archive-limit-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+
+        <div class="modal-body">
+          <p id="archive-limit-modal-message">The archive already holds the maximum of 20 reports.</p>
+          <p id="archive-limit-modal-hint" class="form-hint" style="margin-top: 0.5rem; color: #f85149;">Deleting reports cannot be undone.</p>
+
+          <div id="archive-limit-modal-error" class="path-error static-error hidden"></div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="cancel-archive-limit-btn" class="btn secondary-btn">Cancel</button>
+          <button id="confirm-archive-limit-btn" class="btn primary-btn" style="background-color: #f85149; border-color: #f85149;">Yes, delete</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Aria Snapshots List Modal -->
     <div id="aria-modal" class="modal-backdrop hidden">
       <div class="modal-content" style="max-width: 800px;">
@@ -448,6 +472,55 @@
         </div>
         <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
           <button id="close-failures-modal-footer-btn" class="btn primary-btn">Dismiss</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Report Info Modal -->
+    <div id="report-info-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 760px;">
+        <div class="modal-header">
+          <h2>Report Info</h2>
+          <button id="close-report-info-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding: var(--space-4) var(--space-5);">
+          <div class="report-info-summary">
+            <div class="report-info-summary-row">
+              <span class="report-info-summary-label">Report</span>
+              <span id="report-info-name" class="report-info-summary-value">—</span>
+            </div>
+            <div class="report-info-summary-row">
+              <span class="report-info-summary-label">Size on disk</span>
+              <span id="report-info-size" class="report-info-summary-value">—</span>
+            </div>
+          </div>
+          <h3 class="report-info-runs-title">Analysis runs</h3>
+          <div id="report-info-runs" class="report-info-runs"></div>
+        </div>
+        <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
+          <button id="close-report-info-modal-footer-btn" class="btn primary-btn">Dismiss</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generic Delete Confirmation Modal -->
+    <div id="confirm-delete-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 460px;">
+        <div class="modal-header">
+          <h2 id="confirm-delete-title">Confirm deletion</h2>
+          <button id="close-confirm-delete-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding: var(--space-4) var(--space-5);">
+          <p id="confirm-delete-message" class="confirm-delete-message">Are you sure?</p>
+          <div id="confirm-delete-path" class="digest-path-value confirm-delete-path"></div>
+        </div>
+        <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
+          <button id="confirm-delete-cancel-btn" class="btn">Cancel</button>
+          <button id="confirm-delete-confirm-btn" class="btn danger-btn">Delete</button>
         </div>
       </div>
     </div>

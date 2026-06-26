@@ -121,6 +121,11 @@ function computeDiff(oldStr: string, newStr: string): DiffLine[] {
     return diff;
 }
 
+// Maximum number of reports allowed in the archive at once.
+const ARCHIVE_LIMIT = 20;
+// Minimum number of oldest reports to prune when making room (breathing room).
+const MIN_PRUNE = 5;
+
 document.addEventListener('DOMContentLoaded', () => {
   // DOM Elements
   const currentSection = document.getElementById('current-section') as HTMLElement;
@@ -180,7 +185,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const cancelDeleteBtn = document.getElementById('cancel-delete-btn') as HTMLButtonElement;
   const confirmDeleteBtn = document.getElementById('confirm-delete-btn') as HTMLButtonElement;
   const deleteModalError = document.getElementById('delete-modal-error') as HTMLElement;
-  
+
+  const archiveLimitModal = document.getElementById('archive-limit-modal') as HTMLElement;
+  const archiveLimitModalTitle = document.getElementById('archive-limit-modal-title') as HTMLElement;
+  const archiveLimitModalMessage = document.getElementById('archive-limit-modal-message') as HTMLElement;
+  const archiveLimitModalHint = document.getElementById('archive-limit-modal-hint') as HTMLElement;
+  const archiveLimitModalError = document.getElementById('archive-limit-modal-error') as HTMLElement;
+  const closeArchiveLimitModalBtn = document.getElementById('close-archive-limit-modal-btn') as HTMLButtonElement;
+  const cancelArchiveLimitBtn = document.getElementById('cancel-archive-limit-btn') as HTMLButtonElement;
+  const confirmArchiveLimitBtn = document.getElementById('confirm-archive-limit-btn') as HTMLButtonElement;
+
   const ariaModal = document.getElementById('aria-modal') as HTMLElement;
   const ariaTbody = document.getElementById('aria-tbody') as HTMLElement;
   const closeAriaModalBtn = document.getElementById('close-aria-modal-btn') as HTMLButtonElement;
@@ -207,6 +221,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const failuresModalPathValue = document.getElementById('failures-modal-path-value') as HTMLElement;
   const failuresModalCopyBtn = document.getElementById('failures-modal-copy-btn') as HTMLButtonElement;
   const failuresModalViewLink = document.getElementById('failures-modal-view-link') as HTMLAnchorElement;
+
+  const reportInfoModal = document.getElementById('report-info-modal') as HTMLElement;
+  const closeReportInfoModalBtn = document.getElementById('close-report-info-modal-btn') as HTMLButtonElement;
+  const closeReportInfoModalFooterBtn = document.getElementById('close-report-info-modal-footer-btn') as HTMLButtonElement;
+  const reportInfoName = document.getElementById('report-info-name') as HTMLElement;
+  const reportInfoSize = document.getElementById('report-info-size') as HTMLElement;
+  const reportInfoRuns = document.getElementById('report-info-runs') as HTMLElement;
+
+  const confirmDeleteModal = document.getElementById('confirm-delete-modal') as HTMLElement;
+  const closeConfirmDeleteModalBtn = document.getElementById('close-confirm-delete-modal-btn') as HTMLButtonElement;
+  const confirmDeleteTitle = document.getElementById('confirm-delete-title') as HTMLElement;
+  const confirmDeleteMessage = document.getElementById('confirm-delete-message') as HTMLElement;
+  const confirmDeletePath = document.getElementById('confirm-delete-path') as HTMLElement;
+  const confirmDeleteCancelBtn = document.getElementById('confirm-delete-cancel-btn') as HTMLButtonElement;
+  const confirmDeleteConfirmBtn = document.getElementById('confirm-delete-confirm-btn') as HTMLButtonElement;
 
   const tableContexts: Record<SectionKey, TableContext> = {
       current: {
@@ -714,6 +743,122 @@ document.addEventListener('DOMContentLoaded', () => {
       };
   };
 
+  // Show a blocking info dialog (single Close button) when the requested archive
+  // operation can never fit within the limit.
+  const showArchiveBlockedDialog = (message: string): Promise<void> => {
+      return new Promise(resolve => {
+          archiveLimitModalTitle.textContent = 'Archive Limit Reached';
+          archiveLimitModalMessage.textContent = message;
+          archiveLimitModalHint.classList.add('hidden');
+          archiveLimitModalError.classList.add('hidden');
+          confirmArchiveLimitBtn.classList.add('hidden');
+          cancelArchiveLimitBtn.textContent = 'Close';
+          archiveLimitModal.classList.remove('hidden');
+
+          const close = () => {
+              archiveLimitModal.classList.add('hidden');
+              confirmArchiveLimitBtn.classList.remove('hidden');
+              cancelArchiveLimitBtn.removeEventListener('click', close);
+              closeArchiveLimitModalBtn.removeEventListener('click', close);
+              resolve();
+          };
+          cancelArchiveLimitBtn.addEventListener('click', close);
+          closeArchiveLimitModalBtn.addEventListener('click', close);
+      });
+  };
+
+  // Show the prune-confirmation dialog. On confirm it deletes the supplied oldest
+  // archived reports and resolves true; on cancel it resolves false.
+  const runArchivePruneDialog = (deleteCount: number, totalArchived: number, oldestPaths: string[]): Promise<boolean> => {
+      return new Promise(resolve => {
+          archiveLimitModalTitle.textContent = 'Archive Limit Reached';
+          archiveLimitModalMessage.textContent =
+              `The archive holds ${totalArchived} of a maximum of ${ARCHIVE_LIMIT} reports. ` +
+              `Archiving now would exceed the limit. Delete the ${deleteCount} oldest archived ` +
+              `report${deleteCount === 1 ? '' : 's'} to make room?`;
+          archiveLimitModalHint.textContent = 'This permanently removes the oldest archived report directories from disk. This cannot be undone.';
+          archiveLimitModalHint.classList.remove('hidden');
+          archiveLimitModalError.classList.add('hidden');
+          confirmArchiveLimitBtn.classList.remove('hidden');
+          confirmArchiveLimitBtn.disabled = false;
+          confirmArchiveLimitBtn.textContent = `Yes, delete ${deleteCount}`;
+          cancelArchiveLimitBtn.textContent = 'Cancel';
+          archiveLimitModal.classList.remove('hidden');
+
+          const detach = () => {
+              confirmArchiveLimitBtn.removeEventListener('click', onConfirm);
+              cancelArchiveLimitBtn.removeEventListener('click', onCancel);
+              closeArchiveLimitModalBtn.removeEventListener('click', onCancel);
+          };
+
+          const onCancel = () => {
+              detach();
+              archiveLimitModal.classList.add('hidden');
+              resolve(false);
+          };
+
+          const onConfirm = async () => {
+              archiveLimitModalError.classList.add('hidden');
+              confirmArchiveLimitBtn.disabled = true;
+              confirmArchiveLimitBtn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Deleting...`;
+              try {
+                  const result = await performDeleteRequests(oldestPaths);
+                  if (result.failures.length === oldestPaths.length) {
+                      throw new Error(result.failures[0] || 'Failed to delete reports');
+                  }
+                  detach();
+                  archiveLimitModal.classList.add('hidden');
+                  if (result.failures.length > 0) {
+                      alert(`Deleted ${result.successCount} reports. Failed to delete ${result.failures.length}. First error: ${result.failures[0]}`);
+                  }
+                  resolve(true);
+              } catch (err: any) {
+                  archiveLimitModalError.textContent = err.message || 'Failed to delete reports';
+                  archiveLimitModalError.classList.remove('hidden');
+                  confirmArchiveLimitBtn.disabled = false;
+                  confirmArchiveLimitBtn.textContent = `Yes, delete ${deleteCount}`;
+              }
+          };
+
+          confirmArchiveLimitBtn.addEventListener('click', onConfirm);
+          cancelArchiveLimitBtn.addEventListener('click', onCancel);
+          closeArchiveLimitModalBtn.addEventListener('click', onCancel);
+      });
+  };
+
+  // Ensure the archive can accept `incoming` more reports without exceeding the
+  // limit. Returns true if archiving may proceed (after any needed pruning),
+  // false if the user cancelled or the request is not allowed.
+  const ensureArchiveCapacity = async (incoming: number): Promise<boolean> => {
+      // Hard cap: a single operation can never exceed the archive limit.
+      if (incoming > ARCHIVE_LIMIT) {
+          await showArchiveBlockedDialog(
+              `You can archive at most ${ARCHIVE_LIMIT} reports at once, because the archive is limited to ${ARCHIVE_LIMIT} reports. Please select fewer reports.`
+          );
+          return false;
+      }
+
+      // Fetch a fresh archive count at click time.
+      let archive: Report[];
+      try {
+          const data = await requestReports('/api/reports');
+          archive = data.archive || [];
+      } catch (err: any) {
+          alert(err.message || 'Failed to check archive size');
+          return false;
+      }
+
+      const archivedCount = archive.length;
+      if (archivedCount + incoming <= ARCHIVE_LIMIT) return true;
+
+      // Delete enough oldest reports to stay within the limit, with a breathing-room floor.
+      const deleteCount = Math.min(archivedCount, Math.max(MIN_PRUNE, archivedCount + incoming - ARCHIVE_LIMIT));
+      // Server returns the archive newest-first, so the oldest are at the end.
+      const oldestPaths = archive.slice(archivedCount - deleteCount).map(report => report.path);
+
+      return await runArchivePruneDialog(deleteCount, archivedCount, oldestPaths);
+  };
+
   const openDeleteModal = (request: DeleteRequest) => {
       deleteRequest = request;
       deleteModalTitle.textContent = request.title;
@@ -759,36 +904,21 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       const analysisRuns = analysisRunsByReport.get(report.id) || [];
-      const hasAnalysis = analysisRuns.length > 0;
+      const analysisCount = analysisRuns.length;
+      const safeReportId = (report.id || '')
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;');
 
-      // Inline action buttons (visible directly in the row)
-      const analysisMenuItems = analysisRuns.map(run => {
-          const safeRun = run.runName
-              .replace(/&/g, '&amp;')
-              .replace(/"/g, '&quot;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;');
-          const safeDir = (run.runDir || '')
-              .replace(/&/g, '&amp;')
-              .replace(/"/g, '&quot;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;');
-          return `
-        <button class="analysis-menu-item" role="menuitem" data-run-name="${safeRun}" data-run-dir="${safeDir}">
-            <span class="analysis-menu-name">${safeRun}</span>
-            <span class="analysis-menu-date">${formatDate(run.mtime)}</span>
-        </button>`;
-      }).join('');
+      // Inline "Info" button — always visible; opens the Report Info dialog.
+      const analysisInlineHtml = `
+        <button class="btn-inline-action btn-info-inline" aria-label="Report Info" data-report-id="${safeReportId}">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+            Info${analysisCount > 0 ? ` (${analysisCount})` : ''}
+        </button>
+      `;
 
-      const analysisInlineHtml = hasAnalysis ? `
-        <div class="analysis-menu">
-            <button class="btn-inline-action btn-analysis-inline" aria-label="View Analysis" aria-haspopup="menu" aria-expanded="false">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                Analysis${analysisRuns.length > 1 ? ` (${analysisRuns.length})` : ''}
-            </button>
-            <div class="analysis-menu-panel hidden" role="menu">${analysisMenuItems}</div>
-        </div>
-      ` : '';
 
       const archiveInlineHtml = isCurrent ? `
         <button class="btn-inline-action btn-archive-inline" aria-label="Archive Report">
@@ -879,50 +1009,14 @@ document.addEventListener('DOMContentLoaded', () => {
           openLink.addEventListener('click', e => e.stopPropagation());
       }
 
-      // Wire up inline analysis menu (lists each failure-analysis run, newest first)
-      const analysisBtn = tr.querySelector('.btn-analysis-inline') as HTMLButtonElement;
-      const analysisPanel = tr.querySelector('.analysis-menu-panel') as HTMLElement;
-      if (analysisBtn && analysisPanel) {
-          analysisBtn.addEventListener('click', (e) => {
+      // Wire up inline "Info" button — opens the Report Info dialog.
+      const infoBtn = tr.querySelector('.btn-info-inline') as HTMLButtonElement;
+      if (infoBtn) {
+          infoBtn.addEventListener('click', (e) => {
               e.stopPropagation();
-              const isOpen = !analysisPanel.classList.contains('hidden');
-              closeAllAnalysisMenus();
               closeAllOverflowMenus();
               hideAnalysisContextMenu();
-              if (!isOpen) {
-                  analysisPanel.classList.remove('hidden');
-                  analysisBtn.setAttribute('aria-expanded', 'true');
-                  // Position the fixed panel relative to the trigger so it escapes table/row clipping.
-                  const triggerRect = analysisBtn.getBoundingClientRect();
-                  const panelRect = analysisPanel.getBoundingClientRect();
-                  const spaceBelow = window.innerHeight - triggerRect.bottom;
-                  if (spaceBelow < panelRect.height + 8) {
-                      analysisPanel.style.top = '';
-                      analysisPanel.style.bottom = (window.innerHeight - triggerRect.top + 6) + 'px';
-                  } else {
-                      analysisPanel.style.bottom = '';
-                      analysisPanel.style.top = (triggerRect.bottom + 6) + 'px';
-                  }
-                  analysisPanel.style.left = triggerRect.left + 'px';
-              }
-          });
-          analysisPanel.querySelectorAll('.analysis-menu-item').forEach(item => {
-              item.addEventListener('click', (e) => {
-                  e.stopPropagation();
-                  const runName = (item as HTMLElement).dataset.runName || '';
-                  if (runName) {
-                      window.open('/vault/' + encodeURIComponent(runName), '_blank', 'noopener,noreferrer');
-                  }
-                  analysisPanel.classList.add('hidden');
-                  analysisBtn.setAttribute('aria-expanded', 'false');
-              });
-              item.addEventListener('contextmenu', (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const mouseEvent = e as MouseEvent;
-                  const runDir = (item as HTMLElement).dataset.runDir || '';
-                  showAnalysisContextMenu(mouseEvent.clientX, mouseEvent.clientY, runDir);
-              });
+              openReportInfoModal(report.id);
           });
       }
 
@@ -1252,6 +1346,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logic to handle moving current to archive
   const handleArchive = async (reportPath: string, row: HTMLElement) => {
+      if (!(await ensureArchiveCapacity(1))) {
+          return;
+      }
       showRowProgress(row, 'Archiving...');
       try {
           const response = await fetch('/api/archive', {
@@ -1425,6 +1522,245 @@ document.addEventListener('DOMContentLoaded', () => {
           console.error('Failed to copy text: ', err);
       }
   });
+
+  // ----- Report Info dialog -----
+  interface ReportInfoRun {
+      runName: string;
+      createdAt: string;
+      runDir: string;
+      runDirExists: boolean;
+      analysisFile: string;
+      analysisFileExists: boolean;
+      failuresUrl: string | null;
+      vaultUrl: string;
+  }
+  interface ReportInfoResponse {
+      reportId: string;
+      folder: string;
+      folderExists: boolean;
+      runs: ReportInfoRun[];
+  }
+
+  let reportInfoCurrentReportId = '';
+  // Report-folder sizes are cached client-side; they only change on extract/archive/rename, none of
+  // which happen while the dialog is open, so a cached value stays valid across reopens.
+  const reportSizeCache = new Map<string, number>();
+
+  const escHtml = (value: string): string => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+  const formatBytes = (bytes: number): string => {
+      if (!bytes || bytes < 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let value = bytes;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+          value /= 1024;
+          unit += 1;
+      }
+      return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
+  };
+
+  const copyIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+  const openIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>';
+  const trashIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
+
+  const renderReportInfoPathRow = (
+      kind: 'output' | 'analysis',
+      runName: string,
+      label: string,
+      pathValue: string,
+      exists: boolean,
+      openUrl: string | null,
+      emptyText: string
+  ): string => {
+      const safeRun = escHtml(runName);
+      if (!pathValue) {
+          return `
+        <div class="report-info-path-row">
+          <span class="report-info-path-label">${label}</span>
+          <code class="report-info-path is-empty">${emptyText}</code>
+        </div>`;
+      }
+      const safePath = escHtml(pathValue);
+      const missingBadge = exists ? '' : ' <span class="report-info-missing">(missing on disk)</span>';
+      const openBtn = openUrl
+          ? `<a class="report-info-path-action" href="${escHtml(openUrl)}" target="_blank" rel="noopener noreferrer" title="Open">${openIcon}</a>`
+          : '';
+      return `
+        <div class="report-info-path-row">
+          <span class="report-info-path-label">${label}</span>
+          <code class="report-info-path" data-copy="${safePath}">${safePath}${missingBadge}</code>
+          <div class="report-info-path-actions">
+            <button class="report-info-path-action" type="button" data-action="copy" data-path="${safePath}" title="Copy path">${copyIcon}</button>
+            ${openBtn}
+            <button class="report-info-path-action danger" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>
+          </div>
+        </div>`;
+  };
+
+  const renderReportInfo = (info: ReportInfoResponse): void => {
+      reportInfoName.textContent = info.reportId;
+      const runs = info.runs || [];
+      if (runs.length === 0) {
+          reportInfoRuns.innerHTML = '<div class="report-info-empty">No analysis runs for this report yet.</div>';
+          return;
+      }
+      reportInfoRuns.innerHTML = runs.map(run => {
+          const outputRow = renderReportInfoPathRow(
+              'output', run.runName, 'Output dir', run.runDir, run.runDirExists, run.failuresUrl, '— removed');
+          const analysisRow = renderReportInfoPathRow(
+              'analysis', run.runName, 'Analysis file', run.analysisFile, run.analysisFileExists, run.analysisFileExists ? run.vaultUrl : null, 'No analysis file');
+          return `
+        <div class="report-info-run">
+          <div class="report-info-run-head">
+            <span class="report-info-run-name">${escHtml(run.runName)}</span>
+            <span class="report-info-run-date">${escHtml(formatDate(run.createdAt))}</span>
+          </div>
+          ${outputRow}
+          ${analysisRow}
+        </div>`;
+      }).join('');
+  };
+
+  const loadReportInfo = async (reportId: string): Promise<void> => {
+      try {
+          const response = await fetch('/api/report-info?reportId=' + encodeURIComponent(reportId));
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Failed to load report info');
+          if (reportInfoCurrentReportId !== reportId) return; // a newer dialog took over
+          renderReportInfo(data as ReportInfoResponse);
+      } catch (err) {
+          console.error('Report info load error:', err);
+          if (reportInfoCurrentReportId !== reportId) return;
+          reportInfoRuns.innerHTML = '<div class="report-info-empty">Failed to load report info.</div>';
+      }
+  };
+
+  // Report size is fetched separately so the runs render immediately without waiting on the
+  // (potentially multi-GB) recursive disk scan. The result is cached for instant reopens.
+  const loadReportSize = async (reportId: string): Promise<void> => {
+      if (reportSizeCache.has(reportId)) {
+          reportInfoSize.textContent = formatBytes(reportSizeCache.get(reportId)!);
+          return;
+      }
+      reportInfoSize.textContent = 'Calculating…';
+      try {
+          const response = await fetch('/api/report-size?reportId=' + encodeURIComponent(reportId));
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Failed to load report size');
+          if (reportInfoCurrentReportId !== reportId) return; // a newer dialog took over
+          if (!data.folderExists) {
+              reportInfoSize.textContent = 'Not on disk';
+              return;
+          }
+          reportSizeCache.set(reportId, data.sizeBytes);
+          reportInfoSize.textContent = formatBytes(data.sizeBytes);
+      } catch (err) {
+          console.error('Report size load error:', err);
+          if (reportInfoCurrentReportId === reportId) reportInfoSize.textContent = '—';
+      }
+  };
+
+  const openReportInfoModal = (reportId: string): void => {
+      reportInfoCurrentReportId = reportId;
+      reportInfoName.textContent = reportId;
+      reportInfoSize.textContent = 'Calculating…';
+      reportInfoRuns.innerHTML = '<div class="report-info-empty">Loading…</div>';
+      reportInfoModal.classList.remove('hidden');
+      void loadReportInfo(reportId);
+      void loadReportSize(reportId);
+  };
+
+  const closeReportInfoModal = () => reportInfoModal.classList.add('hidden');
+  closeReportInfoModalBtn.addEventListener('click', closeReportInfoModal);
+  closeReportInfoModalFooterBtn.addEventListener('click', closeReportInfoModal);
+
+  // Generic promise-based delete confirmation.
+  let confirmResolve: ((value: boolean) => void) | null = null;
+  const openConfirm = (opts: { title: string; message: string; path?: string }): Promise<boolean> => {
+      confirmDeleteTitle.textContent = opts.title;
+      confirmDeleteMessage.textContent = opts.message;
+      confirmDeletePath.textContent = opts.path || '';
+      confirmDeletePath.classList.toggle('hidden', !opts.path);
+      confirmDeleteModal.classList.remove('hidden');
+      return new Promise<boolean>(resolve => { confirmResolve = resolve; });
+  };
+  const closeConfirm = (result: boolean) => {
+      confirmDeleteModal.classList.add('hidden');
+      if (confirmResolve) { confirmResolve(result); confirmResolve = null; }
+  };
+  confirmDeleteConfirmBtn.addEventListener('click', () => closeConfirm(true));
+  confirmDeleteCancelBtn.addEventListener('click', () => closeConfirm(false));
+  closeConfirmDeleteModalBtn.addEventListener('click', () => closeConfirm(false));
+
+  const refreshAfterRunChange = async (): Promise<void> => {
+      try { await fetchReports({ showLoading: false }); } catch { /* table refresh is best-effort */ }
+      await loadReportInfo(reportInfoCurrentReportId);
+  };
+
+  const deleteRunArtifact = async (kind: 'output' | 'analysis', runName: string): Promise<void> => {
+      const isOutput = kind === 'output';
+      const ok = await openConfirm({
+          title: isOutput ? 'Delete output directory' : 'Delete analysis file',
+          message: isOutput
+              ? 'This permanently deletes the output directory from disk. The analysis file stays mapped to this report.'
+              : 'This permanently deletes the analysis file from disk.',
+          path: ''
+      });
+      if (!ok) return;
+      const endpoint = isOutput ? '/api/analysis-run/output-dir' : '/api/analysis-run/analysis-file';
+      try {
+          const response = await fetch(endpoint, {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportId: reportInfoCurrentReportId, runName })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Delete failed');
+          await refreshAfterRunChange();
+      } catch (err) {
+          console.error('Delete artifact error:', err);
+          await refreshAfterRunChange();
+      }
+  };
+
+  reportInfoRuns.addEventListener('click', async (event) => {
+      const trigger = (event.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
+      if (!trigger) return;
+      event.stopPropagation();
+      const action = trigger.dataset.action || '';
+      const runName = trigger.dataset.run || '';
+      const pathValue = trigger.dataset.path || '';
+      if (action === 'copy') {
+          try {
+              await navigator.clipboard.writeText(pathValue);
+              const original = trigger.innerHTML;
+              trigger.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+              setTimeout(() => { trigger.innerHTML = original; }, 1200);
+          } catch (err) {
+              console.error('Copy path failed:', err);
+          }
+      } else if (action === 'delete-output') {
+          await deleteRunArtifact('output', runName);
+      } else if (action === 'delete-analysis') {
+          await deleteRunArtifact('analysis', runName);
+      }
+  });
+
+  // Right-click any path to reuse the shared "Copy path" context menu.
+  reportInfoRuns.addEventListener('contextmenu', (event) => {
+      const pathEl = (event.target as HTMLElement).closest('.report-info-path[data-copy]') as HTMLElement | null;
+      if (!pathEl) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const mouseEvent = event as MouseEvent;
+      showAnalysisContextMenu(mouseEvent.clientX, mouseEvent.clientY, pathEl.dataset.copy || '');
+  });
+
 
   const filterDigestTests = () => {
       const query = (digestSearchInput?.value || '').toLowerCase().trim();
@@ -1963,6 +2299,9 @@ document.addEventListener('DOMContentLoaded', () => {
               }
 
               if (action === 'archive') {
+                  if (!(await ensureArchiveCapacity(selectedPaths.length))) {
+                      return;
+                  }
                   const originalText = actionBtn.textContent || 'Archive selected';
                   activeBulkTarget = target;
                   setSelectionControlsDisabled(target, true);

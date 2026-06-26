@@ -71,7 +71,7 @@ The dashboard exposes a minimal agent-facing contract for report discovery, but 
 
 Current endpoints:
 
-- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose matching vault `.md` file exists for that report — so agents can discover analysis files without a separate vault listing call. Run directories are persisted per report in the `analysis_runs` table each time **Analyze Failures** runs, and analysis files are mapped by run-directory basename (`run-<timestamp>.md`) rather than by report name.
+- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose matching vault `.md` file exists for that report — so agents can discover analysis files without a separate vault listing call. Run directories are persisted per report in the `analysis_runs` table each time **Analyze Failures** runs, and analysis files are mapped by run-directory basename (`run-<timestamp>.md`) rather than by report name. A run's `runDir` column is cleared (set empty) when its output directory is deleted via the Info dialog or removed during archive, but the row \u2014 and thus the analysis-file mapping \u2014 is retained.
 - `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
 - `GET /api/agent/vault/:filename` returns raw vault markdown content. This endpoint is used by the `vault-read` CLI command in `playwright-traces-reader` to let agents read vault analysis files that live outside the IDE workspace.
 
@@ -136,6 +136,22 @@ Bulk archive and delete intentionally reuse the existing single-report backend e
 
 ---
 
+## 🧮 Archive Capacity Limit
+
+The archive is capped at a fixed maximum of **20 reports**. The cap is enforced entirely on the frontend (`app.ts`) and reuses the existing `/api/reports` and `/api/delete` endpoints — no new backend contracts.
+
+- **Constants:** `ARCHIVE_LIMIT = 20` and `MIN_PRUNE = 5` are module-level constants in `app.ts`. The prune floor exists so the dialog does not reappear on every single archive once the archive is full.
+- **Single gate (`ensureArchiveCapacity(incoming)`):** Both the inline single-report Archive button (`handleArchive`, `incoming = 1`) and the bulk **Archive selected** action (`incoming = selectedPaths.length`) await this guard before any move happens. It returns `true` only when archiving may proceed (after any pruning), and `false` when the user cancels or the request is disallowed.
+- **Fresh count per click:** Capacity is checked against a freshly fetched `GET /api/reports` archive list at the moment of clicking, **not** the cached `cachedReportsData`. This avoids acting on a stale render when the archive changed in another tab or on disk.
+- **Hard block for oversized bulk:** Because a single operation can never leave the archive within the limit when `incoming > 20`, that case is rejected outright with an info-only dialog (single **Close** button) — nothing is deleted or archived. The user must select fewer reports.
+- **Prune-to-fit rule:** When `archivedCount + incoming > 20`, the guard computes `deleteCount = min(archivedCount, max(MIN_PRUNE, archivedCount + incoming − ARCHIVE_LIMIT))`. The `max(..., needed)` term guarantees the post-archive total never exceeds 20; the `MIN_PRUNE` floor gives breathing room. `deleteCount` is capped at `archivedCount` since you cannot delete more than exist.
+- **"Oldest" definition:** `scanDirectory` returns the archive newest-first, so the oldest reports are at the **end** of the list — exactly the bottom rows of the Archived table the user sees. The guard slices the last `deleteCount` paths and deletes them via the existing serial `performDeleteRequests` loop.
+- **Confirmation dialog (`#archive-limit-modal`):** A dedicated modal (mirroring the delete modal shell) serves two modes: a **prune-confirm** mode with a dynamic message stating the exact number to delete plus a danger "Yes, delete N" button, and an **info/block** mode with a single Close button. On confirm it deletes the oldest reports inline (button shows a spinner), then resolves so the original archive flow continues. On cancel it resolves without touching anything, letting the user prune manually.
+
+This keeps the limit authoritative (fresh count), bounded (never exceeds 20), and non-destructive without explicit consent.
+
+---
+
 ## � Full Report Lifecycle
 
 ### 1. Report appears on disk
@@ -156,6 +172,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - Frontend updates the local `report` closure (`id`, `name`, `path`) in-place — no page reload needed.
 
 ### 4. User archives: `POST /api/archive { reportPath: '/reports/current/my-smoke-run/index.html' }`
+- Before the request, the frontend runs `ensureArchiveCapacity(1)` (see Archive Capacity Limit). If the archive is at/over its 20-report cap, the prune-confirm dialog deletes the oldest archived reports first; if the user cancels, no `/api/archive` call is made.
 - Extracts folder name `my-smoke-run` from the URL path.
 - Generates a unique archive name: `playwright-report-<timestamp>`.
 - `fs.renameSync(currentPath/my-smoke-run, archivePath/playwright-report-1773916890669)`.
@@ -333,6 +350,8 @@ The dashboard integrates with an Obsidian-style vault directory for storing per-
 
 Vault `.md` files are named after the report origin label (e.g., `playwright-report.md`). When a report is archived, the backend renames the origin folder to a timestamped name (e.g., `playwright-report-1773916890669`). The archive endpoint moves the matching vault file from `<vaultPath>/<oldName>.md` to `<archivePath>/analysis/<newArchivedName>.md`, creating the `analysis/` directory if it does not exist. This keeps archived analysis files co-located with their archived reports rather than cluttering the active vault directory. The move includes an EXDEV cross-drive fallback (copy + delete) and is wrapped in a try/catch — a vault file failure does not block the archive operation itself.
 
+Archiving also removes each run's ephemeral output directory (`runDir`) from disk and clears its `runDir` reference via `clearAnalysisRunDir()`, while keeping the row so the archived report still maps to its (now relocated) analysis file. The report-size cache is invalidated for the archived report id.
+
 ### Dual-Location Vault Resolution
 
 `resolveVaultFile()` checks both `<vaultPath>` (for current reports) and `<archivePath>/analysis/` (for archived reports) when resolving a filename. The vault list endpoints (`/api/vault/list` and `/api/agent/vault/list`) merge files from both locations. The save endpoint (`PUT /api/vault/:filename`) resolves existing files from either location before writing; new files default to `vaultPath`.
@@ -345,7 +364,7 @@ Report row actions use a three-tier pattern: inline action buttons for frequentl
 
 ### Inline Buttons
 
-- **Analysis** (conditional on vault file match): Opens the vault viewer in a new tab. Rendered as a compact `btn-inline-action` button.
+- **Info** (always shown): Opens the Report Info dialog for that report (folder size + analysis runs). Rendered as a compact `btn-inline-action` button; the label shows a run count suffix (e.g. `Info (2)`) when the report has persisted analysis runs.
 - **Archive** (current reports only): Triggers the archive flow with a row progress overlay. Rendered as a compact `btn-inline-action` button.
 
 ### Overflow Menu
@@ -371,3 +390,39 @@ All single-row async actions (Extract, Archive, Fix Snapshots, Analyze Failures)
 - **States:** `progress-active` (spinner + message), `progress-success` (green background, success text, no spinner), `progress-error` (red background, error text, no spinner).
 - **Auto-Dismiss:** Success and error states auto-dismiss after 2 seconds.
 - **Helpers:** `showRowProgress(row, message)` and `hideRowProgress(row, status, message)` encapsulate the overlay lifecycle.
+
+---
+
+## ℹ️ Report Info Dialog
+
+The per-row **Info** button (always visible) opens a modal that surfaces a report's on-disk footprint and the lifecycle of every analysis run associated with it. It replaces the older "Analysis" dropdown, which only listed vault files.
+
+### Two-artifact lifecycle model
+
+An `analysis_runs` row represents the **report ↔ analysis-file** mapping. The `runDir` column is a *detachable reference* to the ephemeral failure-analysis output directory (`<currentPath>/tmp/run-<timestamp>/`). The two artifacts have decoupled lifecycles:
+
+- **Output directory** (`runDir`): ephemeral, frequently purged (often daily). Deleting it removes the directory from disk and **clears** the `runDir` column via `clearAnalysisRunDir()`, while keeping the row so the analysis file stays mapped to the report.
+- **Analysis file** (`<runName>.md`, resolved via `resolveVaultFile()`): long-lived. On archive it is moved into `<archivePath>/analysis/`. Deleting it removes the `.md` from disk; the row is pruned (`deleteAnalysisRun()`) only when the output dir reference is already gone.
+
+Because the report folder (`<currentPath>/<reportId>`) is a **sibling** of `tmp/`, deleting output dirs or analysis files never changes the report folder size.
+
+### Endpoints
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/report-info?reportId=` | GET | Returns `folderExists` + a `runs[]` array (each with `runDir`, `runDirExists`, `analysisFile`, `analysisFileExists`, `failuresUrl`, `vaultUrl`). Includes runs whose output dir was cleared or whose `.md` is missing. Cheap — no disk scan. |
+| `/api/report-size?reportId=` | GET | Recursive byte size of the report folder, **cached** in an in-memory `Map` after first calculation. Pass `?refresh=1` to recompute. |
+| `/api/analysis-run/output-dir` | DELETE | `{ reportId, runName }` — validates the dir is within `currentPath`, removes it, clears the `runDir` reference. |
+| `/api/analysis-run/analysis-file` | DELETE | `{ reportId, runName }` — validates the file is within `vaultPath`/`archivePath/analysis`, unlinks it, prunes the row if the output dir is already gone. |
+
+### Size calculation & caching
+
+Size is split from `report-info` so the **Analysis runs** section renders immediately instead of blocking on a potentially multi-GB recursive scan. The size loads asynchronously and fills in when ready. The result is cached both server-side (`reportSizeCache`) and client-side (`reportSizeCache` Map). The server cache is invalidated only where the report folder itself is mutated: **extract** (adds unzipped data), **archive**, **rename**, and **delete**. Run/output-dir deletions do not invalidate it.
+
+### Path interactions
+
+Each path row supports three interactions: a visible **copy** button, **right-click → Copy path** (reusing the shared `showAnalysisContextMenu` context menu), and **open** links (the failures `index.json` for an output dir, the rendered `.md` vault page for an analysis file). Missing artifacts show a `(missing on disk)` badge or a muted empty state (`— removed` / `No analysis file`).
+
+### Delete confirmation
+
+Output-dir and analysis-file deletes are independent and each route through a single generic, promise-based confirmation modal (`#confirm-delete-modal`). After a successful delete the dialog re-fetches `report-info` and re-renders, and the main table refreshes via `fetchReports({ showLoading: false })`.

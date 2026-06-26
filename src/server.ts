@@ -971,16 +971,19 @@ app.post('/api/archive', (req: Request, res: Response): any => {
 
     // Update DB record: transfer from old folder name to new archived folder name
     const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
+    const archivedRuns = getAnalysisRuns(folderName);
     updateReportId(folderName, uniqueArchivedName, newReportPath);
     renameAnalysisRunsReport(folderName, uniqueArchivedName);
 
-    // Move matching vault .md file into archivePath/analysis/ directory
+    // Move each run's analysis (vault) file into archivePath/analysis/, keeping the run-<timestamp> name
+    // so the run-based mapping (and the report's Analysis dropdown) keeps resolving after archival.
     if (appConfig.vaultPath) {
-      const oldVaultFile = path.join(appConfig.vaultPath, folderName + '.md');
-      if (fs.existsSync(oldVaultFile)) {
-        const analysisDir = path.join(appConfig.archivePath, 'analysis');
+      const analysisDir = path.join(appConfig.archivePath, 'analysis');
+      for (const run of archivedRuns) {
+        const oldVaultFile = path.join(appConfig.vaultPath, run.runName + '.md');
+        if (!fs.existsSync(oldVaultFile)) continue;
         fs.mkdirSync(analysisDir, { recursive: true });
-        const newVaultFile = path.join(analysisDir, uniqueArchivedName + '.md');
+        const newVaultFile = path.join(analysisDir, run.runName + '.md');
         try {
           fs.renameSync(oldVaultFile, newVaultFile);
         } catch (moveErr: any) {

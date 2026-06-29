@@ -303,6 +303,23 @@ const getPreparedReportDescriptor = (reportRef: string): AgentReportDescriptor =
   return descriptor;
 };
 
+// Remove a report instance's analysis runs: best-effort delete of each ephemeral output dir
+// (guarded to stay within currentPath) followed by the DB rows. Used by scanDirectory when a
+// report folder is regenerated (new birthtime) or disappears from disk.
+const purgeReportRuns = (reportUuid: string): void => {
+  if (!reportUuid) return;
+  for (const run of getAnalysisRuns(reportUuid)) {
+    if (run.runDir && appConfig.currentPath && isWithin(appConfig.currentPath, run.runDir)) {
+      try {
+        if (fs.existsSync(run.runDir)) fs.rmSync(run.runDir, { recursive: true, force: true });
+      } catch (rmErr) {
+        console.warn('Failed to remove output directory during scan cleanup:', rmErr);
+      }
+    }
+  }
+  deleteAnalysisRunsByReport(reportUuid);
+};
+
 // Helper to scan a directory for valid reports and sync with DB
 const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   if (!dirPath || !fs.existsSync(dirPath)) {
@@ -348,7 +365,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           let uuid = existing?.uuid;
           if (!uuid || existing!.dateCreated !== birthIso) {
             uuid = randomUUID();
-            if (existing?.uuid) deleteAnalysisRunsByReport(existing.uuid);
+            if (existing?.uuid) purgeReportRuns(existing.uuid);
           }
 
           // Upsert into DB (preserves metadata via ON CONFLICT)
@@ -382,7 +399,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   for (const dbReport of allDbReports) {
     // Only clean up records that belong to this prefix (check reportPath)
     if (dbReport.reportPath.startsWith(`/reports/${prefix}/`) && !diskIds.has(dbReport.id)) {
-      deleteAnalysisRunsByReport(dbReport.uuid);
+      purgeReportRuns(dbReport.uuid);
       deleteReportRecord(dbReport.id);
     }
   }
@@ -1073,12 +1090,21 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     // Delete the directory and its contents
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
-    // Delete associated analysis (vault) files for every persisted run of this report.
+    // Delete associated analysis (vault) files and ephemeral output directories for every
+    // persisted run of this report.
     const reportUuid = getReport(folderName)?.uuid || '';
     for (const run of getAnalysisRuns(reportUuid)) {
       const runFile = resolveVaultFile(run.runName);
       if (runFile) {
         try { fs.unlinkSync(runFile); } catch { /* already gone */ }
+      }
+      // Best-effort removal of the ephemeral output dir; guarded to stay within currentPath.
+      if (run.runDir && appConfig.currentPath && isWithin(appConfig.currentPath, run.runDir)) {
+        try {
+          if (fs.existsSync(run.runDir)) fs.rmSync(run.runDir, { recursive: true, force: true });
+        } catch (rmErr) {
+          console.warn('Failed to remove output directory during delete:', rmErr);
+        }
       }
     }
 

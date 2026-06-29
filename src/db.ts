@@ -49,6 +49,15 @@ export interface AnalysisRun {
   createdAt: string;
 }
 
+export interface Digest {
+  id: string;
+  reportId: string;
+  runDir: string;
+  folder: string;
+  testTitle: string;
+  createdAt: string;
+}
+
 export interface ReportSearchFilters {
   query?: string;
   selectedDates?: string[];
@@ -150,6 +159,19 @@ db.exec(`
     createdAt TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_analysis_runs_reportId ON analysis_runs(reportId);
+`);
+
+// Migration: add digests table (one report -> many trace digests under currentPath/tmp)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS digests (
+    id TEXT PRIMARY KEY,
+    reportId TEXT NOT NULL,
+    runDir TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    testTitle TEXT NOT NULL DEFAULT '',
+    createdAt TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_digests_reportId ON digests(reportId);
 `);
 
 // Ensure default config row exists
@@ -273,6 +295,39 @@ export const deleteAnalysisRun = (reportId: string, runName: string): void => {
 
 export const renameAnalysisRunsReport = (oldReportId: string, newReportId: string): void => {
   db.prepare('UPDATE analysis_runs SET reportId = ? WHERE reportId = ?').run(newReportId, oldReportId);
+};
+
+// --- Digest Operations ---
+export const addDigest = (digest: Digest): void => {
+  db.prepare(
+    `INSERT OR IGNORE INTO digests (id, reportId, runDir, folder, testTitle, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(digest.id, digest.reportId, digest.runDir, digest.folder, digest.testTitle, digest.createdAt);
+};
+
+export const getDigests = (reportId: string): Digest[] => {
+  return db.prepare('SELECT * FROM digests WHERE reportId = ? ORDER BY createdAt DESC').all(reportId) as Digest[];
+};
+
+export const getAllDigests = (): Digest[] => {
+  return db.prepare('SELECT * FROM digests ORDER BY createdAt DESC').all() as Digest[];
+};
+
+export const deleteDigestsByReport = (reportId: string): void => {
+  db.prepare('DELETE FROM digests WHERE reportId = ?').run(reportId);
+};
+
+export const deleteDigest = (id: string): void => {
+  db.prepare('DELETE FROM digests WHERE id = ?').run(id);
+};
+
+export const renameDigestsReport = (oldReportId: string, newReportId: string): void => {
+  db.prepare('UPDATE digests SET reportId = ? WHERE reportId = ?').run(newReportId, oldReportId);
+};
+
+// Drop digests whose reportId no longer maps to any report uuid (orphans from recycled names).
+export const pruneOrphanDigests = (): void => {
+  db.prepare('DELETE FROM digests WHERE reportId NOT IN (SELECT uuid FROM reports)').run();
 };
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;

@@ -228,6 +228,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const reportInfoName = document.getElementById('report-info-name') as HTMLElement;
   const reportInfoSize = document.getElementById('report-info-size') as HTMLElement;
   const reportInfoRuns = document.getElementById('report-info-runs') as HTMLElement;
+  const reportInfoDigests = document.getElementById('report-info-digests') as HTMLElement;
 
   const confirmDeleteModal = document.getElementById('confirm-delete-modal') as HTMLElement;
   const closeConfirmDeleteModalBtn = document.getElementById('close-confirm-delete-modal-btn') as HTMLButtonElement;
@@ -1539,6 +1540,15 @@ document.addEventListener('DOMContentLoaded', () => {
       folder: string;
       folderExists: boolean;
       runs: ReportInfoRun[];
+      digests: ReportInfoDigest[];
+  }
+  interface ReportInfoDigest {
+      id: string;
+      testTitle: string;
+      createdAt: string;
+      digestDir: string;
+      digestDirExists: boolean;
+      digestUrl: string | null;
   }
 
   let reportInfoCurrentReportId = '';
@@ -1607,14 +1617,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const runs = info.runs || [];
       if (runs.length === 0) {
           reportInfoRuns.innerHTML = '<div class="report-info-empty">No analysis runs for this report yet.</div>';
-          return;
-      }
-      reportInfoRuns.innerHTML = runs.map(run => {
-          const outputRow = renderReportInfoPathRow(
-              'output', run.runName, 'Output dir', run.runDir, run.runDirExists, run.failuresUrl, '— removed');
-          const analysisRow = renderReportInfoPathRow(
-              'analysis', run.runName, 'Analysis file', run.analysisFile, run.analysisFileExists, run.analysisFileExists ? run.vaultUrl : null, 'No analysis file');
-          return `
+      } else {
+          reportInfoRuns.innerHTML = runs.map(run => {
+              const outputRow = renderReportInfoPathRow(
+                  'output', run.runName, 'Output dir', run.runDir, run.runDirExists, run.failuresUrl, '— removed');
+              const analysisRow = renderReportInfoPathRow(
+                  'analysis', run.runName, 'Analysis file', run.analysisFile, run.analysisFileExists, run.analysisFileExists ? run.vaultUrl : null, 'No analysis file');
+              return `
         <div class="report-info-run">
           <div class="report-info-run-head">
             <span class="report-info-run-name">${escHtml(run.runName)}</span>
@@ -1622,6 +1631,39 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           ${outputRow}
           ${analysisRow}
+        </div>`;
+          }).join('');
+      }
+      renderReportInfoDigests(info.digests || []);
+  };
+
+  const renderReportInfoDigests = (digests: ReportInfoDigest[]): void => {
+      if (digests.length === 0) {
+          reportInfoDigests.innerHTML = '<div class="report-info-empty">No digests for this report yet.</div>';
+          return;
+      }
+      reportInfoDigests.innerHTML = digests.map(digest => {
+          const safeId = escHtml(digest.id);
+          const safePath = escHtml(digest.digestDir);
+          const missingBadge = digest.digestDirExists ? '' : ' <span class="report-info-missing">(missing on disk)</span>';
+          const openBtn = digest.digestDirExists && digest.digestUrl
+              ? `<a class="report-info-path-action" href="${escHtml(digest.digestUrl)}" target="_blank" rel="noopener noreferrer" title="Open digest.json">${openIcon}</a>`
+              : '';
+          return `
+        <div class="report-info-run">
+          <div class="report-info-run-head">
+            <span class="report-info-run-name">${escHtml(digest.testTitle || '(untitled)')}</span>
+            <span class="report-info-run-date">${escHtml(formatDate(digest.createdAt))}</span>
+          </div>
+          <div class="report-info-path-row">
+            <span class="report-info-path-label">Digest dir</span>
+            <code class="report-info-path" data-copy="${safePath}">${safePath}${missingBadge}</code>
+            <div class="report-info-path-actions">
+              <button class="report-info-path-action" type="button" data-action="copy" data-path="${safePath}" title="Copy path">${copyIcon}</button>
+              ${openBtn}
+              <button class="report-info-path-action danger" type="button" data-action="delete-digest" data-digest-id="${safeId}" data-path="${safePath}" title="Delete">${trashIcon}</button>
+            </div>
+          </div>
         </div>`;
       }).join('');
   };
@@ -1637,6 +1679,7 @@ document.addEventListener('DOMContentLoaded', () => {
           console.error('Report info load error:', err);
           if (reportInfoCurrentReportId !== reportId) return;
           reportInfoRuns.innerHTML = '<div class="report-info-empty">Failed to load report info.</div>';
+          reportInfoDigests.innerHTML = '<div class="report-info-empty">Failed to load report info.</div>';
       }
   };
 
@@ -1670,6 +1713,7 @@ document.addEventListener('DOMContentLoaded', () => {
       reportInfoName.textContent = reportId;
       reportInfoSize.textContent = 'Calculating…';
       reportInfoRuns.innerHTML = '<div class="report-info-empty">Loading…</div>';
+      reportInfoDigests.innerHTML = '<div class="report-info-empty">Loading…</div>';
       reportInfoModal.classList.remove('hidden');
       void loadReportInfo(reportId);
       void loadReportSize(reportId);
@@ -1753,6 +1797,58 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Right-click any path to reuse the shared "Copy path" context menu.
   reportInfoRuns.addEventListener('contextmenu', (event) => {
+      const pathEl = (event.target as HTMLElement).closest('.report-info-path[data-copy]') as HTMLElement | null;
+      if (!pathEl) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const mouseEvent = event as MouseEvent;
+      showAnalysisContextMenu(mouseEvent.clientX, mouseEvent.clientY, pathEl.dataset.copy || '');
+  });
+
+  const deleteDigest = async (digestId: string): Promise<void> => {
+      const ok = await openConfirm({
+          title: 'Delete digest',
+          message: 'This permanently deletes the digest directory from disk.',
+          path: ''
+      });
+      if (!ok) return;
+      try {
+          const response = await fetch('/api/digest', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ reportId: reportInfoCurrentReportId, digestId })
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || 'Delete failed');
+          await refreshAfterRunChange();
+      } catch (err) {
+          console.error('Delete digest error:', err);
+          await refreshAfterRunChange();
+      }
+  };
+
+  reportInfoDigests.addEventListener('click', async (event) => {
+      const trigger = (event.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
+      if (!trigger) return;
+      event.stopPropagation();
+      const action = trigger.dataset.action || '';
+      const pathValue = trigger.dataset.path || '';
+      if (action === 'copy') {
+          try {
+              await navigator.clipboard.writeText(pathValue);
+              const original = trigger.innerHTML;
+              trigger.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+              setTimeout(() => { trigger.innerHTML = original; }, 1200);
+          } catch (err) {
+              console.error('Copy path failed:', err);
+          }
+      } else if (action === 'delete-digest') {
+          await deleteDigest(trigger.dataset.digestId || '');
+      }
+  });
+
+  // Right-click any digest path to reuse the shared "Copy path" context menu.
+  reportInfoDigests.addEventListener('contextmenu', (event) => {
       const pathEl = (event.target as HTMLElement).closest('.report-info-path[data-copy]') as HTMLElement | null;
       if (!pathEl) return;
       event.preventDefault();

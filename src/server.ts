@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, pruneOrphanAnalysisRuns, clearAnalysisRunDir, deleteAnalysisRun } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, pruneOrphanAnalysisRuns, clearAnalysisRunDir, deleteAnalysisRun, addDigest, getDigests, deleteDigestsByReport, deleteDigest, pruneOrphanDigests } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -318,6 +318,23 @@ const purgeReportRuns = (reportUuid: string): void => {
     }
   }
   deleteAnalysisRunsByReport(reportUuid);
+  purgeReportDigests(reportUuid);
+};
+
+// Remove a report instance's trace digests: best-effort delete of each digest run directory
+// (guarded to stay within currentPath) followed by the DB rows. Mirrors purgeReportRuns.
+const purgeReportDigests = (reportUuid: string): void => {
+  if (!reportUuid) return;
+  for (const digest of getDigests(reportUuid)) {
+    if (digest.runDir && appConfig.currentPath && isWithin(appConfig.currentPath, digest.runDir)) {
+      try {
+        if (fs.existsSync(digest.runDir)) fs.rmSync(digest.runDir, { recursive: true, force: true });
+      } catch (rmErr) {
+        console.warn('Failed to remove digest directory during cleanup:', rmErr);
+      }
+    }
+  }
+  deleteDigestsByReport(reportUuid);
 };
 
 // Helper to scan a directory for valid reports and sync with DB
@@ -405,6 +422,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   }
   // Drop any runs left behind by recycled names whose uuid no longer exists.
   pruneOrphanAnalysisRuns();
+  pruneOrphanDigests();
 
   return reports;
 };
@@ -953,6 +971,24 @@ app.post('/api/digest-test', (req: Request, res: Response): any => {
         const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
         const digestUrl = `/reports/current/${relativeRunDir}/${manifest.folder}`;
         const digestFolder = path.join(relativeRunDir, manifest.folder);
+
+        // Persist this digest against the report (one report -> many digests; keyed by stable uuid).
+        try {
+          const reportUuid = getReport(folderName)?.uuid;
+          if (reportUuid) {
+            addDigest({
+              id: randomUUID(),
+              reportId: reportUuid,
+              runDir: manifest.runDir,
+              folder: manifest.folder,
+              testTitle: manifest.testTitle || manifest.title || '',
+              createdAt: new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error('Failed to persist digest:', err);
+        }
+
         res.json({ success: true, digestFolder, digestUrl, manifest });
       } catch (e: any) {
         console.error("Failed to parse digest JSON:", e);
@@ -1052,6 +1088,10 @@ app.post('/api/archive', (req: Request, res: Response): any => {
       }
     }
 
+    // Trace digests live under the ephemeral currentPath/tmp, so they cannot follow the report
+    // into the archive. Remove their directories and DB rows (same cleanup as a delete).
+    purgeReportDigests(reportUuid);
+
     res.json({ success: true, newName: uniqueArchivedName });
     
   } catch (error: any) {
@@ -1112,6 +1152,7 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     deleteReportRecord(folderName);
     invalidateReportSize(folderName);
     deleteAnalysisRunsByReport(reportUuid);
+    purgeReportDigests(reportUuid);
 
     res.json({ success: true });
     
@@ -1626,7 +1667,25 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
       };
     });
 
-    return res.json({ reportId, folder: folder || '', folderExists, runs });
+    const digests = getDigests(report.uuid).map(digest => {
+      const digestDir = digest.runDir ? path.join(digest.runDir, digest.folder) : '';
+      const digestDirExists = !!digestDir && fs.existsSync(digestDir);
+      let digestUrl: string | null = null;
+      if (digestDirExists && appConfig.currentPath && isWithin(appConfig.currentPath, digestDir)) {
+        const relativeDigestDir = path.relative(appConfig.currentPath, digestDir);
+        digestUrl = `/reports/current/${relativeDigestDir.split(path.sep).join('/')}/digest.json`;
+      }
+      return {
+        id: digest.id,
+        testTitle: digest.testTitle,
+        createdAt: digest.createdAt,
+        digestDir,
+        digestDirExists,
+        digestUrl
+      };
+    });
+
+    return res.json({ reportId, folder: folder || '', folderExists, runs, digests });
   } catch (error: any) {
     console.error('Report info error:', error.message);
     return res.status(500).json({ error: 'Failed to load report info' });
@@ -1719,6 +1778,37 @@ app.delete('/api/analysis-run/analysis-file', (req: Request, res: Response): any
   } catch (error: any) {
     console.error('Delete analysis file error:', error.message);
     return res.status(500).json({ error: 'Failed to delete analysis file: ' + error.message });
+  }
+});
+
+// Delete a single trace digest: removes its directory from disk (guarded to currentPath) and the DB row.
+app.delete('/api/digest', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportId, digestId } = req.body || {};
+  if (!reportId || !digestId) return res.status(400).json({ error: 'reportId and digestId are required' });
+
+  try {
+    const digest = getDigests(reportId).find(d => d.id === digestId);
+    if (!digest) return res.status(404).json({ error: 'Digest not found' });
+
+    const digestDir = digest.runDir ? path.join(digest.runDir, digest.folder) : '';
+    if (digestDir) {
+      if (!appConfig.currentPath || !isWithin(appConfig.currentPath, digestDir)) {
+        return res.status(400).json({ error: 'Digest directory is outside the configured current path' });
+      }
+      if (fs.existsSync(digestDir)) fs.rmSync(digestDir, { recursive: true, force: true });
+      // Remove the now-empty run-<timestamp> wrapper directory left behind.
+      try {
+        if (digest.runDir && fs.existsSync(digest.runDir) && fs.readdirSync(digest.runDir).length === 0) {
+          fs.rmdirSync(digest.runDir);
+        }
+      } catch { /* best-effort cleanup */ }
+    }
+    deleteDigest(digestId);
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('Delete digest error:', error.message);
+    return res.status(500).json({ error: 'Failed to delete digest: ' + error.message });
   }
 });
 

@@ -269,7 +269,7 @@ The dashboard now automatically tracks every report in its persistent SQLite dat
 - **Automated Sync:** Every time you refresh the dashboard, it performs a differential sync between your filesystem and the database.
 - **Read-Only Search Index:** The persisted report rows also power the dashboard search feature. This allows search to stay fast and safe while preserving metadata across refreshes, renames, and archive moves.
 - **Inline Editing:** Just click into the **Metadata** column on any report row to add or edit custom info.
-- **Date Tracking:** Creation dates are captured directly from the filesystem's `birthtime` and persisted, ensuring consistent ordering.
+- **Date Tracking:** Creation dates are captured directly from the filesystem's `birthtime` and persisted, ensuring consistent ordering. The birthtime also acts as an instance fingerprint: each report carries a stable internal `uuid`, and if a recycled folder name (e.g. `playwright-report_2`) points at a physically new folder, it is detected via the changed birthtime and given a fresh identity so stale analysis runs never bleed onto the new report.
 - **Archive Integrity:** When you move a report to the archive, its metadata and historical record are automatically updated in the database to reflect the new path.
 
 ### Auto-start on Reboot

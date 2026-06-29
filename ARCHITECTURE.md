@@ -19,7 +19,7 @@ The application enforces a strictly zero-configuration data model out of the box
 - **WAL Mode:** The database is initialized with `journal_mode = WAL` (Write-Ahead Logging) to ensure high concurrent read performance when the frontend dashboard aggressively polls.
 - **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, the serialized JSON payload for user-selected Test Runner Options, and BrowserStack credentials (`browserstackUsername`, `browserstackAccessKey`, `browserstackConfig`). BrowserStack columns are added via `ALTER TABLE` with existence checks during migration.
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
-- **`reports` Table:** Persists metadata for all scanned reports. It uses the report folder name as the primary `id` — the `id` is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
+- **`reports` Table:** Persists metadata for all scanned reports. The primary `id` is the report folder name — it is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Because folder names are frequently recycled (a report is deleted and a new run is later written to the same `playwright-report_2`/`_3` folder), the table also stores a **`uuid`** column that is the *stable per-instance identity* of a report. `analysis_runs` are keyed by this `uuid`, never by the recyclable folder name. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
 
 ### Read-only search index
 
@@ -37,10 +37,10 @@ The application does not use a "dumb" filesystem scan. It implements a different
 
 - **Sync During Scan:** Every time `scanDirectory` is called (during dashboard load or refresh), the system builds a list of reports from the disk and immediately `upserts` them into the `reports` table.
 - **Metadata Persistence:** User-entered metadata is stored only in the database. During the sync, the system merges the existing DB metadata back into the scanned objects. This ensures that manually added info like 'UAT NA' remains attached to the report even if the server restarts.
-- **Renaming Logic:** Users can rename a current report's origin label directly from the dashboard. The `/api/report-rename` endpoint validates the new name (rejects forbidden filesystem characters: `/ \ : * ? " < > |`, null bytes, and `.`/`..`), performs a path-traversal guard by confirming both source and destination resolve within `appConfig.currentPath`, checks that no folder with the new name already exists (conflict guard), then calls `fs.renameSync` to rename the physical folder. The database record's `id` and `reportPath` are updated atomically via `updateReportId()`. Live validation feedback is shown in the UI before any server call is made.
-- **Archiving Logic:** When a report is moved to the Archive via `/api/archive`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move. If a matching vault analysis file exists, it is moved from the vault directory to `<archivePath>/analysis/`.
-- **Deleting Logic:** When a user permanently deletes a report via `/api/delete-report`, the backend uses `fs.rm` with `{ recursive: true, force: true }` to completely wipe the report from disk.
-- **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the `scanDirectory` sync to keep the database and UI in perfect alignment.
+- **Renaming Logic:** Users can rename a current report's origin label directly from the dashboard. The `/api/report-rename` endpoint validates the new name (rejects forbidden filesystem characters: `/ \ : * ? " < > |`, null bytes, and `.`/`..`), performs a path-traversal guard by confirming both source and destination resolve within `appConfig.currentPath`, checks that no folder with the new name already exists (conflict guard), then calls `fs.renameSync` to rename the physical folder. The database record's `id` and `reportPath` are updated atomically via `updateReportId()`. The report's `uuid` is **unchanged**, so all `analysis_runs` stay mapped across the rename without any remapping step. Live validation feedback is shown in the UI before any server call is made.
+- **Archiving Logic:** When a report is moved to the Archive via `/api/archive`, the backend physically renames the folder, moving it to the archive root with a timestamp suffix to prevent collisions. The database record is then updated to point to the new folder ID and new physical path, preserving the metadata across the move. Because `analysis_runs` are keyed by the stable `uuid` (which does not change on archive), the run mapping is preserved automatically — no `reportId` rewrite is performed. If a matching vault analysis file exists, it is moved from the vault directory to `<archivePath>/analysis/`.
+- **Deleting Logic:** When a user permanently deletes a report via `/api/delete-report`, the backend uses `fs.rm` with `{ recursive: true, force: true }` to completely wipe the report from disk, and removes the report's `analysis_runs` by its `uuid`.
+- **Cleanup:** Stale database records (reports that exist in the DB but were deleted manually from the filesystem) are purged during the `scanDirectory` sync, along with their `analysis_runs` (deleted by `uuid`). A final `pruneOrphanAnalysisRuns()` pass each scan drops any run rows whose `reportId` no longer maps to a live report `uuid`, keeping the database and UI in perfect alignment.
 
 ### Search vs sync boundary
 
@@ -50,6 +50,18 @@ There is an intentional separation between the two dashboard data flows:
 - **`GET /api/report-search`:** Queries the persisted SQLite rows only and returns the same `{ current, archive, configStatus }` shape as the main dashboard load so the frontend can reuse the same table renderer. Metadata text is matched case-insensitively by whitespace-delimited tokens, with all tokens required to match.
 
 This keeps the filtering UX consistent while preserving the rule that search itself must not update reports.
+
+### Stable Per-Instance Identity (`uuid`)
+
+The report folder name is **not** a stable identity. Reports are deleted and recreated constantly — sometimes outside the dashboard entirely (IDE, file explorer) — and a new run frequently lands in a recycled folder name such as `playwright-report_2` or `playwright-report_3`. Keying analysis runs by folder name caused a deleted report's runs to "resurrect" on a brand-new, unrelated report that happened to reuse the name, showing stale `(missing on disk)` rows.
+
+To fix this, each report row carries a surrogate `uuid` and a birth timestamp (`dateCreated`, from the folder's `birthtime`):
+
+- **Instance detection on scan:** In `scanDirectory`, a folder is matched to its DB row by name. The existing `uuid` is reused **only** when the stored `dateCreated` still equals the folder's current `birthtime`. If the birthtime differs (a recycled name pointing at a physically new folder), the old `uuid` and its `analysis_runs` are dropped and a fresh `uuid` is minted.
+- **Out-of-band deletes:** Because reconciliation is scan-driven rather than event-driven, a report deleted in the IDE/explorer is cleaned up on the next dashboard load — no delete hook is required. Its DB row and runs are removed when the folder is found missing, and a later same-named folder gets a new identity.
+- **Stable across rename/archive:** Renaming or archiving changes the folder name (`id`) but never the `uuid`, so the run mapping survives folder moves with no remapping.
+- **Orphan prune:** Every scan ends with `pruneOrphanAnalysisRuns()`, deleting any run whose `reportId` no longer matches a live report `uuid`.
+- **Migration:** The `uuid` column is added via `ALTER TABLE` with an existence check and backfilled with fresh UUIDs for pre-existing rows. Legacy `analysis_runs` keyed by folder name no longer match any `uuid` and are removed by the orphan prune on first scan (a one-time loss of the old name-based mappings).
 
 ---
 
@@ -71,7 +83,7 @@ The dashboard exposes a minimal agent-facing contract for report discovery, but 
 
 Current endpoints:
 
-- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose matching vault `.md` file exists for that report — so agents can discover analysis files without a separate vault listing call. Run directories are persisted per report in the `analysis_runs` table each time **Analyze Failures** runs, and analysis files are mapped by run-directory basename (`run-<timestamp>.md`) rather than by report name. A run's `runDir` column is cleared (set empty) when its output directory is deleted via the Info dialog or removed during archive, but the row \u2014 and thus the analysis-file mapping \u2014 is retained.
+- `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes an `analysisFiles` field — an array of run names (`run-<timestamp>`) whose matching vault `.md` file exists for that report — so agents can discover analysis files without a separate vault listing call. Run directories are persisted per report in the `analysis_runs` table (keyed by the report's stable `uuid`) each time **Analyze Failures** runs, and analysis files are mapped by run-directory basename (`run-<timestamp>.md`) rather than by report name. A run's `runDir` column is cleared (set empty) when its output directory is deleted via the Info dialog or removed during archive, but the row \u2014 and thus the analysis-file mapping \u2014 is retained.
 - `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
 - `GET /api/agent/vault/:filename` returns raw vault markdown content. This endpoint is used by the `vault-read` CLI command in `playwright-traces-reader` to let agents read vault analysis files that live outside the IDE workspace.
 
@@ -160,7 +172,8 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 ### 2. Dashboard load → `scanDirectory('current')`
 - Reads all subfolders from the current directory.
 - Validates each has `index.html` containing `<title>Playwright Test Report</title>`.
-- Calls `upsertReport({ id, dateCreated, metadata, reportPath })` — inserts if new, updates path/date on conflict but **preserves existing metadata**.
+- Resolves the report's stable `uuid`: reuses the existing one when the folder's `birthtime` still matches the stored `dateCreated`; otherwise (recycled name / physically new folder) mints a fresh `uuid` and drops the old instance's `analysis_runs`.
+- Calls `upsertReport({ id, uuid, dateCreated, metadata, reportPath })` — inserts if new, updates `uuid`/path/date on conflict but **preserves existing metadata**.
 - Returns `ReportInfo` with `id` and `name` both equal to `dirent.name` — no transformation applied; what is on disk is what is shown.
 - Frontend renders `id` as an editable `<input>` in the Current Reports table.
 
@@ -168,7 +181,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - Frontend validates immediately (no forbidden chars, not empty) and shows an inline error if invalid — no server round-trip needed.
 - `POST /api/report-rename { reportId: 'playwright-report-4', newName: 'my-smoke-run' }`
 - Server: path-traversal guard → conflict check → `fs.renameSync(oldFolder, newFolder)`.
-- `updateReportId('playwright-report-4', 'my-smoke-run', '/reports/current/my-smoke-run/index.html')` — updates both `id` and `reportPath` in DB atomically.
+- `updateReportId('playwright-report-4', 'my-smoke-run', '/reports/current/my-smoke-run/index.html')` — updates both `id` and `reportPath` in DB atomically. The `uuid` is untouched, so analysis runs remain mapped.
 - Frontend updates the local `report` closure (`id`, `name`, `path`) in-place — no page reload needed.
 
 ### 4. User archives: `POST /api/archive { reportPath: '/reports/current/my-smoke-run/index.html' }`
@@ -177,7 +190,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - Generates a unique archive name: `playwright-report-<timestamp>`.
 - `fs.renameSync(currentPath/my-smoke-run, archivePath/playwright-report-1773916890669)`.
 - `updateReportId('my-smoke-run', 'playwright-report-1773916890669', '/reports/archive/playwright-report-1773916890669/index.html')`.
-- DB `id` is now the timestamped archive folder name; **metadata is preserved** across the move.
+- DB `id` is now the timestamped archive folder name; **metadata is preserved** across the move, and the stable `uuid` keeps every `analysis_runs` row mapped without a rewrite.
 
 ### 5. Archive table display
 - `scanDirectory('archive')` — same mechanism as step 2.
@@ -399,7 +412,7 @@ The per-row **Info** button (always visible) opens a modal that surfaces a repor
 
 ### Two-artifact lifecycle model
 
-An `analysis_runs` row represents the **report ↔ analysis-file** mapping. The `runDir` column is a *detachable reference* to the ephemeral failure-analysis output directory (`<currentPath>/tmp/run-<timestamp>/`). The two artifacts have decoupled lifecycles:
+An `analysis_runs` row represents the **report ↔ analysis-file** mapping. Its `reportId` column holds the report's stable `uuid` (not the recyclable folder name), so the mapping survives renames, archive moves, and folder-name recycling. The `runDir` column is a *detachable reference* to the ephemeral failure-analysis output directory (`<currentPath>/tmp/run-<timestamp>/`). The two artifacts have decoupled lifecycles:
 
 - **Output directory** (`runDir`): ephemeral, frequently purged (often daily). Deleting it removes the directory from disk and **clears** the `runDir` column via `clearAnalysisRunDir()`, while keeping the row so the analysis file stays mapped to the report.
 - **Analysis file** (`<runName>.md`, resolved via `resolveVaultFile()`): long-lived. On archive it is moved into `<archivePath>/analysis/`. Deleting it removes the `.md` from disk; the row is pruned (`deleteAnalysisRun()`) only when the output dir reference is already gone.

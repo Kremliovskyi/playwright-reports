@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import fs from 'fs';
 import cors from 'cors';
-import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, renameAnalysisRunsReport, clearAnalysisRunDir, deleteAnalysisRun } from './db';
+import { AppConfig, Preset, getConfig, updateConfig, getPresets, addPreset, deletePreset, ReportRecord, upsertReport, getReport, getAllReports, updateReportMetadata, deleteReportRecord, updateReportId, searchReports, addAnalysisRun, getAnalysisRuns, deleteAnalysisRunsByReport, pruneOrphanAnalysisRuns, clearAnalysisRunDir, deleteAnalysisRun } from './db';
 import { spawn, ChildProcess } from 'child_process';
 import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
@@ -335,15 +335,27 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           if (!indexContent.includes('<title>Playwright Test Report</title>')) return null;
 
           const reportPath = `/reports/${prefix}/${dirent.name}/index.html`;
+          const birthIso = stat.birthtime.toISOString();
 
           // Look up existing DB record to preserve metadata
           const existing = getReport(dirent.name);
           const metadata = existing?.metadata || '';
 
+          // Stable per-instance identity: reuse the uuid only when the same folder name is
+          // still the same physical report (matching birth time). A recycled name (e.g. a
+          // deleted report recreated as the same folder) has a new birth time, so it gets a
+          // fresh uuid and the old run mapping is dropped — no stale "(missing on disk)" rows.
+          let uuid = existing?.uuid;
+          if (!uuid || existing!.dateCreated !== birthIso) {
+            uuid = randomUUID();
+            if (existing?.uuid) deleteAnalysisRunsByReport(existing.uuid);
+          }
+
           // Upsert into DB (preserves metadata via ON CONFLICT)
           upsertReport({
             id: dirent.name,
-            dateCreated: stat.birthtime.toISOString(),
+            uuid,
+            dateCreated: birthIso,
             metadata,
             reportPath
           });
@@ -370,10 +382,12 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
   for (const dbReport of allDbReports) {
     // Only clean up records that belong to this prefix (check reportPath)
     if (dbReport.reportPath.startsWith(`/reports/${prefix}/`) && !diskIds.has(dbReport.id)) {
+      deleteAnalysisRunsByReport(dbReport.uuid);
       deleteReportRecord(dbReport.id);
-      deleteAnalysisRunsByReport(dbReport.id);
     }
   }
+  // Drop any runs left behind by recycled names whose uuid no longer exists.
+  pruneOrphanAnalysisRuns();
 
   return reports;
 };
@@ -763,13 +777,16 @@ app.post('/api/failures', (req: Request, res: Response): any => {
 
       // Persist this run directory against the report (one report -> many runs; never overwrite previous).
       try {
-        addAnalysisRun({
-          id: randomUUID(),
-          reportId: folderName,
-          runDir: manifest.runDir,
-          runName: path.basename(manifest.runDir),
-          createdAt: new Date().toISOString()
-        });
+        const reportUuid = getReport(folderName)?.uuid;
+        if (reportUuid) {
+          addAnalysisRun({
+            id: randomUUID(),
+            reportId: reportUuid,
+            runDir: manifest.runDir,
+            runName: path.basename(manifest.runDir),
+            createdAt: new Date().toISOString()
+          });
+        }
       } catch (err) {
         console.error('Failed to persist analysis run:', err);
       }
@@ -976,11 +993,12 @@ app.post('/api/archive', (req: Request, res: Response): any => {
       }
     }
 
-    // Update DB record: transfer from old folder name to new archived folder name
+    // Update DB record: transfer from old folder name to new archived folder name. The report
+    // uuid (and therefore its analysis-run mapping) is stable, so only the folder name/path move.
     const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
-    const archivedRuns = getAnalysisRuns(folderName);
+    const reportUuid = getReport(folderName)?.uuid || '';
+    const archivedRuns = getAnalysisRuns(reportUuid);
     updateReportId(folderName, uniqueArchivedName, newReportPath);
-    renameAnalysisRunsReport(folderName, uniqueArchivedName);
     invalidateReportSize(folderName);
 
     // Move each run's analysis (vault) file into archivePath/analysis/, keeping the run-<timestamp> name
@@ -1011,7 +1029,7 @@ app.post('/api/archive', (req: Request, res: Response): any => {
         if (run.runDir && fs.existsSync(run.runDir)) {
           fs.rmSync(run.runDir, { recursive: true, force: true });
         }
-        clearAnalysisRunDir(uniqueArchivedName, run.runName);
+        clearAnalysisRunDir(reportUuid, run.runName);
       } catch (rmErr) {
         console.warn('Failed to remove output directory during archive:', rmErr);
       }
@@ -1056,7 +1074,8 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
     // Delete associated analysis (vault) files for every persisted run of this report.
-    for (const run of getAnalysisRuns(folderName)) {
+    const reportUuid = getReport(folderName)?.uuid || '';
+    for (const run of getAnalysisRuns(reportUuid)) {
       const runFile = resolveVaultFile(run.runName);
       if (runFile) {
         try { fs.unlinkSync(runFile); } catch { /* already gone */ }
@@ -1066,7 +1085,7 @@ app.post('/api/delete', (req: Request, res: Response): any => {
     // Remove DB record
     deleteReportRecord(folderName);
     invalidateReportSize(folderName);
-    deleteAnalysisRunsByReport(folderName);
+    deleteAnalysisRunsByReport(reportUuid);
 
     res.json({ success: true });
     
@@ -1125,7 +1144,6 @@ app.post('/api/report-rename', (req: Request, res: Response): any => {
     fs.renameSync(oldFolder, newFolder);
     const newReportPath = `/reports/current/${trimmed}/index.html`;
     updateReportId(reportId, trimmed, newReportPath);
-    renameAnalysisRunsReport(reportId, trimmed);
     invalidateReportSize(reportId);
 
     res.json({ success: true, newId: trimmed, newPath: newReportPath });
@@ -1477,7 +1495,9 @@ const resolveVaultFile = (filename: string): string | null => {
 // Resolve the persisted failure-analysis runs for a report into existing vault files (newest first).
 const getReportAnalysisFiles = (reportId: string): { runName: string; mtime: string; runDir: string }[] => {
   const files: { runName: string; mtime: string; runDir: string }[] = [];
-  for (const run of getAnalysisRuns(reportId)) {
+  const reportUuid = getReport(reportId)?.uuid;
+  if (!reportUuid) return files;
+  for (const run of getAnalysisRuns(reportUuid)) {
     const resolved = resolveVaultFile(run.runName);
     if (!resolved) continue;
     try {
@@ -1559,7 +1579,7 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
     const folder = resolveReportFolder(report);
     const folderExists = !!folder && fs.existsSync(folder);
 
-    const runs = getAnalysisRuns(reportId).map(run => {
+    const runs = getAnalysisRuns(report.uuid).map(run => {
       const runDir = run.runDir || '';
       const runDirExists = !!runDir && fs.existsSync(runDir);
       const analysisFile = resolveVaultFile(run.runName);

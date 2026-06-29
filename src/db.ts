@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import { randomUUID } from 'crypto';
 
 // --- Interfaces ---
 export interface AppConfig {
@@ -34,6 +35,7 @@ export interface Preset {
 
 export interface ReportRecord {
   id: string;
+  uuid: string;
   dateCreated: string;
   metadata: string;
   reportPath: string;
@@ -102,11 +104,21 @@ db.exec(`
   );
   CREATE TABLE IF NOT EXISTS reports (
     id TEXT PRIMARY KEY,
+    uuid TEXT NOT NULL DEFAULT '',
     dateCreated TEXT NOT NULL,
     metadata TEXT NOT NULL DEFAULT '',
     reportPath TEXT NOT NULL DEFAULT ''
   );
 `);
+
+// Migration: add reports.uuid (stable per-instance identity) and backfill existing rows
+const reportColumns = db.prepare("PRAGMA table_info(reports)").all() as { name: string }[];
+if (!reportColumns.some(c => c.name === 'uuid')) {
+  db.exec("ALTER TABLE reports ADD COLUMN uuid TEXT NOT NULL DEFAULT ''");
+}
+for (const row of db.prepare("SELECT id FROM reports WHERE uuid = ''").all() as { id: string }[]) {
+  db.prepare('UPDATE reports SET uuid = ? WHERE id = ?').run(randomUUID(), row.id);
+}
 
 // Migration: add vaultPath column if missing
 const configColumns = db.prepare("PRAGMA table_info(config)").all() as { name: string }[];
@@ -194,12 +206,13 @@ export const deletePreset = (id: string): void => {
 // --- Report Operations ---
 export const upsertReport = (report: ReportRecord): void => {
   db.prepare(
-    `INSERT INTO reports (id, dateCreated, metadata, reportPath)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO reports (id, uuid, dateCreated, metadata, reportPath)
+     VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
+       uuid = excluded.uuid,
        dateCreated = excluded.dateCreated,
        reportPath = excluded.reportPath`
-  ).run(report.id, report.dateCreated, report.metadata, report.reportPath);
+  ).run(report.id, report.uuid, report.dateCreated, report.metadata, report.reportPath);
 };
 
 export const getReport = (id: string): ReportRecord | undefined => {
@@ -220,6 +233,11 @@ export const deleteReportRecord = (id: string): void => {
 
 export const updateReportId = (oldId: string, newId: string, newPath: string): void => {
   db.prepare('UPDATE reports SET id = ?, reportPath = ? WHERE id = ?').run(newId, newPath, oldId);
+};
+
+// Drop analysis_runs whose reportId no longer maps to any report uuid (orphans from recycled names).
+export const pruneOrphanAnalysisRuns = (): void => {
+  db.prepare('DELETE FROM analysis_runs WHERE reportId NOT IN (SELECT uuid FROM reports)').run();
 };
 
 // --- Analysis Run Operations ---

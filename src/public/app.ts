@@ -1303,8 +1303,8 @@ document.addEventListener('DOMContentLoaded', () => {
                   const p = JSON.parse(e.data);
                   if (p.phase === 'start') {
                       showRowProgress(row, p.total > 0 ? `Analyzing 0/${p.total}...` : 'Analyzing...');
-                  } else if (p.phase === 'progress' && p.status === 'start') {
-                      showRowProgress(row, `Analyzing ${p.index}/${p.total}...`);
+                  } else if (p.phase === 'progress' && typeof p.completed === 'number') {
+                      showRowProgress(row, `Analyzing ${p.completed}/${p.total}...`);
                   } else if (p.phase === 'complete') {
                       showRowProgress(row, 'Finalizing...');
                   }

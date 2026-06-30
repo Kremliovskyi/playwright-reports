@@ -9,6 +9,10 @@ export const COPILOT_ANALYSIS_MODEL = process.env.COPILOT_ANALYSIS_MODEL || 'gpt
 // Per-trace timeout for the assistant response (ms).
 const PER_TRACE_TIMEOUT_MS = 180000;
 
+// Number of failure folders analyzed concurrently. Each folder is fully isolated
+// (own input files, own Copilot session, own ai-analysis.md), so they never interfere.
+const ANALYSIS_CONCURRENCY = 3;
+
 // --- Types ---------------------------------------------------------------
 
 export interface FailureManifestEntry {
@@ -72,6 +76,9 @@ export interface AnalyzeRunSummary {
 export interface AnalyzeProgress {
   index: number;
   total: number;
+  // Monotonic count of folders that have finished (done or error). Drives the
+  // UI "Analyzing X/total" label so it advances steadily under concurrency.
+  completed?: number;
   folder: string;
   testTitle: string | null;
   status: 'start' | 'done' | 'error';
@@ -476,45 +483,64 @@ export const analyzeRun = async (
   let analyzed = 0;
   let failed = 0;
 
-  try {
-    for (let i = 0; i < entries.length; i++) {
-      const entry = entries[i];
-      onProgress?.({ index: i + 1, total, folder: entry.folder, testTitle: entry.testTitle, status: 'start' });
-      try {
-        const record = await analyzeFolder(client as unknown as AnalyzerClient, runDir, entry, model);
-        fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(record, model), 'utf8');
-        if (record._error) {
-          failed++;
-          onProgress?.({ index: i + 1, total, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message: record._error });
-        } else {
-          analyzed++;
-          onProgress?.({ index: i + 1, total, folder: entry.folder, testTitle: entry.testTitle, status: 'done' });
-        }
-      } catch (err) {
+  // Monotonic count of folders that have finished (done or error). Incremented
+  // synchronously when a task completes, so the UI label advances steadily even
+  // though tasks finish out of order under concurrency.
+  let completed = 0;
+
+  // Process a single failure folder in full isolation: own input files, own
+  // Copilot session, own ai-analysis.md. Never throws — failures are captured
+  // as an error record so one bad trace can't abort the others.
+  const processEntry = async (entry: FailureManifestEntry, index: number): Promise<void> => {
+    onProgress?.({ index, total, folder: entry.folder, testTitle: entry.testTitle, status: 'start' });
+    try {
+      const record = await analyzeFolder(client as unknown as AnalyzerClient, runDir, entry, model);
+      fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(record, model), 'utf8');
+      if (record._error) {
         failed++;
-        const message = err instanceof Error ? err.message : String(err);
-        const errorRecord: UnderstandingRecord = {
-          folder: entry.folder,
-          testTitle: entry.testTitle,
-          spec: '',
-          stepPath: [],
-          deepestFailingStep: '',
-          errorVerbatim: '',
-          errorNormalized: '',
-          network: [],
-          screenshotVerdict: '',
-          rootCauseHypothesis: '',
-          discriminators: '',
-          _error: message
-        };
-        try {
-          fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(errorRecord, model), 'utf8');
-        } catch {
-          /* ignore write failure */
-        }
-        onProgress?.({ index: i + 1, total, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message });
+        onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message: record._error });
+      } else {
+        analyzed++;
+        onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'done' });
       }
+    } catch (err) {
+      failed++;
+      const message = err instanceof Error ? err.message : String(err);
+      const errorRecord: UnderstandingRecord = {
+        folder: entry.folder,
+        testTitle: entry.testTitle,
+        spec: '',
+        stepPath: [],
+        deepestFailingStep: '',
+        errorVerbatim: '',
+        errorNormalized: '',
+        network: [],
+        screenshotVerdict: '',
+        rootCauseHypothesis: '',
+        discriminators: '',
+        _error: message
+      };
+      try {
+        fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(errorRecord, model), 'utf8');
+      } catch {
+        /* ignore write failure */
+      }
+      onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message });
     }
+  };
+
+  try {
+    // Bounded worker pool: a shared cursor hands out the next entry to each of the
+    // ANALYSIS_CONCURRENCY workers, which pull-and-process until the queue drains.
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < entries.length) {
+        const i = cursor++;
+        await processEntry(entries[i], i + 1);
+      }
+    };
+    const workerCount = Math.min(ANALYSIS_CONCURRENCY, entries.length);
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
   } finally {
     await client.stop();
   }

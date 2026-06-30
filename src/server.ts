@@ -1078,14 +1078,17 @@ app.post('/api/archive', (req: Request, res: Response): any => {
       }
 
       // Remove the ephemeral output directory and detach its reference (keep the analysis mapping).
+      // Detach the DB reference unconditionally: even if the physical removal fails (e.g. a locked
+      // file on Windows), the output dir does not follow the report into the archive, so leaving a
+      // stale runDir would surface a misleading "(missing on disk)" row in Report Info.
       try {
         if (run.runDir && fs.existsSync(run.runDir)) {
           fs.rmSync(run.runDir, { recursive: true, force: true });
         }
-        clearAnalysisRunDir(reportUuid, run.runName);
       } catch (rmErr) {
         console.warn('Failed to remove output directory during archive:', rmErr);
       }
+      clearAnalysisRunDir(reportUuid, run.runName);
     }
 
     // Trace digests live under the ephemeral currentPath/tmp, so they cannot follow the report
@@ -1646,9 +1649,15 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
     const folder = resolveReportFolder(report);
     const folderExists = !!folder && fs.existsSync(folder);
 
+    // Archived reports never carry their ephemeral output dir along, so any leftover runDir is
+    // stale (e.g. a clear that was skipped when physical removal failed). Present it as removed
+    // rather than as a misleading "(missing on disk)" row.
+    const isArchived = report.reportPath.startsWith('/reports/archive/');
+
     const runs = getAnalysisRuns(report.uuid).map(run => {
-      const runDir = run.runDir || '';
-      const runDirExists = !!runDir && fs.existsSync(runDir);
+      const rawRunDir = run.runDir || '';
+      const runDirExists = !!rawRunDir && fs.existsSync(rawRunDir);
+      const runDir = isArchived && !runDirExists ? '' : rawRunDir;
       const analysisFile = resolveVaultFile(run.runName);
       let failuresUrl: string | null = null;
       if (runDirExists && appConfig.currentPath && isWithin(appConfig.currentPath, runDir)) {

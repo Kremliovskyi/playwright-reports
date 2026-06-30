@@ -368,6 +368,8 @@ Vault `.md` files are named after the report origin label (e.g., `playwright-rep
 
 Archiving also removes each run's ephemeral output directory (`runDir`) from disk and clears its `runDir` reference via `clearAnalysisRunDir()`, while keeping the row so the archived report still maps to its (now relocated) analysis file. The report-size cache is invalidated for the archived report id.
 
+**Clear is unconditional.** The physical `fs.rmSync(runDir)` and the DB `clearAnalysisRunDir()` are deliberately split: `clearAnalysisRunDir()` runs *outside* the `try/catch` that wraps the removal, so the `runDir` reference is detached even when the physical delete throws (a common Windows scenario — a locked file, partial deletion, or antivirus hold). If the clear were left inside the same `try` after `rmSync`, a throw would skip it, leaving a stale `runDir` that points at a now-gone directory. That stale row surfaces as a misleading `(missing on disk)` badge in the report's Info dialog even though the output dir was intentionally dropped on archive.
+
 ### Dual-Location Vault Resolution
 
 `resolveVaultFile()` checks both `<vaultPath>` (for current reports) and `<archivePath>/analysis/` (for archived reports) when resolving a filename. The vault list endpoints (`/api/vault/list` and `/api/agent/vault/list`) merge files from both locations. The save endpoint (`PUT /api/vault/:filename`) resolves existing files from either location before writing; new files default to `vaultPath`.
@@ -439,6 +441,8 @@ Size is split from `report-info` so the **Analysis runs** section renders immedi
 ### Path interactions
 
 Each path row supports three interactions: a visible **copy** button, **right-click → Copy path** (reusing the shared `showAnalysisContextMenu` context menu), and **open** links (the failures `index.json` for an output dir, the rendered `.md` vault page for an analysis file). Missing artifacts show a `(missing on disk)` badge or a muted empty state (`— removed` / `No analysis file`).
+
+**Archived reports never show `(missing on disk)` for an output dir.** An archived report's ephemeral output dir is always intentionally gone (it cannot follow the report into the archive), so any leftover `runDir` is stale by definition. When `/api/report-info` builds the `runs[]` for an archived report (`reportPath` under `/reports/archive/`), it presents a non-existent `runDir` as removed — blanking the path so the row renders the muted `— removed` empty state instead of the alarming `(missing on disk)` badge. This also self-heals rows left stale by older builds that skipped the clear on a failed `rmSync`.
 
 ### Delete confirmation
 

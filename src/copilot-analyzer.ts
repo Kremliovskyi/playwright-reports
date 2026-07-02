@@ -51,6 +51,13 @@ export interface UnderstandingRecord {
   errorNormalized: string;
   network: UnderstandingRecordNetworkItem[];
   screenshotVerdict: string;
+  // Where the page ACTUALLY ended up, per the `# Page snapshot` YAML in error.md.
+  // May differ from the assertion diff's transient "Received" value (soft assertions).
+  finalPageState: string;
+  // Explicit cross-check between the diff's transient "Received" value and the
+  // final page snapshot: "none" when they agree, otherwise a one-line description
+  // (e.g. latency — flow completed after the soft-assertion window, not a stall).
+  transientVsFinalContradiction: string;
   rootCauseHypothesis: string;
   discriminators: string;
   _error?: string;
@@ -107,6 +114,8 @@ const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
   'errorNormalized',
   'network',
   'screenshotVerdict',
+  'finalPageState',
+  'transientVsFinalContradiction',
   'rootCauseHypothesis',
   'discriminators'
 ];
@@ -192,6 +201,16 @@ export const renderAiAnalysisMarkdown = (record: UnderstandingRecord, model: str
   lines.push('## Screenshot verdict');
   lines.push('');
   lines.push(ai.screenshotVerdict || '_none_');
+  lines.push('');
+
+  lines.push('## Final page state');
+  lines.push('');
+  lines.push(ai.finalPageState || '_none_');
+  lines.push('');
+
+  lines.push('## Transient vs final check');
+  lines.push('');
+  lines.push(ai.transientVsFinalContradiction || '_none_');
   lines.push('');
 
   lines.push('## Root cause hypothesis');
@@ -302,12 +321,15 @@ ${networkSection}
     { "call": "<METHOD path>", "status": <code or null>, "gist": "<one line>", "relToStep": "<how this relates to the failing step, or 'none'>" }
   ],
   "screenshotVerdict": "<what UI is actually shown in the attached screenshot>",
+  "finalPageState": "<where the page ACTUALLY ended up, per the '# Page snapshot' YAML section in error.md — the final rendered UI. This may differ from the assertion diff's 'Received' value, which can be a transient mid-flight state>",
+  "transientVsFinalContradiction": "<'none' if the assertion diff's Received value agrees with the final page snapshot; otherwise ONE line describing the contradiction, e.g. 'diff Received shows Processing spinner but the # Page snapshot shows the success screen — flow completed after the soft-assertion window (latency, not a stall)'>",
   "rootCauseHypothesis": "<your best one-sentence root cause>",
   "discriminators": "<CRITICAL: state precisely WHERE in the flow it broke and what would make this NOT the same as a superficially-similar failure. Name the step that PASSED just before the break, so a look-alike that breaks at a different step is distinguishable.>"
 }
 
 Rules:
 - The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
+- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". A failed SOFT assertion (expect.soft, short timeout) captures a transient mid-flight state in the diff's "Received" value, while the page snapshot records where the page actually ended up. If the snapshot (or the attached screenshot) shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall.
 - Do not fabricate network entries — only include what network-errors.json or failure.json actually show. If none, use an empty array.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
 };
@@ -436,6 +458,8 @@ const analyzeFolder = async (
         errorNormalized: '',
         network: [],
         screenshotVerdict: '',
+        finalPageState: '',
+        transientVsFinalContradiction: '',
         rootCauseHypothesis: '',
         discriminators: '',
         _error: 'Response did not contain a valid record',
@@ -516,6 +540,8 @@ export const analyzeRun = async (
         errorNormalized: '',
         network: [],
         screenshotVerdict: '',
+        finalPageState: '',
+        transientVsFinalContradiction: '',
         rootCauseHypothesis: '',
         discriminators: '',
         _error: message

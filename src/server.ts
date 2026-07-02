@@ -1740,7 +1740,11 @@ app.delete('/api/analysis-run/output-dir', (req: Request, res: Response): any =>
   if (!reportId || !runName) return res.status(400).json({ error: 'reportId and runName are required' });
 
   try {
-    const run = getAnalysisRuns(reportId).find(r => r.runName === runName);
+    // analysis_runs rows are keyed by the report's stable uuid, not its (renameable) public id.
+    const report = getReport(reportId);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    const run = getAnalysisRuns(report.uuid).find(r => r.runName === runName);
     if (!run) return res.status(404).json({ error: 'Analysis run not found' });
 
     if (run.runDir) {
@@ -1749,7 +1753,7 @@ app.delete('/api/analysis-run/output-dir', (req: Request, res: Response): any =>
       }
       if (fs.existsSync(run.runDir)) fs.rmSync(run.runDir, { recursive: true, force: true });
     }
-    clearAnalysisRunDir(reportId, runName);
+    clearAnalysisRunDir(report.uuid, runName);
     return res.json({ success: true });
   } catch (error: any) {
     console.error('Delete output dir error:', error.message);
@@ -1764,7 +1768,11 @@ app.delete('/api/analysis-run/analysis-file', (req: Request, res: Response): any
   if (!reportId || !runName) return res.status(400).json({ error: 'reportId and runName are required' });
 
   try {
-    const run = getAnalysisRuns(reportId).find(r => r.runName === runName);
+    // analysis_runs rows are keyed by the report's stable uuid, not its (renameable) public id.
+    const report = getReport(reportId);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    const run = getAnalysisRuns(report.uuid).find(r => r.runName === runName);
     if (!run) return res.status(404).json({ error: 'Analysis run not found' });
 
     const resolved = resolveVaultFile(runName);
@@ -1781,7 +1789,7 @@ app.delete('/api/analysis-run/analysis-file', (req: Request, res: Response): any
 
     // Once the analysis file is gone and no output dir remains, the row has no purpose.
     if (!run.runDir || !fs.existsSync(run.runDir)) {
-      deleteAnalysisRun(reportId, runName);
+      deleteAnalysisRun(report.uuid, runName);
     }
     return res.json({ success: true });
   } catch (error: any) {
@@ -1797,7 +1805,11 @@ app.delete('/api/digest', (req: Request, res: Response): any => {
   if (!reportId || !digestId) return res.status(400).json({ error: 'reportId and digestId are required' });
 
   try {
-    const digest = getDigests(reportId).find(d => d.id === digestId);
+    // digests rows are keyed by the report's stable uuid, not its (renameable) public id.
+    const report = getReport(reportId);
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+
+    const digest = getDigests(report.uuid).find(d => d.id === digestId);
     if (!digest) return res.status(404).json({ error: 'Digest not found' });
 
     const digestDir = digest.runDir ? path.join(digest.runDir, digest.folder) : '';

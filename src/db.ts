@@ -154,12 +154,35 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS analysis_runs (
     id TEXT PRIMARY KEY,
     reportId TEXT NOT NULL,
-    runDir TEXT NOT NULL UNIQUE,
+    runDir TEXT NOT NULL,
     runName TEXT NOT NULL,
     createdAt TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_analysis_runs_reportId ON analysis_runs(reportId);
 `);
+
+// Migration: runDir was originally declared inline UNIQUE, which breaks detaching output dirs —
+// clearing a second run to runDir = '' violates the constraint (only one row may be ''). Rebuild
+// the table without it; uniqueness for real paths is enforced by the partial index below.
+const analysisRunsIndexes = db.prepare('PRAGMA index_list(analysis_runs)').all() as { origin: string }[];
+if (analysisRunsIndexes.some(idx => idx.origin === 'u')) {
+  db.exec(`
+    BEGIN;
+    CREATE TABLE analysis_runs_migrated (
+      id TEXT PRIMARY KEY,
+      reportId TEXT NOT NULL,
+      runDir TEXT NOT NULL,
+      runName TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+    INSERT INTO analysis_runs_migrated SELECT id, reportId, runDir, runName, createdAt FROM analysis_runs;
+    DROP TABLE analysis_runs;
+    ALTER TABLE analysis_runs_migrated RENAME TO analysis_runs;
+    CREATE INDEX idx_analysis_runs_reportId ON analysis_runs(reportId);
+    COMMIT;
+  `);
+}
+db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_runs_runDir ON analysis_runs(runDir) WHERE runDir <> ''");
 
 // Migration: add digests table (one report -> many trace digests under currentPath/tmp)
 db.exec(`

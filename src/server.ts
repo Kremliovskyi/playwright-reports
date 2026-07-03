@@ -1057,43 +1057,49 @@ app.post('/api/archive', (req: Request, res: Response): any => {
     // Move each run's analysis (vault) file into archivePath/analysis/, keeping the run-<timestamp> name
     // so the run-based mapping (and the report's Analysis dropdown) keeps resolving after archival.
     // The output directory is ephemeral, so it is removed and its DB reference cleared on archive.
-    const analysisDir = path.join(appConfig.archivePath, 'analysis');
-    for (const run of archivedRuns) {
-      if (appConfig.vaultPath) {
-        const oldVaultFile = path.join(appConfig.vaultPath, run.runName + '.md');
-        if (fs.existsSync(oldVaultFile)) {
-          fs.mkdirSync(analysisDir, { recursive: true });
-          const newVaultFile = path.join(analysisDir, run.runName + '.md');
-          try {
-            fs.renameSync(oldVaultFile, newVaultFile);
-          } catch (moveErr: any) {
-            if (moveErr.code === 'EXDEV') {
-              fs.copyFileSync(oldVaultFile, newVaultFile);
-              fs.unlinkSync(oldVaultFile);
-            } else {
-              console.warn('Failed to move vault file:', moveErr);
+    // The physical move and record rename above already completed, so the archive itself succeeded —
+    // cleanup failures here are logged but must not surface as an archive error to the client.
+    try {
+      const analysisDir = path.join(appConfig.archivePath, 'analysis');
+      for (const run of archivedRuns) {
+        if (appConfig.vaultPath) {
+          const oldVaultFile = path.join(appConfig.vaultPath, run.runName + '.md');
+          if (fs.existsSync(oldVaultFile)) {
+            fs.mkdirSync(analysisDir, { recursive: true });
+            const newVaultFile = path.join(analysisDir, run.runName + '.md');
+            try {
+              fs.renameSync(oldVaultFile, newVaultFile);
+            } catch (moveErr: any) {
+              if (moveErr.code === 'EXDEV') {
+                fs.copyFileSync(oldVaultFile, newVaultFile);
+                fs.unlinkSync(oldVaultFile);
+              } else {
+                console.warn('Failed to move vault file:', moveErr);
+              }
             }
           }
         }
-      }
 
-      // Remove the ephemeral output directory and detach its reference (keep the analysis mapping).
-      // Detach the DB reference unconditionally: even if the physical removal fails (e.g. a locked
-      // file on Windows), the output dir does not follow the report into the archive, so leaving a
-      // stale runDir would surface a misleading "(missing on disk)" row in Report Info.
-      try {
-        if (run.runDir && fs.existsSync(run.runDir)) {
-          fs.rmSync(run.runDir, { recursive: true, force: true });
+        // Remove the ephemeral output directory and detach its reference (keep the analysis mapping).
+        // Detach the DB reference unconditionally: even if the physical removal fails (e.g. a locked
+        // file on Windows), the output dir does not follow the report into the archive, so leaving a
+        // stale runDir would surface a misleading "(missing on disk)" row in Report Info.
+        try {
+          if (run.runDir && fs.existsSync(run.runDir)) {
+            fs.rmSync(run.runDir, { recursive: true, force: true });
+          }
+        } catch (rmErr) {
+          console.warn('Failed to remove output directory during archive:', rmErr);
         }
-      } catch (rmErr) {
-        console.warn('Failed to remove output directory during archive:', rmErr);
+        clearAnalysisRunDir(reportUuid, run.runName);
       }
-      clearAnalysisRunDir(reportUuid, run.runName);
-    }
 
-    // Trace digests live under the ephemeral currentPath/tmp, so they cannot follow the report
-    // into the archive. Remove their directories and DB rows (same cleanup as a delete).
-    purgeReportDigests(reportUuid);
+      // Trace digests live under the ephemeral currentPath/tmp, so they cannot follow the report
+      // into the archive. Remove their directories and DB rows (same cleanup as a delete).
+      purgeReportDigests(reportUuid);
+    } catch (cleanupErr) {
+      console.warn('Post-archive cleanup failed:', cleanupErr);
+    }
 
     res.json({ success: true, newName: uniqueArchivedName });
     

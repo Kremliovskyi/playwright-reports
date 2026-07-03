@@ -50,7 +50,6 @@ export interface UnderstandingRecord {
   errorVerbatim: string;
   errorNormalized: string;
   network: UnderstandingRecordNetworkItem[];
-  screenshotVerdict: string;
   // Where the page ACTUALLY ended up, per the `# Page snapshot` YAML in error.md.
   // May differ from the assertion diff's transient "Received" value (soft assertions).
   finalPageState: string;
@@ -113,7 +112,6 @@ const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
   'errorVerbatim',
   'errorNormalized',
   'network',
-  'screenshotVerdict',
   'finalPageState',
   'transientVsFinalContradiction',
   'rootCauseHypothesis',
@@ -196,11 +194,6 @@ export const renderAiAnalysisMarkdown = (record: UnderstandingRecord, model: str
   } else {
     lines.push('_No network errors._');
   }
-  lines.push('');
-
-  lines.push('## Screenshot verdict');
-  lines.push('');
-  lines.push(ai.screenshotVerdict || '_none_');
   lines.push('');
 
   lines.push('## Final page state');
@@ -291,9 +284,9 @@ const buildPrompt = (folderName: string, errorMd: string, failureJsonText: strin
     ? `\n## network-errors.json (failed/relevant requests)\n\`\`\`json\n${networkErrorsText}\n\`\`\`\n`
     : '\n## network-errors.json\n(none — there were no network errors for this attempt)\n';
 
-  return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the materials provided below plus the attached screenshot image. Do NOT invent facts.
+  return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the text materials provided below. Do NOT invent facts.
 
-The attached image is the rendered UI at the moment of failure. If it disagrees with any text snapshot, TRUST THE SCREENSHOT.
+The '# Page snapshot' YAML section of error.md is the authoritative record of the final rendered UI at the failure point. Trust it over the assertion diff's "Received" value, which can be a transient mid-flight state.
 
 ## Folder name
 ${folderName}
@@ -320,7 +313,6 @@ ${networkSection}
   "network": [
     { "call": "<METHOD path>", "status": <code or null>, "gist": "<one line>", "relToStep": "<how this relates to the failing step, or 'none'>" }
   ],
-  "screenshotVerdict": "<what UI is actually shown in the attached screenshot>",
   "finalPageState": "<where the page ACTUALLY ended up, per the '# Page snapshot' YAML section in error.md — the final rendered UI. This may differ from the assertion diff's 'Received' value, which can be a transient mid-flight state>",
   "transientVsFinalContradiction": "<'none' if the assertion diff's Received value agrees with the final page snapshot; otherwise ONE line describing the contradiction, e.g. 'diff Received shows Processing spinner but the # Page snapshot shows the success screen — flow completed after the soft-assertion window (latency, not a stall)'>",
   "rootCauseHypothesis": "<your best one-sentence root cause>",
@@ -329,7 +321,7 @@ ${networkSection}
 
 Rules:
 - The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
-- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". A failed SOFT assertion (expect.soft, short timeout) captures a transient mid-flight state in the diff's "Received" value, while the page snapshot records where the page actually ended up. If the snapshot (or the attached screenshot) shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall.
+- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". A failed SOFT assertion (expect.soft, short timeout) captures a transient mid-flight state in the diff's "Received" value, while the page snapshot records where the page actually ended up. If the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall.
 - Do not fabricate network entries — only include what network-errors.json or failure.json actually show. If none, use an empty array.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
 };
@@ -371,25 +363,6 @@ const validateRecord = (obj: unknown): obj is UnderstandingRecord => {
 
 // --- Per-folder analysis -------------------------------------------------
 
-interface ScreenshotAnchor {
-  before?: string | null;
-  action?: string | null;
-  after?: string | null;
-}
-
-const resolveScreenshotPath = (folderPath: string, failureJson: Record<string, unknown>): string | null => {
-  const shots = failureJson.screenshots;
-  if (!Array.isArray(shots) || shots.length === 0) return null;
-  for (const shot of shots as ScreenshotAnchor[]) {
-    const rel = shot.after || shot.action || shot.before;
-    if (rel) {
-      const abs = path.join(folderPath, rel);
-      if (fs.existsSync(abs)) return abs;
-    }
-  }
-  return null;
-};
-
 const readIfExists = (filePath: string): string | null => {
   try {
     return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
@@ -424,14 +397,12 @@ const analyzeFolder = async (
   const files = (failureJson.files as Record<string, string | null> | undefined) || {};
   const errorMd = files.errorMarkdown ? readIfExists(path.join(folderPath, files.errorMarkdown)) || '' : readIfExists(path.join(folderPath, 'error.md')) || '';
   const networkErrorsText = files.networkErrors ? readIfExists(path.join(folderPath, files.networkErrors)) : null;
-  const screenshotPath = resolveScreenshotPath(folderPath, failureJson);
 
   const prompt = buildPrompt(entry.folder, errorMd, failureJsonText, networkErrorsText);
-  const attachments = screenshotPath ? [{ type: 'file', path: screenshotPath }] : undefined;
 
   const session = await client.createSession({ model, onPermissionRequest: approveAll });
   try {
-    let result = await session.sendAndWait({ prompt, attachments }, PER_TRACE_TIMEOUT_MS);
+    let result = await session.sendAndWait({ prompt }, PER_TRACE_TIMEOUT_MS);
     let content = result?.data?.content ?? '';
 
     let parsed: unknown;
@@ -457,7 +428,6 @@ const analyzeFolder = async (
         errorVerbatim: '',
         errorNormalized: '',
         network: [],
-        screenshotVerdict: '',
         finalPageState: '',
         transientVsFinalContradiction: '',
         rootCauseHypothesis: '',
@@ -539,7 +509,6 @@ export const analyzeRun = async (
         errorVerbatim: '',
         errorNormalized: '',
         network: [],
-        screenshotVerdict: '',
         finalPageState: '',
         transientVsFinalContradiction: '',
         rootCauseHypothesis: '',

@@ -41,6 +41,20 @@ export interface UnderstandingRecordNetworkItem {
   relToStep: string;
 }
 
+// One error block from error.md. A single failed attempt can carry SEVERAL
+// blocks: each failed soft assertion produces its own block, and the final
+// (terminal) block is the failure that ended the attempt.
+export interface UnderstandingRecordIssue {
+  // e.g. "soft assertion", "hard failure", "timeout"
+  kind: string;
+  // The step/screen where this block occurred, or "unknown".
+  step: string;
+  // The exact first error line of this block.
+  errorVerbatim: string;
+  // 1-2 lines explaining THIS block from its own diff/call log.
+  explanation: string;
+}
+
 export interface UnderstandingRecord {
   folder: string;
   testTitle: string | null;
@@ -50,12 +64,17 @@ export interface UnderstandingRecord {
   errorVerbatim: string;
   errorNormalized: string;
   network: UnderstandingRecordNetworkItem[];
+  // EVERY error block in error.md, in order (soft assertions first, terminal
+  // failure last). The top-level error/step/finalPageState fields describe the
+  // terminal failure only.
+  issues: UnderstandingRecordIssue[];
   // Where the page ACTUALLY ended up, per the `# Page snapshot` YAML in error.md.
-  // May differ from the assertion diff's transient "Received" value (soft assertions).
+  // This is the LAST-SEEN UI and corresponds to the terminal failure only.
   finalPageState: string;
-  // Explicit cross-check between the diff's transient "Received" value and the
-  // final page snapshot: "none" when they agree, otherwise a one-line description
-  // (e.g. latency — flow completed after the soft-assertion window, not a stall).
+  // Explicit cross-check between the TERMINAL error block and the final page
+  // snapshot: "none" when they agree or the comparison is not applicable,
+  // otherwise a one-line description (e.g. latency — flow completed after the
+  // soft-assertion window, not a stall).
   transientVsFinalContradiction: string;
   rootCauseHypothesis: string;
   discriminators: string;
@@ -112,6 +131,7 @@ const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
   'errorVerbatim',
   'errorNormalized',
   'network',
+  'issues',
   'finalPageState',
   'transientVsFinalContradiction',
   'rootCauseHypothesis',
@@ -181,6 +201,18 @@ export const renderAiAnalysisMarkdown = (record: UnderstandingRecord, model: str
   lines.push('');
   lines.push(`- **Verbatim:** ${ai.errorVerbatim || '_none_'}`);
   lines.push(`- **Normalized:** ${ai.errorNormalized || '_none_'}`);
+  lines.push('');
+
+  lines.push('## Issues');
+  lines.push('');
+  if (ai.issues.length) {
+    ai.issues.forEach((issue, i) => {
+      lines.push(`${i + 1}. **${issue.kind}** at \`${issue.step || 'unknown'}\` — ${issue.errorVerbatim}`);
+      lines.push(`   - ${issue.explanation}`);
+    });
+  } else {
+    lines.push('_none_');
+  }
   lines.push('');
 
   lines.push('## Network');
@@ -286,7 +318,9 @@ const buildPrompt = (folderName: string, errorMd: string, failureJsonText: strin
 
   return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the text materials provided below. Do NOT invent facts.
 
-The '# Page snapshot' YAML section of error.md is the authoritative record of the final rendered UI at the failure point. Trust it over the assertion diff's "Received" value, which can be a transient mid-flight state.
+error.md may contain SEVERAL error blocks under "# Error details" — each failed soft assertion produces its own block, and the final (terminal) block is the failure that ended the attempt. You MUST enumerate and explain EVERY block in "issues", in order. The top-level step/error/finalPageState fields describe the TERMINAL failure only.
+
+The '# Page snapshot' YAML section of error.md is the LAST-SEEN rendered UI and corresponds to the terminal failure only. Intermediate blocks (earlier soft assertions) have NO snapshot — their evidence is their own expected-vs-received diff and call log (which records the resolved page states over time). NEVER explain or validate an intermediate block by comparing it against the final page snapshot.
 
 ## Folder name
 ${folderName}
@@ -306,22 +340,26 @@ ${networkSection}
   "folder": "${folderName}",
   "testTitle": "<from failure.json>",
   "spec": "<spec file>:<line>",
-  "stepPath": ["<ordered ancestor steps down to the failing one>"],
-  "deepestFailingStep": "<the deepest/leaf failing step name>",
-  "errorVerbatim": "<the exact error line>",
-  "errorNormalized": "<short normalized form, e.g. 'timeout waiting for locator'>",
+  "stepPath": ["<ordered ancestor steps down to the TERMINAL failing one>"],
+  "deepestFailingStep": "<the deepest/leaf step of the TERMINAL failure — the one that ended the attempt>",
+  "errorVerbatim": "<the exact error line of the TERMINAL (last) error block>",
+  "errorNormalized": "<short normalized form of the terminal error, e.g. 'timeout waiting for locator'>",
   "network": [
     { "call": "<METHOD path>", "status": <code or null>, "gist": "<one line>", "relToStep": "<how this relates to the failing step, or 'none'>" }
   ],
-  "finalPageState": "<where the page ACTUALLY ended up, per the '# Page snapshot' YAML section in error.md — the final rendered UI. This may differ from the assertion diff's 'Received' value, which can be a transient mid-flight state>",
-  "transientVsFinalContradiction": "<'none' if the assertion diff's Received value agrees with the final page snapshot; otherwise ONE line describing the contradiction, e.g. 'diff Received shows Processing spinner but the # Page snapshot shows the success screen — flow completed after the soft-assertion window (latency, not a stall)'>",
-  "rootCauseHypothesis": "<your best one-sentence root cause>",
+  "issues": [
+    { "kind": "<'soft assertion' | 'hard failure' | 'timeout' | ...>", "step": "<step/screen where this block occurred, or 'unknown'>", "errorVerbatim": "<exact first error line of this block>", "explanation": "<1-2 lines explaining THIS block from its own diff/call log — for an aria-snapshot diff, name the concrete UI difference (e.g. 'unexpected Back button on the Get Ready screen')>" }
+  ],
+  "finalPageState": "<where the page ACTUALLY ended up, per the '# Page snapshot' YAML section in error.md — the LAST-SEEN rendered UI, belonging to the terminal failure. It may differ from an assertion diff's 'Received' value, which can be a transient mid-flight state>",
+  "transientVsFinalContradiction": "<compare ONLY the TERMINAL error block against the final page snapshot. 'none' if they agree or the comparison is not applicable (e.g. the terminal failure is a click/wait timeout with no expected-vs-received diff); otherwise ONE line describing the contradiction, e.g. 'diff Received shows Processing spinner but the # Page snapshot shows the success screen — flow completed after the soft-assertion window (latency, not a stall)'>",
+  "rootCauseHypothesis": "<your best one-sentence root cause for the attempt overall — usually the terminal failure; mention an intermediate issue only if it plausibly caused the terminal one>",
   "discriminators": "<CRITICAL: state precisely WHERE in the flow it broke and what would make this NOT the same as a superficially-similar failure. Name the step that PASSED just before the break, so a look-alike that breaks at a different step is distinguishable.>"
 }
 
 Rules:
 - The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
-- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". A failed SOFT assertion (expect.soft, short timeout) captures a transient mid-flight state in the diff's "Received" value, while the page snapshot records where the page actually ended up. If the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall.
+- "issues" MUST list EVERY error block in error.md, in order, including the terminal one. One block = one entry. Never merge blocks and never drop an intermediate soft-assertion block — an intermediate aria-snapshot diff is a real finding even when a later failure ended the attempt.
+- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". It reflects only the LAST-SEEN UI (the terminal failure). A failed SOFT assertion captures a transient mid-flight state in its diff's "Received" value; when the terminal block is such an assertion and the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall. For intermediate blocks, use their own diff and call-log resolved values only.
 - Do not fabricate network entries — only include what network-errors.json or failure.json actually show. If none, use an empty array.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
 };
@@ -358,6 +396,7 @@ const validateRecord = (obj: unknown): obj is UnderstandingRecord => {
   }
   if (!Array.isArray(rec.stepPath)) return false;
   if (!Array.isArray(rec.network)) return false;
+  if (!Array.isArray(rec.issues)) return false;
   return true;
 };
 
@@ -428,6 +467,7 @@ const analyzeFolder = async (
         errorVerbatim: '',
         errorNormalized: '',
         network: [],
+        issues: [],
         finalPageState: '',
         transientVsFinalContradiction: '',
         rootCauseHypothesis: '',
@@ -509,6 +549,7 @@ export const analyzeRun = async (
         errorVerbatim: '',
         errorNormalized: '',
         network: [],
+        issues: [],
         finalPageState: '',
         transientVsFinalContradiction: '',
         rootCauseHypothesis: '',

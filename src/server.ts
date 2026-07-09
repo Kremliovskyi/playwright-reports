@@ -1603,11 +1603,13 @@ app.get('/api/analysis-runs', (req: Request, res: Response): any => {
 });
 
 // Recursively sum the byte size of a directory tree (best-effort; unreadable entries are skipped).
-const dirSizeBytes = (dir: string): number => {
+// Async on purpose: a multi-GB synchronous scan blocks the event loop and stalls concurrent
+// requests (e.g. /api/report-info fired alongside /api/report-size by the Info dialog).
+const dirSizeBytes = async (dir: string): Promise<number> => {
   let total = 0;
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries = await fs.promises.readdir(dir, { withFileTypes: true });
   } catch {
     return 0;
   }
@@ -1615,9 +1617,9 @@ const dirSizeBytes = (dir: string): number => {
     const full = path.join(dir, entry.name);
     try {
       if (entry.isDirectory()) {
-        total += dirSizeBytes(full);
+        total += await dirSizeBytes(full);
       } else if (entry.isFile()) {
-        total += fs.statSync(full).size;
+        total += (await fs.promises.stat(full)).size;
       }
     } catch {
       // Skip entries that disappear or are unreadable mid-scan.
@@ -1708,7 +1710,7 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
 });
 
 // Recursive report-folder size, cached after the first calculation. Pass ?refresh=1 to recompute.
-app.get('/api/report-size', (req: Request, res: Response): any => {
+app.get('/api/report-size', async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   const reportId = typeof req.query.reportId === 'string' ? req.query.reportId : '';
   if (!reportId) return res.status(400).json({ error: 'reportId is required' });
@@ -1729,7 +1731,7 @@ app.get('/api/report-size', (req: Request, res: Response): any => {
       return res.json({ reportId, folderExists: true, sizeBytes: reportSizeCache.get(reportId), cached: true });
     }
 
-    const sizeBytes = dirSizeBytes(folder!);
+    const sizeBytes = await dirSizeBytes(folder!);
     reportSizeCache.set(reportId, sizeBytes);
     return res.json({ reportId, folderExists: true, sizeBytes, cached: false });
   } catch (error: any) {

@@ -476,6 +476,24 @@
       </div>
     </div>
 
+    <!-- Generic Error Modal -->
+    <div id="error-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 560px;">
+        <div class="modal-header">
+          <h2 id="error-modal-title">Operation failed</h2>
+          <button id="close-error-modal-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding: var(--space-4) var(--space-5);">
+          <div id="error-modal-message" class="error-modal-message"></div>
+        </div>
+        <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
+          <button id="close-error-modal-footer-btn" class="btn primary-btn">Dismiss</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Report Info Modal -->
     <div id="report-info-modal" class="modal-backdrop hidden">
       <div class="modal-content" style="max-width: 760px;">

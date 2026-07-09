@@ -356,6 +356,22 @@ p {
   margin-top: var(--space-2);
 }
 
+/* Generic error dialog body — preserves multi-line server messages (stderr, ENOSPC details) */
+.error-modal-message {
+  color: #f85149;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
 /* Modal Overlay */
 .modal-backdrop {
   position: fixed;

@@ -238,6 +238,22 @@ document.addEventListener('DOMContentLoaded', () => {
   const confirmDeleteCancelBtn = document.getElementById('confirm-delete-cancel-btn') as HTMLButtonElement;
   const confirmDeleteConfirmBtn = document.getElementById('confirm-delete-confirm-btn') as HTMLButtonElement;
 
+  const errorModal = document.getElementById('error-modal') as HTMLElement;
+  const errorModalTitle = document.getElementById('error-modal-title') as HTMLElement;
+  const errorModalMessage = document.getElementById('error-modal-message') as HTMLElement;
+  const closeErrorModalBtn = document.getElementById('close-error-modal-btn') as HTMLButtonElement;
+  const closeErrorModalFooterBtn = document.getElementById('close-error-modal-footer-btn') as HTMLButtonElement;
+
+  // Show a blocking error dialog with the full server/exception message (e.g. ENOSPC
+  // details that otherwise are only visible in the network tab).
+  const showErrorDialog = (title: string, error: unknown) => {
+      errorModalTitle.textContent = title;
+      errorModalMessage.textContent = (error instanceof Error ? error.message : String(error)) || 'Unknown error';
+      errorModal.classList.remove('hidden');
+  };
+  closeErrorModalBtn.addEventListener('click', () => errorModal.classList.add('hidden'));
+  closeErrorModalFooterBtn.addEventListener('click', () => errorModal.classList.add('hidden'));
+
   const tableContexts: Record<SectionKey, TableContext> = {
       current: {
           section: currentSection,
@@ -1287,6 +1303,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Extraction failed API call:", err);
           hideRowProgress(row, 'error', 'Extraction failed');
+          showErrorDialog('Extraction failed', err);
       }
   };
 
@@ -1340,6 +1357,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Failure analysis API call:", err);
           hideRowProgress(row, 'error', 'Analysis failed');
+          showErrorDialog('Failure analysis failed', err);
       } finally {
           if (aiEvents) aiEvents.close();
       }
@@ -1358,12 +1376,7 @@ document.addEventListener('DOMContentLoaded', () => {
               body: JSON.stringify({ reportPath })
           });
           const data = await response.json();
-          if (!response.ok) {
-              if (data.error && data.error.includes("Archive directory is not configured")) {
-                 alert("⚠️ " + data.error);
-              }
-              throw new Error(data.error);
-          }
+          if (!response.ok) throw new Error(data.error);
           hideRowProgress(row, 'success', 'Archived');
           setTimeout(() => {
               void reloadVisibleReports();
@@ -1371,6 +1384,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Archive failed API call:", err);
           hideRowProgress(row, 'error', 'Archive failed');
+          showErrorDialog('Archive failed', err);
       }
   };
   
@@ -1423,6 +1437,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Aria extraction failed:", err);
           hideRowProgress(row, 'error', 'Check failed');
+          showErrorDialog('Aria snapshot check failed', err);
       }
   };
 
@@ -1957,6 +1972,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err: any) {
           console.error("Failed to list tests for digest:", err);
           hideRowProgress(row, 'error', 'Check failed');
+          showErrorDialog('Listing report tests failed', err);
       }
   };
 

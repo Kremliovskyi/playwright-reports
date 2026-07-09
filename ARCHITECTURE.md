@@ -409,6 +409,15 @@ All single-row async actions (Extract, Archive, Fix Snapshots, Analyze Failures)
 - **Auto-Dismiss:** Success and error states auto-dismiss after 2 seconds.
 - **Helpers:** `showRowProgress(row, message)` and `hideRowProgress(row, status, message)` encapsulate the overlay lifecycle.
 
+### Generic Error Dialog
+
+Row-level failure states are deliberately terse ("Analysis failed", "Archive failed") and auto-dismiss after 2 seconds — the actual server error message (e.g. an ENOSPC disk-full failure from the `failures` CLI) used to be visible only in the browser's network tab. A shared error modal now surfaces the full message.
+
+- **Modal:** `#error-modal` in `index.html` — standard modal shell with a title and a scrollable, monospace, pre-wrap message body (`.error-modal-message`) so multi-line CLI stderr stays readable.
+- **Helper:** `showErrorDialog(title, error)` in `app.ts` sets the title, renders `error.message` (or the stringified value), and opens the modal. Close via header ✕ or footer Dismiss.
+- **Wired into every row-level catch:** Analyze Failures (`handleFailures`), Extract (`handleExtract`), Archive (`handleArchive` — this replaced an older ad-hoc `alert()`), Fix Snapshots (`handleFixAria`), and Digest test listing (`handleDigest`). The short row overlay status is kept; the dialog opens alongside it with the details.
+- **Partial AI failure is not routed here:** when the failure digest succeeds but the Copilot per-trace analysis fails (`aiError`), the message is already shown inside the Failure Analysis Result Modal ("AI analysis skipped: …").
+
 ---
 
 ## ℹ️ Report Info Dialog

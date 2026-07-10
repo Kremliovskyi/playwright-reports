@@ -306,6 +306,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
   const runTestsTooltip = document.getElementById('run-tests-tooltip') as HTMLDivElement;
 
+  // Set once the Copilot chip is wired up; lets other flows (e.g. failure analysis)
+  // refresh the chip after the server auto-replaces a stale model selection.
+  let refreshCopilotChip: (() => void) | null = null;
+
   let isProjectPathMissing = true;
   let isRunnerOpen = false;
 
@@ -488,6 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       if (copilotChip) {
           copilotChip.addEventListener('click', () => void checkCopilotStatus(true));
+          refreshCopilotChip = () => void checkCopilotStatus(false);
           void checkCopilotStatus(false);
       }
   }
@@ -1450,6 +1455,18 @@ document.addEventListener('DOMContentLoaded', () => {
           failuresModalPathValue.textContent = data.relativeRunDir || '';
           failuresModalViewLink.href = data.failuresUrl || '#';
           failuresModal.classList.remove('hidden');
+
+          // The server replaced a stale model selection with the first available one —
+          // surface the same warning dialog as the chip's load-time check and refresh the chip.
+          if (data.aiWarning) {
+              const warnModal = document.getElementById('copilot-model-warning-modal');
+              const warnMsg = document.getElementById('copilot-model-warning-message');
+              if (warnModal && warnMsg) {
+                  warnMsg.textContent = data.aiWarning;
+                  warnModal.classList.remove('hidden');
+              }
+              refreshCopilotChip?.();
+          }
       } catch (err: any) {
           console.error("Failure analysis API call:", err);
           hideRowProgress(row, 'error', 'Analysis failed');

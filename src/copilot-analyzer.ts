@@ -2,10 +2,6 @@ import fs from 'fs';
 import path from 'path';
 import { CopilotClient, approveAll } from '@github/copilot-sdk';
 
-// Model used for per-trace analysis. Override with the COPILOT_ANALYSIS_MODEL env var.
-// Must be a model id the logged-in Copilot CLI exposes (verify with client.listModels()).
-export const COPILOT_ANALYSIS_MODEL = process.env.COPILOT_ANALYSIS_MODEL || 'gpt-5.4-mini';
-
 // Per-trace timeout for the assistant response (ms).
 const PER_TRACE_TIMEOUT_MS = 180000;
 

@@ -8,7 +8,7 @@ import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
 import MarkdownIt from 'markdown-it';
 import { randomUUID } from 'node:crypto';
-import { analyzeRun, isAnalyzableEntry, copilotPreflight, COPILOT_ANALYSIS_MODEL, AnalyzeRunSummary } from './copilot-analyzer';
+import { analyzeRun, isAnalyzableEntry, copilotPreflight, AnalyzeRunSummary } from './copilot-analyzer';
 
 const jiti = createJiti(__filename, { moduleCache: false });
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
@@ -829,12 +829,27 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       }
 
       // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
+      // The model is resolved exactly like the header Copilot chip: the persisted selection when
+      // still available, otherwise the first available model (auto-persisted). A replaced stale
+      // selection is reported via aiWarning so the UI can show the warning dialog.
       let aiSummary: AnalyzeRunSummary | null = null;
       let aiError: string | null = null;
+      let aiWarning: string | null = null;
       try {
+        const preflight = await copilotPreflight(appConfig.copilotModel, appConfig.copilotToken || undefined);
+        if (!preflight.ok) throw new Error(preflight.error || 'Copilot is not available.');
+        let analysisModel = appConfig.copilotModel;
+        if (!analysisModel || !preflight.modelAvailable) {
+          const fallback = preflight.availableModels[0];
+          if (analysisModel) {
+            aiWarning = `Model "${analysisModel}" is no longer available. "${fallback}" (first in the list) has been selected instead. If you want to select another model, click the Copilot button.`;
+          }
+          updateConfig({ ...appConfig, copilotModel: fallback });
+          refreshConfigCache();
+          analysisModel = fallback;
+        }
         const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
         broadcastJson('failure-analysis', { phase: 'start', total: analyzableTotal });
-        const analysisModel = appConfig.copilotModel || COPILOT_ANALYSIS_MODEL;
         aiSummary = await analyzeRun(manifest.runDir, manifest, analysisModel, (p) => {
           broadcastJson('failure-analysis', { phase: 'progress', ...p });
         }, appConfig.copilotToken || undefined);
@@ -853,7 +868,8 @@ app.post('/api/failures', (req: Request, res: Response): any => {
         failuresUrl,
         manifest,
         ai: aiSummary,
-        aiError
+        aiError,
+        aiWarning
       });
     });
 

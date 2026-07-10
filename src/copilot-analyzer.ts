@@ -261,10 +261,13 @@ const NOT_AUTHENTICATED_MESSAGE =
 const createClient = (token?: string): CopilotClient =>
   token && token.trim() ? new CopilotClient({ gitHubToken: token.trim() }) : new CopilotClient();
 
-// Verify the host's Copilot CLI is authenticated and the configured model is available.
+// Verify the host's Copilot CLI is authenticated and list the available models.
 // Used by the /api/copilot-status endpoint for a proactive UI check.
+// `model` is the currently selected model (may be '' when nothing is selected yet);
+// its availability is reported via `modelAvailable` but does not fail the preflight —
+// the UI resolves an unavailable/missing selection against `availableModels`.
 export const copilotPreflight = async (
-  model: string = COPILOT_ANALYSIS_MODEL,
+  model: string = '',
   token?: string
 ): Promise<CopilotPreflightResult> => {
   const client = createClient(token);
@@ -272,13 +275,13 @@ export const copilotPreflight = async (
     await client.start();
     const auth = await client.getAuthStatus();
     const availableModels = (await client.listModels()).map((m) => m.id);
-    const modelAvailable = availableModels.includes(model);
-    const ok = auth.isAuthenticated && modelAvailable;
+    const modelAvailable = !!model && availableModels.includes(model);
+    const ok = auth.isAuthenticated && availableModels.length > 0;
     let error: string | undefined;
     if (!auth.isAuthenticated) {
       error = NOT_AUTHENTICATED_MESSAGE;
-    } else if (!modelAvailable) {
-      error = `Model "${model}" is not available. Available: ${availableModels.join(', ')}`;
+    } else if (!availableModels.length) {
+      error = 'No Copilot models are available for this account.';
     }
     return {
       ok,

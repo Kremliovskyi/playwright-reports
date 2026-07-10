@@ -30,6 +30,7 @@
 - **📸 Aria Snapshot Fixer:** Review failed `toMatchAriaSnapshot` assertions directly from the UI. Preview Playwright's evaluated DOM diffs in full-screen, toggle deep-equal validation, and apply fixes back to your codebase with one click.
 - **📦 Trace Extraction:** Extract `.zip` trace files from any individual report with a single click—perfect for feeding raw DOM/Network data to AI agents.
 - **🧪 Failure Analysis:** Run the `playwright-traces-reader` `failures` command on any current report with a single click. Results are written to a `tmp` folder inside your Current Reports Directory as self-contained per-failure folders ready for AI agents, with a live row progress bar that handles slow (antivirus-scanned or large) reports gracefully. Each analyzable failure also gets an AI-generated `ai-analysis.md` — a distilled per-failure understanding record written next to `error.md`.
+- **🤖 Copilot Status & Model Picker:** A header chip continuously shows whether the Copilot SDK is authenticated and which model is active. Clicking it re-checks the status and opens a model selection dialog listing every model available to your account; the chosen model is persisted and used for all AI failure analyses. If a previously selected model disappears, the first available model is auto-selected and a warning dialog lets you know.
 - **🔍 Selective Trace Digestion:** Open a dedicated test selector modal on any report to parse individual test traces selectively on-demand. Saves resources and context tokens by producing structured chronological step trees and network NDJSON files for targeted reasoning (e.g., enabling AI agents to trace all network traffic and automatically generate `k6` load tests).
 - **☑️ Bulk Selection Controls:** Each Current and Archived row now includes a checkbox, with table-level `Select All` and `Select None` controls for fast curation.
 - **🧰 Contextual Bulk Actions:** When one or more rows are selected, the table reveals bulk actions for the selected set. Current reports support bulk archive and delete; Archived reports support bulk delete.
@@ -38,7 +39,7 @@
 - **🗑️ Delete Reports:** Delete obsolete or unwanted reports from either the Current or Archived folder with a single click and confirmed via a custom dialog.
 - **✏️ Rename Reports:** Rename a report's origin label directly from the dashboard. The underlying folder on disk and the database record are updated atomically.
 - **📝 Editable Metadata:** Add custom labels (like 'UAT NA', 'Sprint 24') to any report. Metadata is persisted in the database and follows the report if it's archived.
-- **⚙️ Centralized Configuration:** Manage all your workspace paths, BrowserStack credentials, and persistent runner options through a tabbed Preferences UI.
+- **⚙️ Centralized Configuration:** Manage all your workspace paths, BrowserStack credentials, Copilot settings, and persistent runner options through a tabbed Preferences UI.
 - **📓 Vault Viewer:** Browse and edit Obsidian-style Markdown analysis files directly from the dashboard. Files are rendered server-side with `markdown-it` and matched to reports by filename. Current reports' analysis files live in the configured vault directory; archived reports' analysis files are automatically moved to an `analysis/` subdirectory inside the archive path for quick access from the report's Info dialog.
 - **ℹ️ Report Info Dialog:** Every report row has an always-on **Info** button that opens a dialog showing the report's size on disk (calculated once, then cached), a card per analysis run, and a card per saved trace digest. Each run lists its failure-analysis output directory and its mapped analysis `.md` file, with copy (button + right-click), open links, and independent delete buttons. Deleting an output directory keeps the analysis file mapped; deleting the analysis file removes the note. The **Digests** section lists every digested test trace for the report with its on-disk directory, a copy/open (`digest.json`) action, and a delete button that removes the digest folder from disk.
 - **🗄️ Persistent Database:** All report metadata, configuration, and presets are stored in a local **SQLite** database (`app.db`), ensuring your data is safe and searchable.
@@ -87,9 +88,20 @@ When you first launch the app, you'll need to configure your workspaces:
      - **BrowserStack Username:** Your BrowserStack username.
      - **BrowserStack Access Key:** Your access key (stored as password field).
      - **BrowserStack Config:** Config filename relative to the project root (e.g., `browserstack.falcons.yml`).
+   - **Copilot tab** — Configure AI failure analysis:
+     - **GitHub Token:** (Optional) Token used to authenticate the Copilot SDK. If left blank, the dashboard falls back to the host's Copilot CLI / GitHub CLI login.
 3. Click **Save Changes**. The dashboard will instantly scan the directories and display any valid reports.
 
 > **Note:** Configuration and Presets are stored in a local **SQLite** database (`app.db`), ensuring high reliability and zero-configuration data management.
+
+### Copilot Model Selection
+
+The header **Copilot** chip (next to Run Tests) shows the current Copilot status and the active analysis model (`Copilot: <model>`).
+
+- **Automatic check:** On dashboard load, the chip verifies that the Copilot SDK is authenticated and that models are available. With no previous selection, the first available model is selected automatically.
+- **Pick a model:** Click the chip to re-check the status and open the **Select Copilot Model** dialog. It lists every model available to your account in a scrollable list, with the current selection highlighted. Clicking a model saves it immediately — it is used for all subsequent AI failure analyses.
+- **Errors:** If Copilot is not authenticated (or no models are available), clicking the chip opens an error dialog with the details instead.
+- **Unavailable model recovery:** If your previously selected model is no longer offered, the first model in the list is selected automatically and a warning dialog explains the switch — click the Copilot chip to pick a different one.
 
 ---
 
@@ -174,6 +186,7 @@ Digest a report's failing tests into self-contained, agent-ready folders without
 - Open the **⋯** overflow menu on any current report and click **Analyze Failures**.
 - The dashboard runs the installed `@andrii_kremlovskyi/playwright-traces-reader` `failures` command against the report and writes the results to a `tmp` directory inside your **Current Reports Directory** (e.g. `<currentPath>/tmp/run-<timestamp>/`).
 - Each run produces one folder per failed attempt — including retries — with `failure.json`, screenshots, network/console errors, an `error.md`, and an AI-generated `ai-analysis.md` (a distilled per-failure understanding record, written for each analyzable failure), plus an `index.json` manifest.
+- The AI analysis uses the model selected via the header **Copilot** chip (see Copilot Model Selection above).
 - The action reuses the per-row progress bar. Because the command can be slow on machines with aggressive antivirus scanning or very large reports, the spinner stays active until the analysis finishes.
 - **Completion Dialog:** On completion, a new dialog pops up displaying the workspace output folder path, a **"Copy Relative Path"** button, and a **"View index.json"** link to inspect the failures manifest directly.
 

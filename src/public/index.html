@@ -545,6 +545,43 @@
       </div>
     </div>
 
+    <!-- Copilot Model Selection Modal -->
+    <div id="copilot-models-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 480px;">
+        <div class="modal-header">
+          <h2>Select Copilot Model</h2>
+          <button id="close-copilot-models-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding: var(--space-4) var(--space-5);">
+          <p class="form-hint" style="margin-bottom: 1rem;">Click a model to use it for AI failure analysis. The selection is saved immediately.</p>
+          <div id="copilot-models-list" class="copilot-models-list" role="listbox" aria-label="Available Copilot models"></div>
+        </div>
+        <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
+          <button id="close-copilot-models-footer-btn" class="btn secondary-btn">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Copilot Model Unavailable Warning Modal -->
+    <div id="copilot-model-warning-modal" class="modal-backdrop hidden">
+      <div class="modal-content" style="max-width: 520px;">
+        <div class="modal-header">
+          <h2>Copilot Model Unavailable</h2>
+          <button id="close-copilot-model-warning-btn" class="icon-btn" aria-label="Close">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="modal-body" style="padding: var(--space-4) var(--space-5);">
+          <div id="copilot-model-warning-message" class="copilot-model-warning-message"></div>
+        </div>
+        <div class="modal-footer" style="padding: var(--space-3) var(--space-4);">
+          <button id="close-copilot-model-warning-footer-btn" class="btn primary-btn">OK</button>
+        </div>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

@@ -364,35 +364,131 @@ document.addEventListener('DOMContentLoaded', () => {
           .then(data => updateRunTestsBtnForProjectPath(data.projectPath || ''))
           .catch(() => updateRunTestsBtnForProjectPath(''));
 
-      // Copilot status chip — preflight check (auth + configured model availability)
+      // Copilot status chip — preflight check (auth + model list) and model selection dialog
       const copilotChip = document.getElementById('copilot-status-chip') as HTMLButtonElement | null;
       const copilotChipText = document.getElementById('copilot-status-text');
-      const checkCopilotStatus = async () => {
+      const copilotModelsModal = document.getElementById('copilot-models-modal') as HTMLElement;
+      const copilotModelsList = document.getElementById('copilot-models-list') as HTMLElement;
+      const closeCopilotModelsBtn = document.getElementById('close-copilot-models-btn') as HTMLButtonElement;
+      const closeCopilotModelsFooterBtn = document.getElementById('close-copilot-models-footer-btn') as HTMLButtonElement;
+      const copilotModelWarningModal = document.getElementById('copilot-model-warning-modal') as HTMLElement;
+      const copilotModelWarningMessage = document.getElementById('copilot-model-warning-message') as HTMLElement;
+      const closeCopilotModelWarningBtn = document.getElementById('close-copilot-model-warning-btn') as HTMLButtonElement;
+      const closeCopilotModelWarningFooterBtn = document.getElementById('close-copilot-model-warning-footer-btn') as HTMLButtonElement;
+
+      interface CopilotStatus {
+          ok: boolean;
+          authenticated: boolean;
+          login?: string;
+          authType?: string;
+          model: string;
+          modelAvailable: boolean;
+          availableModels: string[];
+          error?: string;
+      }
+
+      const COPILOT_MODEL_CHECK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check copilot-model-check"><path d="M20 6 9 17l-5-5"/></svg>';
+
+      closeCopilotModelsBtn.addEventListener('click', () => copilotModelsModal.classList.add('hidden'));
+      closeCopilotModelsFooterBtn.addEventListener('click', () => copilotModelsModal.classList.add('hidden'));
+      closeCopilotModelWarningBtn.addEventListener('click', () => copilotModelWarningModal.classList.add('hidden'));
+      closeCopilotModelWarningFooterBtn.addEventListener('click', () => copilotModelWarningModal.classList.add('hidden'));
+
+      const setCopilotChipOk = (status: CopilotStatus, model: string) => {
+          if (!copilotChip || !copilotChipText) return;
+          copilotChip.className = 'copilot-status-chip ok';
+          copilotChipText.textContent = `Copilot: ${model}`;
+          copilotChip.title = `Authenticated as ${status.login || 'user'} (${status.authType || 'user'}). Model "${model}" selected. Click to choose a model.`;
+      };
+
+      // Persist the selected analysis model into the config table.
+      const saveCopilotModel = async (model: string): Promise<boolean> => {
+          try {
+              const res = await fetch('/api/config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ copilotModel: model })
+              });
+              return res.ok;
+          } catch {
+              return false;
+          }
+      };
+
+      const renderCopilotModelsList = (status: CopilotStatus, selectedModel: string) => {
+          copilotModelsList.innerHTML = '';
+          for (const model of status.availableModels) {
+              const item = document.createElement('button');
+              item.type = 'button';
+              item.className = 'copilot-model-item' + (model === selectedModel ? ' selected' : '');
+              item.setAttribute('role', 'option');
+              item.setAttribute('aria-selected', String(model === selectedModel));
+              const label = document.createElement('span');
+              label.textContent = model;
+              item.appendChild(label);
+              item.insertAdjacentHTML('beforeend', COPILOT_MODEL_CHECK_SVG);
+              item.addEventListener('click', async () => {
+                  const saved = await saveCopilotModel(model);
+                  if (!saved) {
+                      showErrorDialog('Failed to save model selection', `Could not save "${model}" to the configuration. Please try again.`);
+                      return;
+                  }
+                  copilotModelsList.querySelectorAll('.copilot-model-item').forEach(el => {
+                      el.classList.toggle('selected', el === item);
+                      el.setAttribute('aria-selected', String(el === item));
+                  });
+                  setCopilotChipOk(status, model);
+                  copilotModelsModal.classList.add('hidden');
+              });
+              copilotModelsList.appendChild(item);
+          }
+      };
+
+      // interactive = true when triggered by a chip click: failures open an error dialog and
+      // success opens the model selection dialog. The automatic check on page load only updates
+      // the chip — except when the previously selected model has vanished, which pops a warning.
+      const checkCopilotStatus = async (interactive: boolean) => {
           if (!copilotChip || !copilotChipText) return;
           copilotChip.className = 'copilot-status-chip checking';
           copilotChip.title = 'Checking Copilot status…';
           copilotChipText.textContent = 'Copilot…';
           try {
               const res = await fetch('/api/copilot-status');
-              const s = await res.json();
-              if (s.ok) {
-                  copilotChip.className = 'copilot-status-chip ok';
-                  copilotChipText.textContent = `Copilot: ${s.model}`;
-                  copilotChip.title = `Authenticated as ${s.login || 'user'} (${s.authType || 'user'}). Model "${s.model}" available. Click to re-check.`;
-              } else {
+              const s: CopilotStatus = await res.json();
+              if (!s.ok) {
                   copilotChip.className = 'copilot-status-chip error';
-                  copilotChipText.textContent = s.authenticated ? 'Copilot: model N/A' : 'Copilot: sign in';
+                  copilotChipText.textContent = s.authenticated ? 'Copilot: no models' : 'Copilot: sign in';
                   copilotChip.title = (s.error || 'Copilot unavailable') + ' — click to re-check.';
+                  if (interactive) showErrorDialog('Copilot is not configured', s.error || 'Copilot unavailable');
+                  return;
+              }
+              // Resolve the saved selection against the live model list. No previous selection →
+              // the first model is auto-selected; a stale selection falls back to the first model.
+              let model = s.model;
+              if (!model || !s.availableModels.includes(model)) {
+                  const fallback = s.availableModels[0];
+                  await saveCopilotModel(fallback);
+                  if (model && !interactive) {
+                      copilotModelWarningMessage.textContent = `Model "${model}" is no longer available. "${fallback}" (first in the list) has been selected instead. If you want to select another model, click the Copilot button.`;
+                      copilotModelWarningModal.classList.remove('hidden');
+                  }
+                  model = fallback;
+              }
+              setCopilotChipOk(s, model);
+              if (interactive) {
+                  renderCopilotModelsList(s, model);
+                  copilotModelsModal.classList.remove('hidden');
               }
           } catch {
               copilotChip.className = 'copilot-status-chip error';
               copilotChipText.textContent = 'Copilot: error';
               copilotChip.title = 'Failed to query Copilot status — click to re-check.';
+              if (interactive) showErrorDialog('Copilot status check failed', 'Failed to query Copilot status. Check that the dashboard server is running and try again.');
           }
       };
       if (copilotChip) {
-          copilotChip.addEventListener('click', () => void checkCopilotStatus());
-          void checkCopilotStatus();
+          copilotChip.addEventListener('click', () => void checkCopilotStatus(true));
+          void checkCopilotStatus(false);
       }
   }
 

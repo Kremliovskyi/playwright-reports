@@ -74,7 +74,7 @@ app.get('/api/config', (req: Request, res: Response) => {
 });
 
 app.post('/api/config', (req: Request, res: Response): any => {
-  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken, runnerOptions, selectedProjects } = req.body;
+  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken, copilotModel, runnerOptions, selectedProjects } = req.body;
   
   try {
     if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
@@ -92,6 +92,7 @@ app.post('/api/config', (req: Request, res: Response): any => {
       browserstackAccessKey: browserstackAccessKey !== undefined ? browserstackAccessKey.trim() : appConfig.browserstackAccessKey,
       browserstackConfig: browserstackConfig !== undefined ? browserstackConfig.trim() : appConfig.browserstackConfig,
       copilotToken: copilotToken !== undefined ? copilotToken.trim() : appConfig.copilotToken,
+      copilotModel: copilotModel !== undefined ? copilotModel.trim() : appConfig.copilotModel,
       runnerOptions: runnerOptions !== undefined ? { ...appConfig.runnerOptions, ...runnerOptions } : appConfig.runnerOptions,
       selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
@@ -737,14 +738,15 @@ app.post('/api/extract', (req: Request, res: Response): any => {
   }
 });
 
-// Copilot preflight — verifies the host Copilot CLI is authenticated and the model is available
+// Copilot preflight — verifies the host Copilot CLI is authenticated and lists available models.
+// `model` in the response is the currently selected model from config ('' when none selected).
 app.get('/api/copilot-status', async (_req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   try {
-    const status = await copilotPreflight(COPILOT_ANALYSIS_MODEL, appConfig.copilotToken || undefined);
+    const status = await copilotPreflight(appConfig.copilotModel, appConfig.copilotToken || undefined);
     res.json(status);
   } catch (error: any) {
-    res.json({ ok: false, authenticated: false, model: COPILOT_ANALYSIS_MODEL, modelAvailable: false, availableModels: [], error: error?.message || String(error) });
+    res.json({ ok: false, authenticated: false, model: appConfig.copilotModel, modelAvailable: false, availableModels: [], error: error?.message || String(error) });
   }
 });
 
@@ -832,7 +834,8 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       try {
         const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
         broadcastJson('failure-analysis', { phase: 'start', total: analyzableTotal });
-        aiSummary = await analyzeRun(manifest.runDir, manifest, COPILOT_ANALYSIS_MODEL, (p) => {
+        const analysisModel = appConfig.copilotModel || COPILOT_ANALYSIS_MODEL;
+        aiSummary = await analyzeRun(manifest.runDir, manifest, analysisModel, (p) => {
           broadcastJson('failure-analysis', { phase: 'progress', ...p });
         }, appConfig.copilotToken || undefined);
         broadcastJson('failure-analysis', { phase: 'complete', ...aiSummary });

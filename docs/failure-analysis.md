@@ -74,10 +74,22 @@ Depending on the available trace data, each failure folder can contain:
 - `error.md`
 - `ai-analysis.md`
 
-## Find previous analyses
+## Manage analysis runs
 
-Open a report's **Info** dialog to see its analysis runs and any mapped vault Markdown file. From there you can copy or open output paths and independently delete an ephemeral output directory or its analysis note.
+Every successful failure-analysis run is stored against the report's stable identity and appears under **Analysis runs** in the report's **Info** dialog. Each run can have two independently managed artifacts:
 
-Deleting output keeps the mapped note. Deleting the note removes that mapping. Archiving removes ephemeral output but preserves a mapped note in the archive.
+- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, per-attempt folders, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json`, or delete the entire output directory.
+- **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
+
+The artifacts follow this lifecycle:
+
+- **Report rename:** The analysis runs remain attached because they are keyed by the report's stable internal identity rather than its folder name.
+- **Delete output directory:** The generated `tmp/run-*` directory and all files inside it are removed. The run entry and any mapped analysis file remain available in the Info dialog.
+- **Delete analysis file:** The vault Markdown file is removed. The generated output directory remains available when it still exists. If both artifacts are gone, the empty run entry is removed as well.
+- **Archive report:** The ephemeral output directory is removed because it does not follow the report into the archive. An existing analysis file is moved to `<archivePath>/analysis/`, and its mapping remains attached to the archived report.
+- **Delete report:** The output directories, mapped analysis files, and database run records associated with that report are removed.
+- **Report removed or replaced outside the dashboard:** The next directory scan removes run records belonging to the missing report instance and prevents them from being attached to a new report that reuses the same folder name.
+
+Deleting an output directory does not change the Playwright report folder itself; analysis output lives under the Current Reports Directory's separate `tmp` folder.
 
 For one test rather than every failure in a report, use [Selective Trace Digestion](trace-digestion.md).

@@ -47,6 +47,17 @@ When started with `npm start`, the dashboard runs in the background using PM2.
 | `npm run stop` | Stop the dashboard |
 | `npm run delete` | Remove the dashboard from PM2 |
 
+## Update the application
+
+Stop the running dashboard, pull the latest changes, install any updated dependencies, and start it again:
+
+```bash
+npm run stop
+git pull
+npm i
+npm start
+```
+
 ## Start automatically after reboot
 
 ### Windows

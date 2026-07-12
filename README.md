@@ -18,7 +18,7 @@ Playwright Test Reports Central brings local Playwright workflows into one dashb
 
 - Open, search, label, archive, and delete Playwright HTML reports.
 - Run local or BrowserStack tests with saved project presets and live terminal output.
-- Analyze failed tests with `playwright-traces-reader` and GitHub Copilot.
+- Analyze failed tests with [`@andrii_kremlovskyi/playwright-traces-reader`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-traces-reader) and GitHub Copilot.
 - Digest individual traces into structured steps, network data, and console output.
 - Review and apply failed aria snapshot updates.
 - View and edit Markdown analysis notes associated with reports.

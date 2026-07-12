@@ -26,19 +26,6 @@ Playwright Test Reports Central brings local Playwright workflows into one dashb
 
 The application runs locally because it needs access to Playwright projects, report directories, SQLite, and the host filesystem.
 
-## Quick start
-
-```bash
-git clone https://github.com/Kremliovskyi/playwright-reports.git
-cd playwright-reports
-npm install
-npm start
-```
-
-Open [http://localhost:9333](http://localhost:9333), then configure the report and project paths in **Preferences**.
-
-For prerequisites, PM2 commands, and startup configuration, follow [Getting Started](docs/getting-started.md).
-
 ## Documentation
 
 | Guide | What it covers |

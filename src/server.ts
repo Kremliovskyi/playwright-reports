@@ -8,7 +8,7 @@ import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
 import MarkdownIt from 'markdown-it';
 import { randomUUID } from 'node:crypto';
-import { analyzeRun, isAnalyzableEntry, copilotPreflight, AnalyzeRunSummary } from './copilot-analyzer';
+import { analyzeRun, isAnalyzableEntry, copilotPreflight, withCopilotAnalysisClient, CopilotAnalysisError, AnalyzeRunSummary, FailureManifest } from './copilot-analyzer';
 
 const jiti = createJiti(__filename, { moduleCache: false });
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
@@ -751,65 +751,63 @@ app.get('/api/copilot-status', async (_req: Request, res: Response): Promise<any
 });
 
 // Failure digest endpoint — runs the playwright-traces-reader `failures` command
-app.post('/api/failures', (req: Request, res: Response): any => {
+app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   const { reportPath } = req.body;
   if (!reportPath) return res.status(400).json({ error: "reportPath is required" });
 
+  // Determine which base directory this report lives in (current vs archive)
+  const isArchive = reportPath.startsWith('/reports/archive/');
+  const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+  if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+
+  // Extract the report folder name from the URL path
+  // e.g. /reports/current/my-test-run/index.html -> my-test-run
+  const urlParts = reportPath.split('/');
+  if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
+  const folderName = urlParts[3];
+
+  const reportRootPath = path.join(basePath, folderName);
+  if (!fs.existsSync(reportRootPath)) {
+    return res.status(404).json({ error: "Report folder not found on disk" });
+  }
+  if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
+
+  const config = appConfig;
   try {
-    // Determine which base directory this report lives in (current vs archive)
-    const isArchive = reportPath.startsWith('/reports/archive/');
-    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
-    if (!basePath) return res.status(400).json({ error: "Base directory not configured" });
+    const result = await withCopilotAnalysisClient(config.copilotModel, config.copilotToken || undefined, async client => {
+      const outputDir = path.join(config.currentPath, 'tmp');
+      fs.mkdirSync(outputDir, { recursive: true });
 
-    // Extract the report folder name from the URL path
-    // e.g. /reports/current/my-test-run/index.html -> my-test-run
-    const urlParts = reportPath.split('/');
-    if (urlParts.length < 4) return res.status(400).json({ error: "Invalid report path format" });
-    const folderName = urlParts[3];
+      const pkgMain = require.resolve('@andrii_kremlovskyi/playwright-traces-reader');
+      const cliPath = path.join(path.dirname(pkgMain), 'cli.js');
+      broadcastJson('failure-analysis', { phase: 'digest' });
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = spawn(process.execPath, [cliPath, 'failures', reportRootPath, outputDir, '--format', 'json'], {
+          cwd: config.currentPath,
+        });
+        let commandStdout = '';
+        let commandStderr = '';
+        child.stdout.on('data', chunk => { commandStdout += chunk.toString(); });
+        child.stderr.on('data', chunk => { commandStderr += chunk.toString(); });
+        child.on('error', error => reject(new Error("Failed to start failures command: " + error.message)));
+        child.on('close', code => {
+          if (code === 0) {
+            resolve(commandStdout);
+          } else {
+            reject(new Error("Failures command failed: " + (commandStderr.trim() || commandStdout.trim() || `exit code ${code}`)));
+          }
+        });
+      });
 
-    const reportRootPath = path.join(basePath, folderName);
-    if (!fs.existsSync(reportRootPath)) {
-      return res.status(404).json({ error: "Report folder not found on disk" });
-    }
-
-    // Output goes into the Current Reports Directory + tmp dir
-    if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
-    const outputDir = path.join(appConfig.currentPath, 'tmp');
-    fs.mkdirSync(outputDir, { recursive: true });
-
-    // Resolve the installed CLI entry (dist/cli.js) next to the package main
-    const pkgMain = require.resolve('@andrii_kremlovskyi/playwright-traces-reader');
-    const cliPath = path.join(path.dirname(pkgMain), 'cli.js');
-
-    const child = spawn(process.execPath, [cliPath, 'failures', reportRootPath, outputDir, '--format', 'json'], {
-      cwd: appConfig.currentPath,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-
-    child.on('error', (err) => {
-      console.error("Failures command spawn error:", err);
-      res.status(500).json({ error: "Failed to start failures command: " + err.message });
-    });
-
-    child.on('close', async (code) => {
-      if (code !== 0) {
-        console.error("Failures command failed:", stderr || stdout);
-        return res.status(500).json({ error: "Failures command failed: " + (stderr.trim() || stdout.trim() || `exit code ${code}`) });
-      }
-
-      let manifest: any;
+      let manifest: FailureManifest;
       try {
-        manifest = JSON.parse(stdout);
+        manifest = JSON.parse(stdout) as FailureManifest;
       } catch {
-        return res.json({ success: true, output: stdout.trim(), outputDir });
+        return { success: true, output: stdout.trim(), outputDir };
       }
 
-      const relativeRunDir = path.relative(appConfig.currentPath!, manifest.runDir);
+      const relativeRunDir = path.relative(config.currentPath, manifest.runDir);
       const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
 
       // Persist this run directory against the report (one report -> many runs; never overwrite previous).
@@ -829,30 +827,14 @@ app.post('/api/failures', (req: Request, res: Response): any => {
       }
 
       // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
-      // The model is resolved exactly like the header Copilot chip: the persisted selection when
-      // still available, otherwise the first available model (auto-persisted). A replaced stale
-      // selection is reported via aiWarning so the UI can show the warning dialog.
       let aiSummary: AnalyzeRunSummary | null = null;
       let aiError: string | null = null;
-      let aiWarning: string | null = null;
       try {
-        const preflight = await copilotPreflight(appConfig.copilotModel, appConfig.copilotToken || undefined);
-        if (!preflight.ok) throw new Error(preflight.error || 'Copilot is not available.');
-        let analysisModel = appConfig.copilotModel;
-        if (!analysisModel || !preflight.modelAvailable) {
-          const fallback = preflight.availableModels[0];
-          if (analysisModel) {
-            aiWarning = `Model "${analysisModel}" is no longer available. "${fallback}" (first in the list) has been selected instead. If you want to select another model, click the Copilot button.`;
-          }
-          updateConfig({ ...appConfig, copilotModel: fallback });
-          refreshConfigCache();
-          analysisModel = fallback;
-        }
         const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
         broadcastJson('failure-analysis', { phase: 'start', total: analyzableTotal });
-        aiSummary = await analyzeRun(manifest.runDir, manifest, analysisModel, (p) => {
+        aiSummary = await analyzeRun(client, manifest.runDir, manifest, config.copilotModel, p => {
           broadcastJson('failure-analysis', { phase: 'progress', ...p });
-        }, appConfig.copilotToken || undefined);
+        });
         broadcastJson('failure-analysis', { phase: 'complete', ...aiSummary });
       } catch (err: any) {
         aiError = err?.message || String(err);
@@ -860,7 +842,7 @@ app.post('/api/failures', (req: Request, res: Response): any => {
         broadcastJson('failure-analysis', { phase: 'failed', error: aiError });
       }
 
-      res.json({
+      return {
         success: true,
         count: manifest.count ?? 0,
         runDir: manifest.runDir,
@@ -868,13 +850,16 @@ app.post('/api/failures', (req: Request, res: Response): any => {
         failuresUrl,
         manifest,
         ai: aiSummary,
-        aiError,
-        aiWarning
-      });
+        aiError
+      };
     });
-
+    res.json(result);
   } catch (error: any) {
     console.error("Failures endpoint error:", error);
+    if (error instanceof CopilotAnalysisError) {
+      const status = error.code === 'COPILOT_NOT_AUTHENTICATED' ? 401 : 409;
+      return res.status(status).json({ code: error.code, error: error.message, model: error.model });
+    }
     res.status(500).json({ error: "Failed to analyze failures: " + error.message });
   }
 });

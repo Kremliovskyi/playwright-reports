@@ -118,6 +118,22 @@ export interface CopilotPreflightResult {
   error?: string;
 }
 
+export type CopilotAnalysisErrorCode =
+  | 'COPILOT_NOT_AUTHENTICATED'
+  | 'COPILOT_NO_MODELS'
+  | 'COPILOT_MODEL_UNAVAILABLE';
+
+export class CopilotAnalysisError extends Error {
+  constructor(
+    readonly code: CopilotAnalysisErrorCode,
+    message: string,
+    readonly model: string
+  ) {
+    super(message);
+    this.name = 'CopilotAnalysisError';
+  }
+}
+
 const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
   'folder',
   'testTitle',
@@ -256,6 +272,40 @@ const NOT_AUTHENTICATED_MESSAGE =
 // takes priority over the logged-in user); otherwise the Copilot CLI login is used.
 const createClient = (token?: string): CopilotClient =>
   token && token.trim() ? new CopilotClient({ gitHubToken: token.trim() }) : new CopilotClient();
+
+export const withCopilotAnalysisClient = async <T>(
+  model: string,
+  token: string | undefined,
+  callback: (client: CopilotClient) => Promise<T>
+): Promise<T> => {
+  const client = createClient(token);
+  try {
+    await client.start();
+    const auth = await client.getAuthStatus();
+    if (!auth.isAuthenticated) {
+      throw new CopilotAnalysisError('COPILOT_NOT_AUTHENTICATED', NOT_AUTHENTICATED_MESSAGE, model);
+    }
+
+    const availableModels = (await client.listModels()).map(item => item.id);
+    if (!availableModels.length) {
+      throw new CopilotAnalysisError('COPILOT_NO_MODELS', 'No Copilot models are available for this account.', model);
+    }
+    if (!model || !availableModels.includes(model)) {
+      const message = model
+        ? `Saved Copilot model "${model}" is not available. Click the Copilot button and select another model.`
+        : 'No Copilot model is selected. Click the Copilot button and select a model.';
+      throw new CopilotAnalysisError('COPILOT_MODEL_UNAVAILABLE', message, model);
+    }
+
+    return await callback(client);
+  } finally {
+    try {
+      await client.stop();
+    } catch {
+      /* ignore stop failure */
+    }
+  }
+};
 
 // Verify the host's Copilot CLI is authenticated and list the available models.
 // Used by the /api/copilot-status endpoint for a proactive UI check.
@@ -488,30 +538,15 @@ const analyzeFolder = async (
 // --- Run-level orchestration --------------------------------------------
 
 export const analyzeRun = async (
+  client: CopilotClient,
   runDir: string,
   manifest: FailureManifest,
   model: string,
-  onProgress?: (p: AnalyzeProgress) => void,
-  token?: string
+  onProgress?: (p: AnalyzeProgress) => void
 ): Promise<AnalyzeRunSummary> => {
   const entries = (manifest.failures || []).filter(isAnalyzableEntry);
   const skipped = (manifest.failures || []).length - entries.length;
   const total = entries.length;
-
-  const client = createClient(token);
-  await client.start();
-
-  // Preflight once: fail fast with a clear message instead of N per-trace errors.
-  const auth = await client.getAuthStatus();
-  if (!auth.isAuthenticated) {
-    await client.stop();
-    throw new Error(NOT_AUTHENTICATED_MESSAGE);
-  }
-  const availableModels = (await client.listModels()).map((m) => m.id);
-  if (!availableModels.includes(model)) {
-    await client.stop();
-    throw new Error(`Model "${model}" is not available. Available: ${availableModels.join(', ')}`);
-  }
 
   let analyzed = 0;
   let failed = 0;
@@ -564,21 +599,17 @@ export const analyzeRun = async (
     }
   };
 
-  try {
-    // Bounded worker pool: a shared cursor hands out the next entry to each of the
-    // ANALYSIS_CONCURRENCY workers, which pull-and-process until the queue drains.
-    let cursor = 0;
-    const worker = async (): Promise<void> => {
-      while (cursor < entries.length) {
-        const i = cursor++;
-        await processEntry(entries[i], i + 1);
-      }
-    };
-    const workerCount = Math.min(ANALYSIS_CONCURRENCY, entries.length);
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  } finally {
-    await client.stop();
-  }
+  // Bounded worker pool: a shared cursor hands out the next entry to each of the
+  // ANALYSIS_CONCURRENCY workers, which pull-and-process until the queue drains.
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < entries.length) {
+      const i = cursor++;
+      await processEntry(entries[i], i + 1);
+    }
+  };
+  const workerCount = Math.min(ANALYSIS_CONCURRENCY, entries.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   // Each analyzable failure folder now holds an `ai-analysis.md` next to error.md.
   // index.json is left untouched (no embed, no separate records.json).

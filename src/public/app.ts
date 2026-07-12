@@ -306,10 +306,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const runTestsBtn = document.getElementById('run-tests-btn') as HTMLButtonElement;
   const runTestsTooltip = document.getElementById('run-tests-tooltip') as HTMLDivElement;
 
-  // Set once the Copilot chip is wired up; lets other flows (e.g. failure analysis)
-  // refresh the chip after the server auto-replaces a stale model selection.
-  let refreshCopilotChip: (() => void) | null = null;
-
   let isProjectPathMissing = true;
   let isRunnerOpen = false;
 
@@ -405,6 +401,13 @@ document.addEventListener('DOMContentLoaded', () => {
           copilotChip.title = `Authenticated as ${status.login || 'user'} (${status.authType || 'user'}). Model "${model}" selected. Click to choose a model.`;
       };
 
+      const setCopilotChipNeedsSelection = () => {
+          if (!copilotChip || !copilotChipText) return;
+          copilotChip.className = 'copilot-status-chip error';
+          copilotChipText.textContent = 'Copilot: select model';
+          copilotChip.title = 'The saved model is not available. Click to select a model.';
+      };
+
       // Persist the selected analysis model into the config table.
       const saveCopilotModel = async (model: string): Promise<boolean> => {
           try {
@@ -466,13 +469,23 @@ document.addEventListener('DOMContentLoaded', () => {
                   if (interactive) showErrorDialog('Copilot is not configured', s.error || 'Copilot unavailable');
                   return;
               }
-              // Resolve the saved selection against the live model list. No previous selection →
-              // the first model is auto-selected; a stale selection falls back to the first model.
+              // Automatic page load keeps the first-model fallback. Opening the picker never
+              // changes config until the user explicitly clicks a model.
               let model = s.model;
               if (!model || !s.availableModels.includes(model)) {
+                  if (interactive) {
+                      setCopilotChipNeedsSelection();
+                      renderCopilotModelsList(s, '');
+                      copilotModelsModal.classList.remove('hidden');
+                      return;
+                  }
                   const fallback = s.availableModels[0];
-                  await saveCopilotModel(fallback);
-                  if (model && !interactive) {
+                  const saved = await saveCopilotModel(fallback);
+                  if (!saved) {
+                      setCopilotChipNeedsSelection();
+                      return;
+                  }
+                  if (model) {
                       copilotModelWarningMessage.textContent = `Model "${model}" is no longer available. "${fallback}" (first in the list) has been selected instead. If you want to select another model, click the Copilot button.`;
                       copilotModelWarningModal.classList.remove('hidden');
                   }
@@ -492,7 +505,6 @@ document.addEventListener('DOMContentLoaded', () => {
       };
       if (copilotChip) {
           copilotChip.addEventListener('click', () => void checkCopilotStatus(true));
-          refreshCopilotChip = () => void checkCopilotStatus(false);
           void checkCopilotStatus(false);
       }
   }
@@ -1410,7 +1422,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logic to handle failure analysis (playwright-traces-reader `failures` + Copilot SDK per-trace records)
   const handleFailures = async (reportPath: string, row: HTMLElement) => {
-      showRowProgress(row, 'Digesting failures...');
+      showRowProgress(row, 'Checking Copilot...');
 
       // Subscribe to per-trace AI analysis progress over SSE.
       let aiEvents: EventSource | null = null;
@@ -1419,7 +1431,9 @@ document.addEventListener('DOMContentLoaded', () => {
           aiEvents.addEventListener('failure-analysis', (e: MessageEvent) => {
               try {
                   const p = JSON.parse(e.data);
-                  if (p.phase === 'start') {
+                  if (p.phase === 'digest') {
+                      showRowProgress(row, 'Digesting failures...');
+                  } else if (p.phase === 'start') {
                       showRowProgress(row, p.total > 0 ? `Analyzing 0/${p.total}...` : 'Analyzing...');
                   } else if (p.phase === 'progress' && typeof p.completed === 'number') {
                       showRowProgress(row, `Analyzing ${p.completed}/${p.total}...`);
@@ -1437,7 +1451,19 @@ document.addEventListener('DOMContentLoaded', () => {
               body: JSON.stringify({ reportPath })
           });
           const data = await response.json();
-          if (!response.ok) throw new Error(data.error);
+          if (!response.ok) {
+              if (data.code === 'COPILOT_MODEL_UNAVAILABLE') {
+                  hideRowProgress(row, 'error', 'Select a Copilot model');
+                  const warningModal = document.getElementById('copilot-model-warning-modal');
+                  const warningMessage = document.getElementById('copilot-model-warning-message');
+                  if (warningModal && warningMessage) {
+                      warningMessage.textContent = data.error || 'The saved Copilot model is not available. Click the Copilot button and select another model.';
+                      warningModal.classList.remove('hidden');
+                  }
+                  return;
+              }
+              throw new Error(data.error || 'Failure analysis failed');
+          }
           const count = data.count ?? 0;
           const label = count === 0 ? 'No failures' : `${count} failure${count === 1 ? '' : 's'}`;
           hideRowProgress(row, 'success', label);
@@ -1456,17 +1482,6 @@ document.addEventListener('DOMContentLoaded', () => {
           failuresModalViewLink.href = data.failuresUrl || '#';
           failuresModal.classList.remove('hidden');
 
-          // The server replaced a stale model selection with the first available one —
-          // surface the same warning dialog as the chip's load-time check and refresh the chip.
-          if (data.aiWarning) {
-              const warnModal = document.getElementById('copilot-model-warning-modal');
-              const warnMsg = document.getElementById('copilot-model-warning-message');
-              if (warnModal && warnMsg) {
-                  warnMsg.textContent = data.aiWarning;
-                  warnModal.classList.remove('hidden');
-              }
-              refreshCopilotChip?.();
-          }
       } catch (err: any) {
           console.error("Failure analysis API call:", err);
           hideRowProgress(row, 'error', 'Analysis failed');

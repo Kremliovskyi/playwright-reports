@@ -100,7 +100,7 @@ test('renders retries and secondary issues without inflating reconciliation', ()
   assert.doesNotMatch(markdown, /skipped__retry0/);
 });
 
-test('rejects duplicate, missing, and unknown issue references', () => {
+test('rejects duplicate and unknown issue references', () => {
   const records = [record('attempt__retry0', [softIssue, terminalIssue])];
   assert.throws(() => validateGroupingResponse({
     summary: 'Duplicate',
@@ -114,20 +114,36 @@ test('rejects duplicate, missing, and unknown issue references', () => {
   }, records), /more than once/);
 
   assert.throws(() => validateGroupingResponse({
-    summary: 'Missing',
-    problems: [{
-      title: 'Missing', error: 'error', whatHappens: 'behavior', rootCause: 'cause',
-      issueRefs: [{ folder: 'attempt__retry0', issueIndex: 1 }]
-    }]
-  }, records), /omitted 1 issue/);
-
-  assert.throws(() => validateGroupingResponse({
     summary: 'Unknown',
     problems: [{
       title: 'Unknown', error: 'error', whatHappens: 'behavior', rootCause: 'cause',
       issueRefs: [{ folder: 'attempt__retry0', issueIndex: 3 }]
     }]
   }, records), /unknown issue/);
+});
+
+test('preserves partial grouping and classifies omitted issues', () => {
+  const manifest = { count: 1, runDir: '/tmp/run-test', failures: [entry('attempt__retry0', 0, 'unexpected')] };
+  const records = [record('attempt__retry0', [softIssue, terminalIssue])];
+  const response = validateGroupingResponse({
+    summary: 'The model grouped one of two issues.',
+    problems: [{
+      title: 'Unexpected loading controls',
+      error: 'Unexpected Back button',
+      whatHappens: 'The loading screen shows an extra control.',
+      rootCause: 'The loading snapshot changed.',
+      issueRefs: [{ folder: 'attempt__retry0', issueIndex: 1 }]
+    }]
+  }, records);
+
+  assert.equal(response.problems.length, 2);
+  assert.equal(response.problems[0].title, 'Unexpected loading controls');
+  assert.deepEqual(response.problems[1].issueRefs, [{ folder: 'attempt__retry0', issueIndex: 2 }]);
+
+  const markdown = renderGroupedAnalysis('/tmp/run-test', manifest, records, response, 'small-model', 'big-model');
+  assert.match(markdown, /Unclassified - omitted by grouping model/);
+  assert.match(markdown, /The grouping response omitted required issue references/);
+  assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
 });
 
 test('places failed per-trace records in an unclassified terminal problem', () => {

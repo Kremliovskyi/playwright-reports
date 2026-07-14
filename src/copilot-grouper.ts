@@ -174,11 +174,25 @@ export const validateGroupingResponse = (
   }
 
   const missing = [...expected].filter(key => !seen.has(key));
-  if (missing.length) {
-    const first = missing[0].split('\0');
-    throw new Error(`Grouping response omitted ${missing.length} issue(s), starting with ${first[0]}#${first[1]}`);
-  }
-  return response;
+  if (!missing.length) return response;
+
+  const issueRefs = missing.map(key => {
+    const [folder, issueIndex] = key.split('\0');
+    return { folder, issueIndex: Number(issueIndex) };
+  });
+  return {
+    ...response,
+    problems: [
+      ...response.problems,
+      {
+        title: 'Unclassified - omitted by grouping model',
+        error: `${missing.length} issue${missing.length === 1 ? '' : 's'} were omitted from the grouping response.`,
+        whatHappens: 'The grouping model returned a usable partial result but did not assign these per-trace issues to a problem.',
+        rootCause: 'The grouping response omitted required issue references.',
+        issueRefs
+      }
+    ]
+  };
 };
 
 export const buildGroupingAttachments = (

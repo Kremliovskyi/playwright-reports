@@ -392,14 +392,54 @@ export const copilotModels = async (token?: string): Promise<CopilotModelsResult
 
 // --- Prompt --------------------------------------------------------------
 
+const errorDetailBlocks = (errorMd: string): string[] => {
+  const heading = errorMd.match(/^# Error details\s*$/m);
+  if (!heading?.index && heading?.index !== 0) return [];
+  const sectionStart = heading.index + heading[0].length;
+  const remainder = errorMd.slice(sectionStart);
+  const nextHeading = remainder.search(/^# (?:Page snapshot|Test source)\s*$/m);
+  const section = nextHeading === -1 ? remainder : remainder.slice(0, nextHeading);
+  return [...section.matchAll(/^```[^\n]*\n([\s\S]*?)^```\s*$/gm)].map(match => match[1].trim());
+};
+
+const failureMetadata = (failureJsonText: string): string => {
+  const failure = JSON.parse(failureJsonText) as Record<string, unknown>;
+  const sanitizeStep = (value: unknown): unknown => {
+    if (typeof value !== 'object' || value === null) return value;
+    const step = value as Record<string, unknown>;
+    const { error: _error, children, ...metadata } = step;
+    void _error;
+    return {
+      ...metadata,
+      children: Array.isArray(children) ? children.map(sanitizeStep) : []
+    };
+  };
+  return JSON.stringify({
+    schemaVersion: failure.schemaVersion,
+    testTitle: failure.testTitle,
+    title: failure.title,
+    status: failure.status,
+    outcome: failure.outcome,
+    durationMs: failure.durationMs,
+    retryIndex: failure.retryIndex,
+    traceSha1: failure.traceSha1,
+    topLevelSteps: Array.isArray(failure.topLevelSteps) ? failure.topLevelSteps.map(sanitizeStep) : [],
+    screenshots: failure.screenshots,
+    files: failure.files
+  }, null, 2);
+};
+
 const buildPrompt = (folderName: string, errorMd: string, failureJsonText: string, networkErrorsText: string | null): string => {
+  const expectedIssueCount = errorDetailBlocks(errorMd).length;
   const networkSection = networkErrorsText
     ? `\n## network-errors.json (failed/relevant requests)\n\`\`\`json\n${networkErrorsText}\n\`\`\`\n`
     : '\n## network-errors.json\n(none — there were no network errors for this attempt)\n';
 
   return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the text materials provided below. Do NOT invent facts.
 
-error.md may contain SEVERAL error blocks under "# Error details" — each failed soft assertion produces its own block, and the final (terminal) block is the failure that ended the attempt. You MUST enumerate and explain EVERY block in "issues", in order. The top-level step/error/finalPageState fields describe the TERMINAL failure only.
+error.md is the EXCLUSIVE source of failures for the "issues" array. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? '' : 's'} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? 'y' : 'ies'}, one per block and in the same order. The final block is the terminal failure that ended the attempt. The top-level step/error/finalPageState fields describe that terminal block only.
+
+The failure metadata is SUPPORTING CONTEXT ONLY. Use it only for testTitle, spec, retry metadata, and step-title ancestry. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from a manifest/failure-metadata step, parent step, action diagnostic, trace issue, source code, or network/console entry. In particular, a parent test.step can repeat a child's error and is not another issue. If evidence appears outside the fenced blocks under error.md's "# Error details", it MUST NOT appear in "issues".
 
 The '# Page snapshot' YAML section of error.md is the LAST-SEEN rendered UI and corresponds to the terminal failure only. Intermediate blocks (earlier soft assertions) have NO snapshot — their evidence is their own expected-vs-received diff and call log (which records the resolved page states over time). NEVER explain or validate an intermediate block by comparing it against the final page snapshot.
 
@@ -411,9 +451,9 @@ ${folderName}
 ${errorMd || '(error.md not present)'}
 \`\`\`
 
-## failure.json (step tree, metadata, screenshots anchors)
+## failure metadata (supporting step tree and identifiers; NOT an issue source)
 \`\`\`json
-${failureJsonText}
+${failureMetadata(failureJsonText)}
 \`\`\`
 ${networkSection}
 ## Output — return EXACTLY this JSON object and NOTHING else (no prose, no markdown fences)
@@ -439,7 +479,7 @@ ${networkSection}
 
 Rules:
 - The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
-- "issues" MUST list EVERY error block in error.md, in order, including the terminal one. One block = one entry. Never merge blocks and never drop an intermediate soft-assertion block — an intermediate aria-snapshot diff is a real finding even when a later failure ended the attempt.
+- "issues" MUST contain exactly ${expectedIssueCount} entries: every fenced error block under error.md's "# Error details", in order, including the terminal one. One block = one entry. Never merge blocks, never duplicate a block through its parent step, and never import an error from failure metadata or any other section.
 - ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". It reflects only the LAST-SEEN UI (the terminal failure). A failed SOFT assertion captures a transient mid-flight state in its diff's "Received" value; when the terminal block is such an assertion and the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall. For intermediate blocks, use their own diff and call-log resolved values only.
 - Do not fabricate network entries — only include what network-errors.json or failure.json actually show. If none, use an empty array.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
@@ -538,7 +578,7 @@ const analyzeFolder = async (
       parsed = extractJson(content);
     }
 
-    if (!validateRecord(parsed)) {
+    if (!validateRecord(parsed) || (parsed as UnderstandingRecord).issues.length !== errorDetailBlocks(errorMd).length) {
       return {
         folder: entry.folder,
         testTitle: entry.testTitle,
@@ -553,7 +593,7 @@ const analyzeFolder = async (
         transientVsFinalContradiction: '',
         rootCauseHypothesis: '',
         discriminators: '',
-        _error: 'Response did not contain a valid record',
+        _error: 'Response did not contain a valid record matching the error.md issue count',
         _raw: content.slice(0, 4000)
       };
     }

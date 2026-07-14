@@ -1905,6 +1905,30 @@ p {
   color: var(--text-muted);
 }
 
+.copilot-model-field:disabled {
+  cursor: wait;
+}
+
+.copilot-model-field.is-loading {
+  color: var(--text-secondary);
+  border-color: rgba(88, 166, 255, 0.5);
+}
+
+.copilot-model-field.is-loading svg {
+  display: none;
+}
+
+.copilot-model-field.is-loading::after {
+  content: '';
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(88, 166, 255, 0.28);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Copilot model selection dialog */
 .copilot-models-list {
   display: flex;

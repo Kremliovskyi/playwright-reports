@@ -461,7 +461,19 @@ document.addEventListener('DOMContentLoaded', () => {
           }
       };
 
+      let isLoadingCopilotModels = false;
+
       const openCopilotModelPicker = async (role: 'small' | 'big') => {
+          if (isLoadingCopilotModels) return;
+          isLoadingCopilotModels = true;
+          const field = role === 'small' ? copilotSmallModelField : copilotBigModelField;
+          const value = role === 'small' ? copilotSmallModelValue : copilotBigModelValue;
+          const previousText = value.textContent || 'Select a model';
+          field.classList.add('is-loading');
+          field.setAttribute('aria-busy', 'true');
+          value.textContent = 'Loading models...';
+          copilotSmallModelField.disabled = true;
+          copilotBigModelField.disabled = true;
           try {
               const res = await fetch('/api/copilot-models');
               const status: CopilotModelsStatus = await res.json();
@@ -477,6 +489,13 @@ document.addEventListener('DOMContentLoaded', () => {
               copilotModelsModal.classList.remove('hidden');
           } catch {
               showErrorDialog('Copilot models unavailable', 'Failed to list Copilot models. Check that the dashboard server is running and try again.');
+          } finally {
+              value.textContent = previousText;
+              field.classList.remove('is-loading');
+              field.removeAttribute('aria-busy');
+              copilotSmallModelField.disabled = false;
+              copilotBigModelField.disabled = false;
+              isLoadingCopilotModels = false;
           }
       };
 

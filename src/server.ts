@@ -1688,6 +1688,15 @@ const isWithin = (base: string, target: string): boolean => {
   return resolvedTarget === resolvedBase || resolvedTarget.startsWith(resolvedBase + path.sep);
 };
 
+const resolveGroupedAnalysisFile = (reportId: string, runName: string): string | null => {
+  const report = getReport(reportId);
+  if (!report) return null;
+  const run = getAnalysisRuns(report.uuid).find(candidate => candidate.runName === runName);
+  if (!run?.runDir || !appConfig.currentPath || !isWithin(appConfig.currentPath, run.runDir)) return null;
+  const groupedAnalysisFile = path.join(run.runDir, GROUPED_ANALYSIS_FILENAME);
+  return fs.existsSync(groupedAnalysisFile) ? groupedAnalysisFile : null;
+};
+
 // Resolve a report's physical folder on disk from its DB record.
 const resolveReportFolder = (report: ReportRecord): string | null => {
   const isArchive = report.reportPath.startsWith('/reports/archive/');
@@ -1720,14 +1729,12 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
       const runDirExists = !!rawRunDir && fs.existsSync(rawRunDir);
       const runDir = isArchived && !runDirExists ? '' : rawRunDir;
       const analysisFile = resolveVaultFile(run.runName);
-      const groupedAnalysisFile = runDirExists ? path.join(runDir, GROUPED_ANALYSIS_FILENAME) : '';
-      const groupedAnalysisExists = !!groupedAnalysisFile && fs.existsSync(groupedAnalysisFile);
+      const groupedAnalysisFile = resolveGroupedAnalysisFile(reportId, run.runName);
+      const groupedAnalysisExists = !!groupedAnalysisFile;
       let failuresUrl: string | null = null;
-      let groupedAnalysisUrl: string | null = null;
       if (runDirExists && appConfig.currentPath && isWithin(appConfig.currentPath, runDir)) {
         const relativeRunDir = path.relative(appConfig.currentPath, runDir);
         failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join('/')}/index.json`;
-        if (groupedAnalysisExists) groupedAnalysisUrl = `/reports/current/${relativeRunDir.split(path.sep).join('/')}/${GROUPED_ANALYSIS_FILENAME}`;
       }
       return {
         runName: run.runName,
@@ -1736,9 +1743,11 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
         runDirExists,
         analysisFile: analysisFile || '',
         analysisFileExists: !!analysisFile,
-        groupedAnalysisFile: groupedAnalysisExists ? groupedAnalysisFile : '',
+        groupedAnalysisFile: groupedAnalysisFile || '',
         groupedAnalysisExists,
-        groupedAnalysisUrl,
+        groupedAnalysisUrl: groupedAnalysisExists
+          ? `/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(run.runName)}`
+          : null,
         failuresUrl,
         vaultUrl: `/vault/${encodeURIComponent(run.runName)}`
       };
@@ -1986,7 +1995,7 @@ app.put('/api/vault/:filename', (req: Request, res: Response): any => {
   }
 });
 
-const renderVaultPage = (filename: string, rawContent: string): string => {
+const renderVaultPage = (filename: string, rawContent: string, saveUrl: string): string => {
   const rendered = md.render(rawContent);
   const escapedRaw = rawContent.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   return `<!DOCTYPE html>
@@ -2086,7 +2095,7 @@ const renderVaultPage = (filename: string, rawContent: string): string => {
     </div>
   </main>
   <script>
-    const filename = ${JSON.stringify(filename)};
+    const saveUrl = ${JSON.stringify(saveUrl)};
     const editBtn = document.getElementById('edit-btn');
     const saveBtn = document.getElementById('save-btn');
     const cancelBtn = document.getElementById('cancel-btn');
@@ -2122,7 +2131,7 @@ const renderVaultPage = (filename: string, rawContent: string): string => {
       saveStatus.textContent = 'Saving...';
       saveStatus.className = 'vault-status';
       try {
-        const res = await fetch('/api/vault/' + encodeURIComponent(filename), {
+        const res = await fetch(saveUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: editor.value })
@@ -2151,10 +2160,44 @@ app.get('/vault/:filename', (req: Request, res: Response): any => {
   if (!resolved) return res.status(404).send('Vault file not found');
   try {
     const content = fs.readFileSync(resolved, 'utf-8');
-    const html = renderVaultPage(filename, content);
+    const html = renderVaultPage(filename, content, `/api/vault/${encodeURIComponent(filename)}`);
     res.type('text/html').send(html);
   } catch (error: any) {
     res.status(500).send('Failed to render vault file');
+  }
+});
+
+app.get('/grouped-analysis', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const reportId = typeof req.query.reportId === 'string' ? req.query.reportId : '';
+  const runName = typeof req.query.runName === 'string' ? req.query.runName : '';
+  if (!reportId || !runName) return res.status(400).send('reportId and runName are required');
+  const resolved = resolveGroupedAnalysisFile(reportId, runName);
+  if (!resolved) return res.status(404).send('Grouped analysis file not found');
+  try {
+    const content = fs.readFileSync(resolved, 'utf-8');
+    const saveUrl = `/api/analysis-run/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(runName)}`;
+    res.type('text/html').send(renderVaultPage(GROUPED_ANALYSIS_FILENAME, content, saveUrl));
+  } catch {
+    res.status(500).send('Failed to render grouped analysis file');
+  }
+});
+
+app.put('/api/analysis-run/grouped-analysis', (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const reportId = typeof req.query.reportId === 'string' ? req.query.reportId : '';
+  const runName = typeof req.query.runName === 'string' ? req.query.runName : '';
+  const content = req.body.content;
+  if (!reportId || !runName) return res.status(400).json({ error: 'reportId and runName are required' });
+  if (typeof content !== 'string') return res.status(400).json({ error: 'content is required' });
+  const resolved = resolveGroupedAnalysisFile(reportId, runName);
+  if (!resolved) return res.status(404).json({ error: 'Grouped analysis file not found' });
+  try {
+    fs.writeFileSync(resolved, content, 'utf-8');
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('Grouped analysis save error:', error.message);
+    return res.status(500).json({ error: 'Failed to save grouped analysis file' });
   }
 });
 

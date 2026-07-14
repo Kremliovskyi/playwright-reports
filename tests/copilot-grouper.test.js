@@ -207,6 +207,10 @@ test('embeds grouping records in one tool-free big-model call and writes only a 
     assert.match(sentOptions.prompt, /"folder":"attempt__retry0"/);
     assert.match(sentOptions.prompt, /"issueIndex":1/);
     assert.match(sentOptions.prompt, /"discriminators":"Open flow passed; completion timed out\."/);
+    assert.match(sentOptions.prompt, /ancestor step names are scenario context, not standalone failure signatures/);
+    assert.match(sentOptions.prompt, /Differences only in those labels must not split issues/);
+    assert.match(sentOptions.prompt, /Do not merge solely because issues share a product, broad timeout category, missing-element category, or similar root-cause wording/);
+    assert.match(sentOptions.prompt, /Bias toward splitting when a material field conflicts or the evidence needed to compare the break points is missing/);
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
     assert.equal(fs.existsSync(path.join(runDir, 'grouped-analysis.md')), true);

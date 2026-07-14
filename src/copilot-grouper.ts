@@ -89,7 +89,9 @@ Group issue signatures in this priority order:
 4. Network correlation recorded in ai-analysis.md.
 5. Final page state.
 
-Bias toward splitting. Different deepest steps, break points, or final UI states are different problems even when surface errors look alike. Merge only when you can state a concrete identical signature. Honor every Transient vs final check: when the final state shows completion after an earlier timeout window, describe latency rather than a permanent stall.
+Test titles, manifest steps, and ancestor step names are scenario context, not standalone failure signatures. Differences only in those labels must not split issues when the exact failing operation and target, previously-passed boundary, normalized error, factual final page state, and network/transient evidence agree. Treat prose variations that describe the same observed state as equivalent.
+
+Merge across scenarios only with that positive matching evidence. Do not merge solely because issues share a product, broad timeout category, missing-element category, or similar root-cause wording. Bias toward splitting when a material field conflicts or the evidence needed to compare the break points is missing. Different deepest failing operations or targets, previously-passed boundaries, final UI states, network correlations, or transient-vs-final results are different problems even when surface errors look alike. Honor every Transient vs final check: when the final state shows completion after an earlier timeout window, describe latency rather than a permanent stall.
 
 Return EXACTLY one JSON object and no prose or markdown fences:
 {

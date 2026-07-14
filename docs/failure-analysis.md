@@ -2,20 +2,18 @@
 
 [Back to documentation](index.md) | [Previous: Managing Reports](reports.md) | [Next: Trace Digestion](trace-digestion.md)
 
-Failure analysis turns the failed attempts in a current report into compact, agent-ready folders and adds an AI-generated understanding record for each analyzable failure.
+Failure analysis turns the failed attempts in a current report into compact, agent-ready folders, adds an AI-generated understanding record for each analyzable failure, and groups those records into run-level problems.
 
 ## Before you begin
 
-The **Copilot** tab in [Preferences](configuration.md#copilot) only configures an optional GitHub token. If no token is provided, the dashboard uses the host's Copilot CLI or GitHub CLI authentication.
-
-Model selection is separate from Preferences. Click the **Copilot** chip in the dashboard header to check authentication and open the model picker. The selected model is used to generate the per-failure analysis records described below.
+Use the **Copilot** tab in [Preferences](configuration.md#copilot) to configure an optional GitHub token and select the small per-trace model and big grouping model. If no token is provided, the dashboard uses the host's Copilot CLI or GitHub CLI authentication. The header chip checks access only.
 
 ## Analyze a report
 
 1. Open the overflow menu on a current report.
 2. Click **Analyze Failures**.
 3. Keep the dashboard open while the row progress bar is active. Large reports and antivirus scanning can make this operation take time.
-4. When analysis finishes, use **Copy Relative Path** or **View index.json** in the completion dialog.
+4. When analysis finishes, use **Copy Relative Path**, **View index.json**, or **View grouped-analysis.md** in the completion dialog.
 
 The dashboard runs the installed [`@andrii_kremlovskyi/playwright-traces-reader`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-traces-reader) `failures` command and writes output below the Current Reports Directory:
 
@@ -30,6 +28,7 @@ Every failed attempt, including each retry, receives a separate folder. A genera
 ```text
 run-<timestamp>/
 |-- index.json
+|-- grouped-analysis.md
 |-- <sanitized-test-title>__retry0/
 |   |-- ai-analysis.md
 |   |-- error.md
@@ -66,6 +65,21 @@ After trace extraction, the dashboard uses the selected Copilot model to read th
 
 If Copilot cannot produce a valid record for one folder, the dashboard still writes an `ai-analysis.md` containing the model error and directs the reader to investigate the raw files. One failed AI record does not stop analysis of the other failure folders.
 
+## Grouped problem analysis
+
+After every per-attempt record finishes, the dashboard makes one additional Copilot request using the configured big model. The request attaches only:
+
+- The run's `index.json` manifest.
+- Each analyzable folder's `ai-analysis.md` file.
+
+It never sends `error.md`, `failure.json`, screenshots, console/network JSON, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
+
+Grouping prioritizes each record's discriminators and precise break point, followed by its failing step/path, normalized error and spec family, network correlation, and final page state. Every distinct issue in the records, including earlier soft assertions, must be assigned exactly once. The dashboard validates those folder-and-issue references before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
+
+`grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and a failed-attempt reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
+
+When a per-trace AI record is missing or invalid, its attempt is retained in an Unclassified problem without reading raw evidence. If the final grouping request or its validation fails, the digest and all completed `ai-analysis.md` files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
+
 Depending on the available trace data, each failure folder can contain:
 
 - `failure.json`
@@ -78,15 +92,15 @@ Depending on the available trace data, each failure folder can contain:
 
 Every successful failure-analysis run is stored against the report's stable identity and appears under **Analysis runs** in the report's **Info** dialog. Each run can have two independently managed artifacts:
 
-- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, per-attempt folders, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json`, or delete the entire output directory.
+- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
 - **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
 
 The artifacts follow this lifecycle:
 
 - **Report rename:** The analysis runs remain attached because they are keyed by the report's stable internal identity rather than its folder name.
-- **Delete output directory:** The generated `tmp/run-*` directory and all files inside it are removed. The run entry and any mapped analysis file remain available in the Info dialog.
+- **Delete output directory:** The generated `tmp/run-*` directory and all files inside it, including `grouped-analysis.md`, are removed. The run entry and any mapped vault analysis file remain available in the Info dialog.
 - **Delete analysis file:** The vault Markdown file is removed. The generated output directory remains available when it still exists. If both artifacts are gone, the empty run entry is removed as well.
-- **Archive report:** The ephemeral output directory is removed because it does not follow the report into the archive. An existing analysis file is moved to `<archivePath>/analysis/`, and its mapping remains attached to the archived report.
+- **Archive report:** The ephemeral output directory and its grouped analysis are removed because they do not follow the report into the archive. An existing vault analysis file is moved to `<archivePath>/analysis/`, and its mapping remains attached to the archived report.
 - **Delete report:** The output directories, mapped analysis files, and database run records associated with that report are removed.
 - **Report removed or replaced outside the dashboard:** The next directory scan removes run records belonging to the missing report instance and prevents them from being attached to a new report that reuses the same folder name.
 

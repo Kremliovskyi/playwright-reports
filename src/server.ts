@@ -8,7 +8,8 @@ import { createJiti } from 'jiti';
 import treeKill from 'tree-kill';
 import MarkdownIt from 'markdown-it';
 import { randomUUID } from 'node:crypto';
-import { analyzeRun, isAnalyzableEntry, copilotPreflight, withCopilotAnalysisClient, CopilotAnalysisError, AnalyzeRunSummary, FailureManifest } from './copilot-analyzer';
+import { analyzeRun, isAnalyzableEntry, copilotAccessCheck, copilotModels, withCopilotAnalysisClient, CopilotAnalysisError, AnalyzeRunSummary, FailureManifest } from './copilot-analyzer';
+import { groupRun, GROUPED_ANALYSIS_FILENAME } from './copilot-grouper';
 
 const jiti = createJiti(__filename, { moduleCache: false });
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
@@ -74,7 +75,7 @@ app.get('/api/config', (req: Request, res: Response) => {
 });
 
 app.post('/api/config', (req: Request, res: Response): any => {
-  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken, copilotModel, runnerOptions, selectedProjects } = req.body;
+  const { currentPath, archivePath, projectPath, vaultPath, browserstackUsername, browserstackAccessKey, browserstackConfig, copilotToken, copilotModel, copilotBigModel, runnerOptions, selectedProjects } = req.body;
   
   try {
     if (currentPath !== undefined && currentPath !== null) validatePath(currentPath);
@@ -93,6 +94,7 @@ app.post('/api/config', (req: Request, res: Response): any => {
       browserstackConfig: browserstackConfig !== undefined ? browserstackConfig.trim() : appConfig.browserstackConfig,
       copilotToken: copilotToken !== undefined ? copilotToken.trim() : appConfig.copilotToken,
       copilotModel: copilotModel !== undefined ? copilotModel.trim() : appConfig.copilotModel,
+      copilotBigModel: copilotBigModel !== undefined ? copilotBigModel.trim() : appConfig.copilotBigModel,
       runnerOptions: runnerOptions !== undefined ? { ...appConfig.runnerOptions, ...runnerOptions } : appConfig.runnerOptions,
       selectedProjects: selectedProjects !== undefined && Array.isArray(selectedProjects) ? selectedProjects : appConfig.selectedProjects
     };
@@ -738,16 +740,25 @@ app.post('/api/extract', (req: Request, res: Response): any => {
   }
 });
 
-// Copilot preflight — verifies the host Copilot CLI is authenticated and lists available models.
-// `model` in the response is the currently selected model from config ('' when none selected).
+// Header-chip preflight: access only. Model discovery belongs to Preferences.
 app.get('/api/copilot-status', async (_req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   try {
-    const status = await copilotPreflight(appConfig.copilotModel, appConfig.copilotToken || undefined);
+    const status = await copilotAccessCheck(appConfig.copilotToken || undefined);
     res.json(status);
   } catch (error: any) {
-    res.json({ ok: false, authenticated: false, model: appConfig.copilotModel, modelAvailable: false, availableModels: [], error: error?.message || String(error) });
+    res.json({ ok: false, authenticated: false, error: error?.message || String(error) });
   }
+});
+
+app.get('/api/copilot-models', async (_req: Request, res: Response): Promise<any> => {
+  refreshConfigCache();
+  const result = await copilotModels(appConfig.copilotToken || undefined);
+  res.json({
+    ...result,
+    smallModel: appConfig.copilotModel,
+    bigModel: appConfig.copilotBigModel
+  });
 });
 
 // Failure digest endpoint — runs the playwright-traces-reader `failures` command
@@ -775,7 +786,10 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
 
   const config = appConfig;
   try {
-    const result = await withCopilotAnalysisClient(config.copilotModel, config.copilotToken || undefined, async client => {
+    const result = await withCopilotAnalysisClient({
+      smallModel: config.copilotModel,
+      bigModel: config.copilotBigModel
+    }, config.copilotToken || undefined, async client => {
       const outputDir = path.join(config.currentPath, 'tmp');
       fs.mkdirSync(outputDir, { recursive: true });
 
@@ -829,17 +843,50 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
       // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
       let aiSummary: AnalyzeRunSummary | null = null;
       let aiError: string | null = null;
+      let grouping: { problemCount: number; fileName: string; relativePath: string; url: string } | null = null;
+      let groupingError: string | null = null;
+      let analysisRecords: Awaited<ReturnType<typeof analyzeRun>>['records'] = [];
       try {
         const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
         broadcastJson('failure-analysis', { phase: 'start', total: analyzableTotal });
-        aiSummary = await analyzeRun(client, manifest.runDir, manifest, config.copilotModel, p => {
+        const analysisResult = await analyzeRun(client, manifest.runDir, manifest, config.copilotModel, p => {
           broadcastJson('failure-analysis', { phase: 'progress', ...p });
         });
+        const { records, ...summary } = analysisResult;
+        analysisRecords = records;
+        aiSummary = summary;
         broadcastJson('failure-analysis', { phase: 'complete', ...aiSummary });
       } catch (err: any) {
         aiError = err?.message || String(err);
         console.error('AI analysis failed:', err);
         broadcastJson('failure-analysis', { phase: 'failed', error: aiError });
+      }
+
+      const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
+      if (analyzableTotal > 0 && analysisRecords.length > 0) {
+        try {
+          broadcastJson('failure-analysis', { phase: 'grouping-start' });
+          const result = await groupRun(
+            client,
+            manifest.runDir,
+            manifest,
+            analysisRecords,
+            config.copilotModel,
+            config.copilotBigModel
+          );
+          const relativePath = path.relative(config.currentPath, result.filePath).split(path.sep).join('/');
+          grouping = {
+            problemCount: result.problemCount,
+            fileName: result.fileName,
+            relativePath,
+            url: `/reports/current/${relativePath}`
+          };
+          broadcastJson('failure-analysis', { phase: 'grouping-complete', problemCount: result.problemCount });
+        } catch (err: any) {
+          groupingError = err?.message || String(err);
+          console.error('AI problem grouping failed:', err);
+          broadcastJson('failure-analysis', { phase: 'grouping-failed', error: groupingError });
+        }
       }
 
       return {
@@ -850,7 +897,9 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
         failuresUrl,
         manifest,
         ai: aiSummary,
-        aiError
+        aiError,
+        grouping,
+        groupingError
       };
     });
     res.json(result);
@@ -858,7 +907,7 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
     console.error("Failures endpoint error:", error);
     if (error instanceof CopilotAnalysisError) {
       const status = error.code === 'COPILOT_NOT_AUTHENTICATED' ? 401 : 409;
-      return res.status(status).json({ code: error.code, error: error.message, model: error.model });
+      return res.status(status).json({ code: error.code, error: error.message, model: error.model, modelRole: error.modelRole });
     }
     res.status(500).json({ error: "Failed to analyze failures: " + error.message });
   }
@@ -1671,10 +1720,14 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
       const runDirExists = !!rawRunDir && fs.existsSync(rawRunDir);
       const runDir = isArchived && !runDirExists ? '' : rawRunDir;
       const analysisFile = resolveVaultFile(run.runName);
+      const groupedAnalysisFile = runDirExists ? path.join(runDir, GROUPED_ANALYSIS_FILENAME) : '';
+      const groupedAnalysisExists = !!groupedAnalysisFile && fs.existsSync(groupedAnalysisFile);
       let failuresUrl: string | null = null;
+      let groupedAnalysisUrl: string | null = null;
       if (runDirExists && appConfig.currentPath && isWithin(appConfig.currentPath, runDir)) {
         const relativeRunDir = path.relative(appConfig.currentPath, runDir);
         failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join('/')}/index.json`;
+        if (groupedAnalysisExists) groupedAnalysisUrl = `/reports/current/${relativeRunDir.split(path.sep).join('/')}/${GROUPED_ANALYSIS_FILENAME}`;
       }
       return {
         runName: run.runName,
@@ -1683,6 +1736,9 @@ app.get('/api/report-info', (req: Request, res: Response): any => {
         runDirExists,
         analysisFile: analysisFile || '',
         analysisFileExists: !!analysisFile,
+        groupedAnalysisFile: groupedAnalysisExists ? groupedAnalysisFile : '',
+        groupedAnalysisExists,
+        groupedAnalysisUrl,
         failuresUrl,
         vaultUrl: `/vault/${encodeURIComponent(run.runName)}`
       };

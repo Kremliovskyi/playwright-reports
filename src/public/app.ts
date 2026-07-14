@@ -163,7 +163,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const browserstackKeyInput = document.getElementById('browserstack-key-input') as HTMLInputElement;
   const browserstackConfigInput = document.getElementById('browserstack-config-input') as HTMLInputElement;
   const copilotTokenInput = document.getElementById('copilot-token-input') as HTMLInputElement;
+    const copilotSmallModelField = document.getElementById('copilot-small-model-field') as HTMLButtonElement;
+    const copilotSmallModelValue = document.getElementById('copilot-small-model-value') as HTMLElement;
+    const copilotBigModelField = document.getElementById('copilot-big-model-field') as HTMLButtonElement;
+    const copilotBigModelValue = document.getElementById('copilot-big-model-value') as HTMLElement;
   const modalError = document.getElementById('modal-error') as HTMLElement;
+
+    const setCopilotModelFieldValue = (role: 'small' | 'big', model: string) => {
+            const field = role === 'small' ? copilotSmallModelField : copilotBigModelField;
+            const value = role === 'small' ? copilotSmallModelValue : copilotBigModelValue;
+            value.textContent = model || 'Select a model';
+            field.classList.toggle('is-missing', !model);
+    };
 
   // Tab switching in preferences modal
   const modalTabs = settingsModal.querySelectorAll('.modal-tab') as NodeListOf<HTMLButtonElement>;
@@ -221,6 +232,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const failuresModalPathValue = document.getElementById('failures-modal-path-value') as HTMLElement;
   const failuresModalCopyBtn = document.getElementById('failures-modal-copy-btn') as HTMLButtonElement;
   const failuresModalViewLink = document.getElementById('failures-modal-view-link') as HTMLAnchorElement;
+    const failuresModalGroupedLink = document.getElementById('failures-modal-grouped-link') as HTMLAnchorElement;
 
   const reportInfoModal = document.getElementById('report-info-modal') as HTMLElement;
   const closeReportInfoModalBtn = document.getElementById('close-report-info-modal-btn') as HTMLButtonElement;
@@ -364,10 +376,12 @@ document.addEventListener('DOMContentLoaded', () => {
           .then(data => updateRunTestsBtnForProjectPath(data.projectPath || ''))
           .catch(() => updateRunTestsBtnForProjectPath(''));
 
-      // Copilot status chip — preflight check (auth + model list) and model selection dialog
+    // Copilot status chip checks access only. Model selection lives in Preferences.
       const copilotChip = document.getElementById('copilot-status-chip') as HTMLButtonElement | null;
       const copilotChipText = document.getElementById('copilot-status-text');
       const copilotModelsModal = document.getElementById('copilot-models-modal') as HTMLElement;
+    const copilotModelsTitle = document.getElementById('copilot-models-title') as HTMLElement;
+    const copilotModelsHint = document.getElementById('copilot-models-hint') as HTMLElement;
       const copilotModelsList = document.getElementById('copilot-models-list') as HTMLElement;
       const closeCopilotModelsBtn = document.getElementById('close-copilot-models-btn') as HTMLButtonElement;
       const closeCopilotModelsFooterBtn = document.getElementById('close-copilot-models-footer-btn') as HTMLButtonElement;
@@ -381,10 +395,13 @@ document.addEventListener('DOMContentLoaded', () => {
           authenticated: boolean;
           login?: string;
           authType?: string;
-          model: string;
-          modelAvailable: boolean;
-          availableModels: string[];
           error?: string;
+      }
+
+      interface CopilotModelsStatus extends CopilotStatus {
+          availableModels: string[];
+          smallModel: string;
+          bigModel: string;
       }
 
       const COPILOT_MODEL_CHECK_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check copilot-model-check"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -394,27 +411,19 @@ document.addEventListener('DOMContentLoaded', () => {
       closeCopilotModelWarningBtn.addEventListener('click', () => copilotModelWarningModal.classList.add('hidden'));
       closeCopilotModelWarningFooterBtn.addEventListener('click', () => copilotModelWarningModal.classList.add('hidden'));
 
-      const setCopilotChipOk = (status: CopilotStatus, model: string) => {
+      const setCopilotChipOk = (status: CopilotStatus) => {
           if (!copilotChip || !copilotChipText) return;
           copilotChip.className = 'copilot-status-chip ok';
-          copilotChipText.textContent = `Copilot: ${model}`;
-          copilotChip.title = `Authenticated as ${status.login || 'user'} (${status.authType || 'user'}). Model "${model}" selected. Click to choose a model.`;
+          copilotChipText.textContent = 'Copilot: ready';
+          copilotChip.title = `Authenticated as ${status.login || 'user'} (${status.authType || 'user'}). Click to re-check access.`;
       };
 
-      const setCopilotChipNeedsSelection = () => {
-          if (!copilotChip || !copilotChipText) return;
-          copilotChip.className = 'copilot-status-chip error';
-          copilotChipText.textContent = 'Copilot: select model';
-          copilotChip.title = 'The saved model is not available. Click to select a model.';
-      };
-
-      // Persist the selected analysis model into the config table.
-      const saveCopilotModel = async (model: string): Promise<boolean> => {
+      const saveCopilotModel = async (role: 'small' | 'big', model: string): Promise<boolean> => {
           try {
               const res = await fetch('/api/config', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ copilotModel: model })
+                  body: JSON.stringify(role === 'small' ? { copilotModel: model } : { copilotBigModel: model })
               });
               return res.ok;
           } catch {
@@ -422,7 +431,8 @@ document.addEventListener('DOMContentLoaded', () => {
           }
       };
 
-      const renderCopilotModelsList = (status: CopilotStatus, selectedModel: string) => {
+      const renderCopilotModelsList = (status: CopilotModelsStatus, role: 'small' | 'big') => {
+          const selectedModel = role === 'small' ? status.smallModel : status.bigModel;
           copilotModelsList.innerHTML = '';
           for (const model of status.availableModels) {
               const item = document.createElement('button');
@@ -435,7 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
               item.appendChild(label);
               item.insertAdjacentHTML('beforeend', COPILOT_MODEL_CHECK_SVG);
               item.addEventListener('click', async () => {
-                  const saved = await saveCopilotModel(model);
+                  const saved = await saveCopilotModel(role, model);
                   if (!saved) {
                       showErrorDialog('Failed to save model selection', `Could not save "${model}" to the configuration. Please try again.`);
                       return;
@@ -444,16 +454,35 @@ document.addEventListener('DOMContentLoaded', () => {
                       el.classList.toggle('selected', el === item);
                       el.setAttribute('aria-selected', String(el === item));
                   });
-                  setCopilotChipOk(status, model);
+                  setCopilotModelFieldValue(role, model);
                   copilotModelsModal.classList.add('hidden');
               });
               copilotModelsList.appendChild(item);
           }
       };
 
-      // interactive = true when triggered by a chip click: failures open an error dialog and
-      // success opens the model selection dialog. The automatic check on page load only updates
-      // the chip — except when the previously selected model has vanished, which pops a warning.
+      const openCopilotModelPicker = async (role: 'small' | 'big') => {
+          try {
+              const res = await fetch('/api/copilot-models');
+              const status: CopilotModelsStatus = await res.json();
+              if (!status.ok) {
+                  showErrorDialog('Copilot models unavailable', status.error || 'No Copilot models are available.');
+                  return;
+              }
+              copilotModelsTitle.textContent = role === 'small' ? 'Select Small Model' : 'Select Big Model';
+              copilotModelsHint.textContent = role === 'small'
+                  ? 'This model creates each per-attempt AI record. The selection is saved immediately.'
+                  : 'This model groups all AI records into problems. The selection is saved immediately.';
+              renderCopilotModelsList(status, role);
+              copilotModelsModal.classList.remove('hidden');
+          } catch {
+              showErrorDialog('Copilot models unavailable', 'Failed to list Copilot models. Check that the dashboard server is running and try again.');
+          }
+      };
+
+      copilotSmallModelField.addEventListener('click', () => void openCopilotModelPicker('small'));
+      copilotBigModelField.addEventListener('click', () => void openCopilotModelPicker('big'));
+
       const checkCopilotStatus = async (interactive: boolean) => {
           if (!copilotChip || !copilotChipText) return;
           copilotChip.className = 'copilot-status-chip checking';
@@ -464,38 +493,12 @@ document.addEventListener('DOMContentLoaded', () => {
               const s: CopilotStatus = await res.json();
               if (!s.ok) {
                   copilotChip.className = 'copilot-status-chip error';
-                  copilotChipText.textContent = s.authenticated ? 'Copilot: no models' : 'Copilot: sign in';
-                  copilotChip.title = (s.error || 'Copilot unavailable') + ' — click to re-check.';
+                  copilotChipText.textContent = s.authenticated ? 'Copilot: error' : 'Copilot: sign in';
+                  copilotChip.title = (s.error || 'Copilot unavailable') + ' Click to re-check.';
                   if (interactive) showErrorDialog('Copilot is not configured', s.error || 'Copilot unavailable');
                   return;
               }
-              // Automatic page load keeps the first-model fallback. Opening the picker never
-              // changes config until the user explicitly clicks a model.
-              let model = s.model;
-              if (!model || !s.availableModels.includes(model)) {
-                  if (interactive) {
-                      setCopilotChipNeedsSelection();
-                      renderCopilotModelsList(s, '');
-                      copilotModelsModal.classList.remove('hidden');
-                      return;
-                  }
-                  const fallback = s.availableModels[0];
-                  const saved = await saveCopilotModel(fallback);
-                  if (!saved) {
-                      setCopilotChipNeedsSelection();
-                      return;
-                  }
-                  if (model) {
-                      copilotModelWarningMessage.textContent = `Model "${model}" is no longer available. "${fallback}" (first in the list) has been selected instead. If you want to select another model, click the Copilot button.`;
-                      copilotModelWarningModal.classList.remove('hidden');
-                  }
-                  model = fallback;
-              }
-              setCopilotChipOk(s, model);
-              if (interactive) {
-                  renderCopilotModelsList(s, model);
-                  copilotModelsModal.classList.remove('hidden');
-              }
+              setCopilotChipOk(s);
           } catch {
               copilotChip.className = 'copilot-status-chip error';
               copilotChipText.textContent = 'Copilot: error';
@@ -1439,6 +1442,12 @@ document.addEventListener('DOMContentLoaded', () => {
                       showRowProgress(row, `Analyzing ${p.completed}/${p.total}...`);
                   } else if (p.phase === 'complete') {
                       showRowProgress(row, 'Finalizing...');
+                  } else if (p.phase === 'grouping-start') {
+                      showRowProgress(row, 'Grouping problems...');
+                  } else if (p.phase === 'grouping-complete') {
+                      showRowProgress(row, 'Finalizing grouped analysis...');
+                  } else if (p.phase === 'grouping-failed') {
+                      showRowProgress(row, 'Finalizing with grouping warning...');
                   }
               } catch { /* ignore malformed event */ }
           });
@@ -1453,11 +1462,11 @@ document.addEventListener('DOMContentLoaded', () => {
           const data = await response.json();
           if (!response.ok) {
               if (data.code === 'COPILOT_MODEL_UNAVAILABLE') {
-                  hideRowProgress(row, 'error', 'Select a Copilot model');
+                  hideRowProgress(row, 'error', `Select ${data.modelRole || 'a'} model`);
                   const warningModal = document.getElementById('copilot-model-warning-modal');
                   const warningMessage = document.getElementById('copilot-model-warning-message');
                   if (warningModal && warningMessage) {
-                      warningMessage.textContent = data.error || 'The saved Copilot model is not available. Click the Copilot button and select another model.';
+                      warningMessage.textContent = data.error || 'A saved Copilot model is not available. Select another model in Preferences > Copilot.';
                       warningModal.classList.remove('hidden');
                   }
                   return;
@@ -1477,9 +1486,16 @@ document.addEventListener('DOMContentLoaded', () => {
           } else if (data.aiError) {
               statusText += ` AI analysis skipped: ${data.aiError}`;
           }
+          if (data.grouping) {
+              statusText += ` Grouped into ${data.grouping.problemCount} problem${data.grouping.problemCount === 1 ? '' : 's'}.`;
+          } else if (data.groupingError) {
+              statusText += ` Problem grouping failed: ${data.groupingError}`;
+          }
           failuresModalStatusText.textContent = statusText;
           failuresModalPathValue.textContent = data.relativeRunDir || '';
           failuresModalViewLink.href = data.failuresUrl || '#';
+          failuresModalGroupedLink.classList.toggle('hidden', !data.grouping?.url);
+          failuresModalGroupedLink.href = data.grouping?.url || '#';
           failuresModal.classList.remove('hidden');
 
       } catch (err: any) {
@@ -1675,6 +1691,9 @@ document.addEventListener('DOMContentLoaded', () => {
       runDirExists: boolean;
       analysisFile: string;
       analysisFileExists: boolean;
+    groupedAnalysisFile: string;
+    groupedAnalysisExists: boolean;
+    groupedAnalysisUrl: string | null;
       failuresUrl: string | null;
       vaultUrl: string;
   }
@@ -1722,7 +1741,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const trashIcon = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
 
   const renderReportInfoPathRow = (
-      kind: 'output' | 'analysis',
+      kind: 'output' | 'analysis' | 'grouped',
       runName: string,
       label: string,
       pathValue: string,
@@ -1743,6 +1762,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const openBtn = openUrl
           ? `<a class="report-info-path-action" href="${escHtml(openUrl)}" target="_blank" rel="noopener noreferrer" title="Open">${openIcon}</a>`
           : '';
+      const deleteBtn = kind === 'grouped'
+          ? ''
+          : `<button class="report-info-path-action danger" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>`;
       return `
         <div class="report-info-path-row">
           <span class="report-info-path-label">${label}</span>
@@ -1750,7 +1772,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="report-info-path-actions">
             <button class="report-info-path-action" type="button" data-action="copy" data-path="${safePath}" title="Copy path">${copyIcon}</button>
             ${openBtn}
-            <button class="report-info-path-action danger" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>
+            ${deleteBtn}
           </div>
         </div>`;
   };
@@ -1764,6 +1786,8 @@ document.addEventListener('DOMContentLoaded', () => {
           reportInfoRuns.innerHTML = runs.map(run => {
               const outputRow = renderReportInfoPathRow(
                   'output', run.runName, 'Output dir', run.runDir, run.runDirExists, run.failuresUrl, '— removed');
+              const groupedRow = renderReportInfoPathRow(
+                  'grouped', run.runName, 'Grouped analysis', run.groupedAnalysisFile, run.groupedAnalysisExists, run.groupedAnalysisUrl, 'No grouped analysis');
               const analysisRow = renderReportInfoPathRow(
                   'analysis', run.runName, 'Analysis file', run.analysisFile, run.analysisFileExists, run.analysisFileExists ? run.vaultUrl : null, 'No analysis file');
               return `
@@ -1773,6 +1797,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="report-info-run-date">${escHtml(formatDate(run.createdAt))}</span>
           </div>
           ${outputRow}
+          ${groupedRow}
           ${analysisRow}
         </div>`;
           }).join('');
@@ -2393,6 +2418,8 @@ document.addEventListener('DOMContentLoaded', () => {
           browserstackKeyInput.value = data.browserstackAccessKey || '';
           browserstackConfigInput.value = data.browserstackConfig || '';
           copilotTokenInput.value = data.copilotToken || '';
+          setCopilotModelFieldValue('small', data.copilotModel || '');
+          setCopilotModelFieldValue('big', data.copilotBigModel || '');
       } catch (err) {
           console.error("Failed to load config:", err);
       }

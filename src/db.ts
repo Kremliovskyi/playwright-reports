@@ -14,6 +14,7 @@ export interface AppConfig {
   browserstackConfig: string;
   copilotToken: string;
   copilotModel: string;
+  copilotBigModel: string;
   runnerOptions: {
     headed: boolean;
     ui: boolean;
@@ -88,6 +89,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   browserstackConfig: "",
   copilotToken: "",
   copilotModel: "",
+  copilotBigModel: "",
   runnerOptions: { ...DEFAULT_RUNNER_OPTIONS },
   selectedProjects: []
 };
@@ -152,6 +154,9 @@ if (!configColumns.some(c => c.name === 'copilotToken')) {
 }
 if (!configColumns.some(c => c.name === 'copilotModel')) {
   db.exec("ALTER TABLE config ADD COLUMN copilotModel TEXT NOT NULL DEFAULT ''");
+}
+if (!configColumns.some(c => c.name === 'copilotBigModel')) {
+  db.exec("ALTER TABLE config ADD COLUMN copilotBigModel TEXT NOT NULL DEFAULT ''");
 }
 
 // Migration: add analysis_runs table (one report -> many failure-analysis run directories)
@@ -224,14 +229,15 @@ export const getConfig = (): AppConfig => {
     browserstackConfig: row.browserstackConfig || '',
     copilotToken: row.copilotToken || '',
     copilotModel: row.copilotModel || '',
+    copilotBigModel: row.copilotBigModel || '',
     runnerOptions: JSON.parse(row.runnerOptions),
     selectedProjects: JSON.parse(row.selectedProjects)
   };
 };
 
 export const updateConfig = (config: AppConfig): void => {
-  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, browserstackConfig = ?, copilotToken = ?, copilotModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
-    .run(config.currentPath, config.archivePath, config.projectPath, config.vaultPath, config.browserstackUsername, config.browserstackAccessKey, config.browserstackConfig, config.copilotToken, config.copilotModel, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
+  db.prepare('UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, browserstackConfig = ?, copilotToken = ?, copilotModel = ?, copilotBigModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?')
+    .run(config.currentPath, config.archivePath, config.projectPath, config.vaultPath, config.browserstackUsername, config.browserstackAccessKey, config.browserstackConfig, config.copilotToken, config.copilotModel, config.copilotBigModel, JSON.stringify(config.runnerOptions), JSON.stringify(config.selectedProjects), 'default');
 };
 
 // --- Preset Operations ---

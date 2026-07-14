@@ -94,6 +94,10 @@ export interface AnalyzeRunSummary {
   analysisFileName: string;
 }
 
+export interface AnalyzeRunResult extends AnalyzeRunSummary {
+  records: UnderstandingRecord[];
+}
+
 export interface AnalyzeProgress {
   index: number;
   total: number;
@@ -106,16 +110,22 @@ export interface AnalyzeProgress {
   message?: string;
 }
 
-export interface CopilotPreflightResult {
+export interface CopilotAccessResult {
   ok: boolean;
   authenticated: boolean;
   login?: string;
   authType?: string;
   host?: string;
-  model: string;
-  modelAvailable: boolean;
-  availableModels: string[];
   error?: string;
+}
+
+export interface CopilotModelsResult extends CopilotAccessResult {
+  availableModels: string[];
+}
+
+export interface CopilotAnalysisModels {
+  smallModel: string;
+  bigModel: string;
 }
 
 export type CopilotAnalysisErrorCode =
@@ -127,7 +137,8 @@ export class CopilotAnalysisError extends Error {
   constructor(
     readonly code: CopilotAnalysisErrorCode,
     message: string,
-    readonly model: string
+    readonly model: string,
+    readonly modelRole?: 'small' | 'big'
   ) {
     super(message);
     this.name = 'CopilotAnalysisError';
@@ -274,7 +285,7 @@ const createClient = (token?: string): CopilotClient =>
   token && token.trim() ? new CopilotClient({ gitHubToken: token.trim() }) : new CopilotClient();
 
 export const withCopilotAnalysisClient = async <T>(
-  model: string,
+  models: CopilotAnalysisModels,
   token: string | undefined,
   callback: (client: CopilotClient) => Promise<T>
 ): Promise<T> => {
@@ -283,18 +294,25 @@ export const withCopilotAnalysisClient = async <T>(
     await client.start();
     const auth = await client.getAuthStatus();
     if (!auth.isAuthenticated) {
-      throw new CopilotAnalysisError('COPILOT_NOT_AUTHENTICATED', NOT_AUTHENTICATED_MESSAGE, model);
+      throw new CopilotAnalysisError('COPILOT_NOT_AUTHENTICATED', NOT_AUTHENTICATED_MESSAGE, '');
     }
 
     const availableModels = (await client.listModels()).map(item => item.id);
     if (!availableModels.length) {
-      throw new CopilotAnalysisError('COPILOT_NO_MODELS', 'No Copilot models are available for this account.', model);
+      throw new CopilotAnalysisError('COPILOT_NO_MODELS', 'No Copilot models are available for this account.', '');
     }
-    if (!model || !availableModels.includes(model)) {
-      const message = model
-        ? `Saved Copilot model "${model}" is not available. Click the Copilot button and select another model.`
-        : 'No Copilot model is selected. Click the Copilot button and select a model.';
-      throw new CopilotAnalysisError('COPILOT_MODEL_UNAVAILABLE', message, model);
+
+    const selections: Array<{ role: 'small' | 'big'; label: string; model: string }> = [
+      { role: 'small', label: 'Small model', model: models.smallModel },
+      { role: 'big', label: 'Big model', model: models.bigModel }
+    ];
+    for (const selection of selections) {
+      if (!selection.model || !availableModels.includes(selection.model)) {
+        const message = selection.model
+          ? `${selection.label} "${selection.model}" is not available. Select another model in Preferences > Copilot.`
+          : `${selection.label} is not selected. Select it in Preferences > Copilot.`;
+        throw new CopilotAnalysisError('COPILOT_MODEL_UNAVAILABLE', message, selection.model, selection.role);
+      }
     }
 
     return await callback(client);
@@ -307,45 +325,59 @@ export const withCopilotAnalysisClient = async <T>(
   }
 };
 
-// Verify the host's Copilot CLI is authenticated and list the available models.
-// Used by the /api/copilot-status endpoint for a proactive UI check.
-// `model` is the currently selected model (may be '' when nothing is selected yet);
-// its availability is reported via `modelAvailable` but does not fail the preflight —
-// the UI resolves an unavailable/missing selection against `availableModels`.
-export const copilotPreflight = async (
-  model: string = '',
-  token?: string
-): Promise<CopilotPreflightResult> => {
+// Verify that Copilot is accessible. The header status chip calls this without
+// listing or selecting models, so checking access can never mutate config.
+export const copilotAccessCheck = async (token?: string): Promise<CopilotAccessResult> => {
   const client = createClient(token);
   try {
     await client.start();
     const auth = await client.getAuthStatus();
-    const availableModels = (await client.listModels()).map((m) => m.id);
-    const modelAvailable = !!model && availableModels.includes(model);
-    const ok = auth.isAuthenticated && availableModels.length > 0;
-    let error: string | undefined;
-    if (!auth.isAuthenticated) {
-      error = NOT_AUTHENTICATED_MESSAGE;
-    } else if (!availableModels.length) {
-      error = 'No Copilot models are available for this account.';
-    }
     return {
-      ok,
+      ok: auth.isAuthenticated,
       authenticated: auth.isAuthenticated,
       login: auth.login,
       authType: auth.authType,
       host: auth.host,
-      model,
-      modelAvailable,
-      availableModels,
-      error
+      error: auth.isAuthenticated ? undefined : NOT_AUTHENTICATED_MESSAGE
     };
   } catch (err) {
     return {
       ok: false,
       authenticated: false,
-      model,
-      modelAvailable: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  } finally {
+    try {
+      await client.stop();
+    } catch {
+      /* ignore stop failure */
+    }
+  }
+};
+
+// List models only when Preferences opens a model picker.
+export const copilotModels = async (token?: string): Promise<CopilotModelsResult> => {
+  const client = createClient(token);
+  try {
+    await client.start();
+    const auth = await client.getAuthStatus();
+    if (!auth.isAuthenticated) {
+      return { ok: false, authenticated: false, availableModels: [], error: NOT_AUTHENTICATED_MESSAGE };
+    }
+    const availableModels = (await client.listModels()).map(item => item.id);
+    return {
+      ok: availableModels.length > 0,
+      authenticated: true,
+      login: auth.login,
+      authType: auth.authType,
+      host: auth.host,
+      availableModels,
+      error: availableModels.length ? undefined : 'No Copilot models are available for this account.'
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      authenticated: false,
       availableModels: [],
       error: err instanceof Error ? err.message : String(err)
     };
@@ -543,13 +575,14 @@ export const analyzeRun = async (
   manifest: FailureManifest,
   model: string,
   onProgress?: (p: AnalyzeProgress) => void
-): Promise<AnalyzeRunSummary> => {
+): Promise<AnalyzeRunResult> => {
   const entries = (manifest.failures || []).filter(isAnalyzableEntry);
   const skipped = (manifest.failures || []).length - entries.length;
   const total = entries.length;
 
   let analyzed = 0;
   let failed = 0;
+  const records: UnderstandingRecord[] = new Array(total);
 
   // Monotonic count of folders that have finished (done or error). Incremented
   // synchronously when a task completes, so the UI label advances steadily even
@@ -563,6 +596,7 @@ export const analyzeRun = async (
     onProgress?.({ index, total, folder: entry.folder, testTitle: entry.testTitle, status: 'start' });
     try {
       const record = await analyzeFolder(client as unknown as AnalyzerClient, runDir, entry, model);
+      records[index - 1] = record;
       fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(record, model), 'utf8');
       if (record._error) {
         failed++;
@@ -590,6 +624,7 @@ export const analyzeRun = async (
         discriminators: '',
         _error: message
       };
+      records[index - 1] = errorRecord;
       try {
         fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(errorRecord, model), 'utf8');
       } catch {
@@ -613,5 +648,5 @@ export const analyzeRun = async (
 
   // Each analyzable failure folder now holds an `ai-analysis.md` next to error.md.
   // index.json is left untouched (no embed, no separate records.json).
-  return { total, analyzed, failed, skipped, analysisFileName: AI_ANALYSIS_FILENAME };
+  return { total, analyzed, failed, skipped, analysisFileName: AI_ANALYSIS_FILENAME, records };
 };

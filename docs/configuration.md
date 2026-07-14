@@ -30,19 +30,26 @@ Configure these fields when tests will run on BrowserStack:
 
 The optional **GitHub Token** authenticates the Copilot SDK used for AI failure analysis. When it is empty, the dashboard falls back to the host's Copilot CLI or GitHub CLI login.
 
+Select two model roles in the same tab:
+
+| Setting | Purpose |
+| --- | --- |
+| Small model | Creates one distilled `ai-analysis.md` record for each analyzable failed attempt |
+| Big model | Groups all completed per-attempt records into `grouped-analysis.md` |
+
+Click either model field to open the shared model picker. Selecting a model saves that field immediately; the two roles are independent and may use the same model. Missing or unavailable selections are not replaced automatically.
+
 Click **Save Changes** after editing the settings. The dashboard immediately scans the configured directories and displays valid reports.
 
 Configuration, presets, and report metadata are stored in the local SQLite database `app.db`.
 
-## Select a Copilot model
+## Check Copilot access
 
-The header's **Copilot** chip shows authentication status and the active model as `Copilot: <model>`.
+The header's **Copilot** chip reports whether the dashboard can access Copilot.
 
-- On dashboard load, the chip checks authentication and lists the models available to the account.
-- With no saved selection, the first available model is selected automatically.
-- Click the chip to check the status again and open the model picker.
-- Selecting a model saves it immediately and uses it for subsequent AI failure analyses.
-- If authentication fails or no models are available, clicking the chip opens an error dialog with the details.
-- If a saved model becomes unavailable, the first available model is selected and a warning explains the change.
+- On dashboard load, the chip checks authentication and shows `Copilot: ready`, `Copilot: sign in`, or `Copilot: error`.
+- Click the chip to run the access check again.
+- The chip does not list, select, or replace models. Model selection is available only in **Preferences > Copilot**.
+- Analyze Failures validates both selected model IDs before creating an output directory. A missing or stale selection identifies the model role that needs attention.
 
 Continue with [Running Tests](running-tests.md), or go directly to [Managing Reports](reports.md) when reports already exist.

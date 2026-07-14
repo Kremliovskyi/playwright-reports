@@ -5,7 +5,6 @@ const path = require('node:path');
 const test = require('node:test');
 
 const {
-  buildGroupingAttachments,
   groupRun,
   parseGroupingResponse,
   renderGroupedAnalysis,
@@ -158,38 +157,7 @@ test('places failed per-trace records in an unclassified terminal problem', () =
   assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
 });
 
-test('attaches only index.json and analyzable ai-analysis.md files', () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-grouper-'));
-  try {
-    const manifest = {
-      count: 3,
-      runDir,
-      failures: [
-        entry('attempt__retry0', 0, 'unexpected'),
-        { ...entry('before-hooks', 0, 'unexpected'), testTitle: null, title: 'Before Hooks' },
-        { ...entry('skipped__retry0', 0, 'skipped'), outcome: 'skipped' }
-      ]
-    };
-    fs.writeFileSync(path.join(runDir, 'index.json'), JSON.stringify(manifest));
-    for (const folder of ['attempt__retry0', 'before-hooks', 'skipped__retry0']) {
-      fs.mkdirSync(path.join(runDir, folder));
-      fs.writeFileSync(path.join(runDir, folder, 'ai-analysis.md'), '# AI Analysis');
-      fs.writeFileSync(path.join(runDir, folder, 'error.md'), '# Raw error');
-      fs.writeFileSync(path.join(runDir, folder, 'failure.json'), '{}');
-    }
-
-    const attachments = buildGroupingAttachments(runDir, manifest);
-    assert.deepEqual(attachments.map(item => item.displayName), [
-      'index.json',
-      'attempt__retry0/ai-analysis.md'
-    ]);
-    assert.ok(attachments.every(item => item.path.endsWith('index.json') || item.path.endsWith('ai-analysis.md')));
-  } finally {
-    fs.rmSync(runDir, { recursive: true, force: true });
-  }
-});
-
-test('uses one tool-free big-model call and writes only a validated report', async () => {
+test('embeds grouping records in one tool-free big-model call and writes only a validated report', async () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-group-run-'));
   try {
     const manifest = { count: 1, runDir, failures: [entry('attempt__retry0', 0, 'unexpected')] };
@@ -200,7 +168,7 @@ test('uses one tool-free big-model call and writes only a validated report', asy
 
     let sessionConfig;
     let callCount = 0;
-    let sentAttachments;
+    let sentOptions;
     let disconnected = false;
     const client = {
       async createSession(config) {
@@ -208,7 +176,7 @@ test('uses one tool-free big-model call and writes only a validated report', asy
         return {
           async sendAndWait(options) {
             callCount += 1;
-            sentAttachments = options.attachments;
+            sentOptions = options;
             return {
               data: {
                 content: JSON.stringify({
@@ -234,7 +202,11 @@ test('uses one tool-free big-model call and writes only a validated report', asy
     const result = await groupRun(client, runDir, manifest, records, 'small-model', 'big-model');
     assert.deepEqual(sessionConfig, { model: 'big-model', availableTools: [] });
     assert.equal(callCount, 1);
-    assert.deepEqual(sentAttachments.map(item => item.displayName), ['index.json', 'attempt__retry0/ai-analysis.md']);
+    assert.equal(sentOptions.attachments, undefined);
+    assert.match(sentOptions.prompt, /<grouping-input-json>/);
+    assert.match(sentOptions.prompt, /"folder":"attempt__retry0"/);
+    assert.match(sentOptions.prompt, /"issueIndex":1/);
+    assert.match(sentOptions.prompt, /"discriminators":"Open flow passed; completion timed out\."/);
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
     assert.equal(fs.existsSync(path.join(runDir, 'grouped-analysis.md')), true);

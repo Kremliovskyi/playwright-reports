@@ -863,7 +863,7 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
       }
 
       const analyzableTotal = (manifest.failures || []).filter(isAnalyzableEntry).length;
-      if (analyzableTotal > 0 && analysisRecords.length > 0) {
+      if (analyzableTotal > 1 && analysisRecords.length > 0) {
         try {
           broadcastJson('failure-analysis', { phase: 'grouping-start' });
           const result = await groupRun(

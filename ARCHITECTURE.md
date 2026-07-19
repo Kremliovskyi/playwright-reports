@@ -7,9 +7,11 @@ This document outlines the core architecture, data flows, and critical design de
 ---
 
 ## 🏗️ Core Stack
+
 - **Backend:** Node.js + Express.
 - **Frontend:** Vanilla HTML, CSS, and TypeScript (`app.ts` compiled via `tsc`).
 - **Database:** Local SQLite (`app.db`), managed via standard SQL queries (no heavy ORMs) to store configurations and Test Presets.
+
 ---
 
 ## 🗄️ Database Usage (`app.db`)
@@ -19,7 +21,7 @@ The application enforces a strictly zero-configuration data model out of the box
 - **WAL Mode:** The database is initialized with `journal_mode = WAL` (Write-Ahead Logging) to ensure high concurrent read performance when the frontend dashboard aggressively polls.
 - **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, the serialized JSON payload for user-selected Test Runner Options, BrowserStack credentials (`browserstackUsername`, `browserstackAccessKey`, `browserstackConfig`), and Copilot settings (`copilotToken`, `copilotModel` for small per-trace analysis, and `copilotBigModel` for run-level grouping). BrowserStack and Copilot columns are added via `ALTER TABLE` with existence checks during migration.
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
-- **`reports` Table:** Persists metadata for all scanned reports. The primary `id` is the report folder name — it is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Because folder names are frequently recycled (a report is deleted and a new run is later written to the same `playwright-report_2`/`_3` folder), the table also stores a **`uuid`** column that is the *stable per-instance identity* of a report. `analysis_runs` and `digests` are keyed by this `uuid`, never by the recyclable folder name. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
+- **`reports` Table:** Persists metadata for all scanned reports. The primary `id` is the report folder name — it is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Because folder names are frequently recycled (a report is deleted and a new run is later written to the same `playwright-report_2`/`_3` folder), the table also stores a **`uuid`** column that is the _stable per-instance identity_ of a report. `analysis_runs` and `digests` are keyed by this `uuid`, never by the recyclable folder name. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
 - **`digests` Table:** Persists one row per saved trace digest (`id`, `reportId` = report `uuid`, `runDir`, `folder`, `testTitle`, `createdAt`). A digest's on-disk location is `path.join(runDir, folder)` under the ephemeral `<currentPath>/tmp/`. Rows are written by `/api/digest-test` after a successful digest and are surfaced in the report's Info dialog. Like `analysis_runs`, they are keyed by the stable `uuid` so they survive renames and archive moves of the folder name, and are removed on report delete/archive and by an orphan prune on each scan.
 
 ### Read-only search index
@@ -187,9 +189,11 @@ This keeps the limit authoritative (fresh count), bounded (never exceeds 20), an
 ## � Full Report Lifecycle
 
 ### 1. Report appears on disk
+
 Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` into the configured **current directory**.
 
 ### 2. Dashboard load → `scanDirectory('current')`
+
 - Reads all subfolders from the current directory.
 - Validates each has `index.html` containing `<title>Playwright Test Report</title>`.
 - Resolves the report's stable `uuid`: reuses the existing one when the folder's `birthtime` still matches the stored `dateCreated`; otherwise (recycled name / physically new folder) mints a fresh `uuid` and drops the old instance's `analysis_runs`.
@@ -198,6 +202,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - Frontend renders `id` as an editable `<input>` in the Current Reports table.
 
 ### 3. User renames: `playwright-report-4` → `my-smoke-run`
+
 - Frontend validates immediately (no forbidden chars, not empty) and shows an inline error if invalid — no server round-trip needed.
 - `POST /api/report-rename { reportId: 'playwright-report-4', newName: 'my-smoke-run' }`
 - Server: path-traversal guard → conflict check → `fs.renameSync(oldFolder, newFolder)`.
@@ -205,6 +210,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - Frontend updates the local `report` closure (`id`, `name`, `path`) in-place — no page reload needed.
 
 ### 4. User archives: `POST /api/archive { reportPath: '/reports/current/my-smoke-run/index.html' }`
+
 - Before the request, the frontend runs `ensureArchiveCapacity(1)` (see Archive Capacity Limit). If the archive is at/over its 20-report cap, the prune-confirm dialog deletes the oldest archived reports first; if the user cancels, no `/api/archive` call is made.
 - Extracts folder name `my-smoke-run` from the URL path.
 - Generates a unique archive name: `playwright-report-<timestamp>`.
@@ -213,6 +219,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 - DB `id` is now the timestamped archive folder name; **metadata is preserved** across the move, and the stable `uuid` keeps every `analysis_runs` row mapped without a rewrite.
 
 ### 5. Archive table display
+
 - `scanDirectory('archive')` — same mechanism as step 2.
 - Archive rows render as a read-only `<span>` (no editable input).
 - `name = dirent.name` — shows exactly what's on disk and in DB, no transformation.
@@ -233,7 +240,7 @@ The execution engine runs Playwright tests natively on the host machine, piping 
 The **Run Tests** button in the main dashboard header is disabled when `projectPath` is not configured in Preferences. This prevents launching the runner page for a project that cannot execute.
 
 - **State check on load:** `app.ts` fetches `GET /api/config` immediately after the page loads and calls `updateRunTestsBtnForProjectPath(projectPath)`. If the value is empty the button is disabled and its opacity reduced to 0.7.
-- **Hover tooltip:** The button is wrapped in a `div.run-tests-wrapper`. When disabled, a `.run-tests-tooltip.show-tooltip` element is revealed on hover via CSS, showing *"Configure in Preferences to enable: Playwright Project Path"* — the same visual pattern used by the BrowserStack checkbox in the runner page.
+- **Hover tooltip:** The button is wrapped in a `div.run-tests-wrapper`. When disabled, a `.run-tests-tooltip.show-tooltip` element is revealed on hover via CSS, showing _"Configure in Preferences to enable: Playwright Project Path"_ — the same visual pattern used by the BrowserStack checkbox in the runner page.
 - **Live update:** `updateRunTestsBtnForProjectPath` is also called after a successful Preferences save so the button re-enables immediately without a page reload.
 - **Two independent disable reasons:** The button also disables while a Runner tab is already open (governed by `BroadcastChannel('runner_state')`). The two states are tracked by separate `isProjectPathMissing` and `isRunnerOpen` flags so closing the runner tab does not re-enable the button if the project path is still missing.
 
@@ -266,7 +273,7 @@ The **Analyze Failures** overflow action (current reports only) runs the install
 - **CLI Resolution:** The server resolves the CLI entry via `require.resolve('@andrii_kremlovskyi/playwright-traces-reader')` and joins `cli.js` next to the resolved package main, so it always runs the version installed in `node_modules` (no global dependency).
 - **Execution:** After strict Copilot model validation succeeds, it spawns `node cli.js failures <reportRoot> <outputDir> --format json` with `cwd` set to `currentPath`. The request stays open for the full duration — on machines where antivirus scanning or large reports make the command slow, the row progress overlay keeps spinning until the manifest returns.
 - **Output Location:** Results are always written to `<currentPath>/tmp` (the Current Reports Directory + `tmp`), created with `fs.mkdirSync(..., { recursive: true })`. The CLI writes a timestamped `run-<timestamp>/` subfolder containing one folder per failed attempt plus an `index.json` manifest.
-- **AI Analysis (Copilot SDK):** After the CLI digest completes, the dashboard runs a per-trace AI analysis (`src/copilot-analyzer.ts` → `analyzeRun`) over each **analyzable** failure (Before Hooks and `outcome: "skipped"` entries are excluded). `index.json` is the run manifest used to select and order attempts, drive progress, and retain retry/outcome metadata; it is not an issue source. For each selected folder, `error.md` is the exclusive source of the model's `issues` array: one output issue must correspond to one fenced block under `# Error details`. The prompt states the exact expected block count, and code rejects a response whose issue count differs. A sanitized projection of `failure.json` supplies supporting test metadata, step-title ancestry, and screenshot/file anchors only; top-level diagnostic collections and every nested step `error` payload are removed before prompting so propagated parent errors or later trace diagnostics cannot become extra issues. Relevant network-error data remains separate supporting evidence and cannot create an issue. For every analyzable folder the dashboard writes an **`ai-analysis.md`** next to `error.md` — a distilled "understanding record" (step path, deepest failing step, error verbatim/normalized, network table, issues list, final page state, transient-vs-final contradiction check, root cause hypothesis, and discriminators) produced only by the exact model persisted as `copilotModel`. Analysis never selects or persists a fallback model. The `index.json` manifest is left untouched — the analysis lives entirely in the per-folder `ai-analysis.md` files. If the model fails for a folder or violates the issue-count contract, that folder's `ai-analysis.md` records a `⚠️ AI analysis failed` note plus an error block so a downstream reduce step can fall back to the raw files.
+- **AI Analysis (Copilot SDK):** After the CLI digest completes, the dashboard runs a per-trace AI analysis (`src/copilot-analyzer.ts` → `analyzeRun`) over each **analyzable** failure (Before Hooks and `outcome: "skipped"` entries are excluded). `index.json` is the run manifest used to select and order attempts, drive progress, and retain retry/outcome metadata; it is not an issue source. For each selected folder, `error.md` is the exclusive source of the model's `issues` array: one output issue must correspond to one fenced block under `# Error details`. The prompt states the exact expected block count, and code rejects a response whose issue count differs. A sanitized projection of `failure.json` supplies supporting test metadata, step-title ancestry, and screenshot/file anchors only; top-level diagnostic collections and every nested step `error` payload are removed before prompting so propagated parent errors or later trace diagnostics cannot become extra issues. Relevant network-error data remains separate supporting evidence and cannot create an issue. For every analyzable folder the dashboard writes an **`ai-analysis.md`** next to `error.md` — a distilled "understanding record" (named `test.step` path, deepest failing Playwright operation, error verbatim/normalized, network table, issues list, final page state, transient-vs-final contradiction check, root cause hypothesis, and discriminators) produced only by the exact model persisted as `copilotModel`. Analysis never selects or persists a fallback model. The `index.json` manifest is left untouched — the analysis lives entirely in the per-folder `ai-analysis.md` files. If the model fails for a folder or violates the issue-count contract, that folder's `ai-analysis.md` records a `⚠️ AI analysis failed` note plus an error block so a downstream reduce step can fall back to the raw files.
 - **Concurrent analysis (3-way pool):** The per-trace analysis runs through a bounded worker pool of `ANALYSIS_CONCURRENCY = 3` (hardcoded in `copilot-analyzer.ts`) rather than a sequential loop. Each failure folder is fully isolated — it reads only its own input files (`failure.json`, `error.md`, network json), creates its **own** Copilot session, and writes only its own `ai-analysis.md` — so the three in-flight analyses never depend on or interfere with each other. One shared `CopilotClient` is created and validated before digesting, stays alive while the CLI runs, and hosts all later sessions (the SDK is multi-session safe); model availability is not queried a second time. The pool is I/O-bound concurrency, not OS threads: three model round-trips overlap on Node's single thread, cutting wall-clock time roughly 3×. A shared `cursor` hands the next folder to each worker; because `cursor++` and the `analyzed`/`failed`/`completed` counters are incremented synchronously between `await`s, no locks are needed. One folder failing (thrown error or AI-failed record) is captured per task and never aborts the others. Progress is reported via a monotonic `completed`/`total` counter (the `failure-analysis` SSE event), so the row label advances steadily even though folders finish out of order.
 - **Problem Grouping:** Once all workers finish, `src/copilot-grouper.ts` creates one session using `copilotBigModel` with no tools enabled. The server maps the in-memory understanding records and matching manifest metadata into one compact JSON dataset embedded directly in the prompt; it does **not** send the many `ai-analysis.md` files as separate attachments. The dataset includes every valid issue with its 1-based index, test/retry/outcome metadata, step path, normalized error, network evidence, final page state, root-cause hypothesis, and discriminators. This guarantees that the single reduce call receives the complete groupable evidence without depending on attachment injection. The model returns structured problem-to-issue references, and code deterministically renders `grouped-analysis.md` with manifest-derived retries, outcomes, folder pointers, and reconciliation. Duplicate or unknown references remain invalid. If the model omits otherwise-valid issues, its returned groups are preserved and the missing references are appended as `Unclassified - omitted by grouping model`; per-trace AI failures are separately appended as `Unclassified - per-trace analysis unavailable`. A malformed grouping response or SDK failure is still non-fatal and never removes completed per-trace output.
 - **Response:** The server returns the manifest, per-trace summary, and either grouped-report metadata or a non-fatal `groupingError`. The completion dialog links both `index.json` and `grouped-analysis.md` when grouping succeeds.
@@ -280,11 +287,13 @@ The **Analyze Failures** overflow action (current reports only) runs the install
 Digesting a full test suite with 300–600 tests bulk-style is extremely resource-intensive and produces massive filesystem clutter. To solve this, the dashboard provides a **Selective Trace Digestion** flow:
 
 ### 1. Test Discovery (`POST /api/report-tests`)
+
 - **Request payload:** `{ reportPath: string }`
 - **Mechanism:** The server runs `playwright-traces-reader find-traces <reportRootPath> ""` to list all tests and trace locations in the report without extracting any traces.
 - **UI Presentation:** The frontend renders these tests in a scrollable, searchable list. Searching by test title is performed instantly in-browser to avoid server round-trips.
 
 ### 2. On-Demand Digestion (`POST /api/digest-test`)
+
 - **Request payload:** `{ reportPath, tracePath }`
 - **Execution:** Spawns `node cli.js digest <tracePath> <outputDir> --report <reportRootPath> --format json` in-memory.
 - **Output:** The CLI unzips the targeted trace, parses step events, builds the network NDJSON, and outputs a clean step tree to `<currentPath>/tmp/run-<timestamp>/<test-name>__retry<index>/digest.json`.
@@ -298,6 +307,7 @@ Digesting a full test suite with 300–600 tests bulk-style is extremely resourc
 To reliably know where a given test project's aria snapshots are stored, and to execute tests accurately, **the dashboard requires Playwright to be installed in the underlying project workspace.**
 
 Furthermore, the backend needs to parse the user's `playwright.config.ts`.
+
 - **The Problem:** Node cannot natively `require()` a TypeScript file without compilation.
 - **The Solution:** We use `jiti` to dynamically transpile and import the config on the fly. This is a crucial internal dependency for resolving workspace variables.
 - **Aria Path Template:** We specifically read `config.expect?.toMatchAriaSnapshot?.pathTemplate` to determine the exact folder structure Playwright expects for `.yml` snapshot files.
@@ -309,12 +319,14 @@ Furthermore, the backend needs to parse the user's `playwright.config.ts`.
 The logic for extracting the "New Snapshot" from a failed `toMatchAriaSnapshot` assertion is **deliberately complex**. Do not attempt to "simplify" it using naive unified diff parsing (e.g., just grabbing `+` lines).
 
 ### The "Truncated Diff" Problem
-When an aria snapshot fails, Playwright's terminal output (and thus the `error.message` in the JSON) presents a unified diff (using `@@ -x,y +a,b @@` headers). 
 
-**If you try to build the new file purely from this diff, it will fail.** Playwright deliberately *omits* (truncates) matching middle lines of long snapshots in the console output to save space. Reconstructing a file from a truncated diff results in massive chunks of missing DOM lines.
+When an aria snapshot fails, Playwright's terminal output (and thus the `error.message` in the JSON) presents a unified diff (using `@@ -x,y +a,b @@` headers).
+
+**If you try to build the new file purely from this diff, it will fail.** Playwright deliberately _omits_ (truncates) matching middle lines of long snapshots in the console output to save space. Reconstructing a file from a truncated diff results in massive chunks of missing DOM lines.
 
 ### The Solution: Call Log Extraction
-To obtain the **perfect, un-truncated new DOM state**, our parser ignores the leading `@@` diff entirely. 
+
+To obtain the **perfect, un-truncated new DOM state**, our parser ignores the leading `@@` diff entirely.
 Instead, it scans down to the `Call log:` block of the error. Emitted inside this block is the literal string value that Playwright evaluated:
 
 ```text
@@ -334,7 +346,7 @@ Our algorithm (`src/server.ts -> POST /api/aria-snapshots`) finds `- unexpected 
 
 ## 📂 Aria Snapshot Path Resolution
 
-When a test has *multiple* `toMatchAriaSnapshot` assertions, identifying *which* file actually failed is tricky.
+When a test has _multiple_ `toMatchAriaSnapshot` assertions, identifying _which_ file actually failed is tricky.
 
 1. **Codeframe Extraction:** The backend examines the `error.codeframe` block to find the exact line that failed (marked with `^ Error:` or `>`). It specifically searches the surrounding 5 lines for `name: 'filename.yml'`.
 2. **Content Fallback:** If the codeframe is missing or ambiguous, the system parses the `- Expected` lines from the error log and manually scans the test's snapshots directory (`src/test-data/aria-snapshots/...`). It reads every `.yml` file and returns the one whose text content exactly matches the expected block.
@@ -347,7 +359,7 @@ When developers fix aria snapshots, it's essential to understand exactly what ch
 
 - **Diff View:** Instead of presenting users a raw editable textarea containing the new snapshot, the frontend computes a live Longest Common Subsequence (LCS) diff between the expected snapshot on disk and the new snapshot in the error. Removed lines are highlighted green, and added lines are highlighted red to exactly match the terminal and Playwright HTML report conventions.
 - **Deep Equal Checkbox:** The Preview UI Modal includes a "Deep Equal" checkbox in the footer. It is `checked` by default.
-- **Dynamic Processing:** The `app.ts` logic detects this checkbox and dynamically prepends `- /children: deep-equal\n` to the top of the diff output. It executes this *without* triggering diff highlighting (so it appears as regular text), ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.
+- **Dynamic Processing:** The `app.ts` logic detects this checkbox and dynamically prepends `- /children: deep-equal\n` to the top of the diff output. It executes this _without_ triggering diff highlighting (so it appears as regular text), ensuring the user can apply the validation globally with a single click before submitting to the `/api/fix-aria-snapshot` endpoint.
 - **Indentation Normalization:** The expected snapshot (read from the `.yml` file on disk) uses 4-space YAML indentation (as enforced by the project's snapshot rules), while the new snapshot extracted from Playwright's error output always uses 2-space indentation. Before the LCS diff runs, both strings are passed through `normalizeIndent()` which detects the minimum indent unit and normalises everything to 2-space. This ensures virtually all unchanged lines match exactly and the diff highlights only genuine content differences. **The Apply Fix path is not affected** — the 2-space string from Playwright's error output is saved directly, which is what Playwright itself expects when re-running tests.
 - **CRLF Normalization:** On Windows, Git's default `core.autocrlf=true` checks out `.yml` snapshot files with `\r\n` line endings. The new snapshot extracted from Playwright's error log is always LF-only (each extracted line is already stripped of `\r`). Without normalization, `computeDiff` splits by `\n` and compares e.g. `"  - radio \"Passport\"\r"` vs `"  - radio \"Passport\""` — the LCS finds zero matches, causing every line to show as removed/added. To prevent this, `fs.readFileSync` in `server.ts` applies `.replace(/\r\n/g, '\n').replace(/\r/g, '\n')` immediately after reading the expected snapshot from disk. As a belt-and-suspenders measure, `normalizeIndent()` and `computeDiff()` in `app.ts` also normalize their inputs before splitting, making the diff immune to CRLF regardless of data source.
 
@@ -370,14 +382,14 @@ The dashboard integrates with an Obsidian-style vault directory for storing per-
 
 ### API Routes
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/vault/list` | GET | Lists `.md` files in the vault directory with modification times |
-| `/api/vault/:filename/raw` | GET | Returns raw markdown as `text/markdown` |
-| `/api/vault/:filename` | PUT | Writes `req.body.content` back to disk |
-| `/vault/:filename` | GET | Renders full HTML page with markdown-it |
-| `/api/agent/vault/list` | GET | Agent-facing vault file listing |
-| `/api/agent/vault/:filename` | GET | Agent-facing raw file content (used by `vault-read` CLI) |
+| Route                        | Method | Purpose                                                          |
+| ---------------------------- | ------ | ---------------------------------------------------------------- |
+| `/api/vault/list`            | GET    | Lists `.md` files in the vault directory with modification times |
+| `/api/vault/:filename/raw`   | GET    | Returns raw markdown as `text/markdown`                          |
+| `/api/vault/:filename`       | PUT    | Writes `req.body.content` back to disk                           |
+| `/vault/:filename`           | GET    | Renders full HTML page with markdown-it                          |
+| `/api/agent/vault/list`      | GET    | Agent-facing vault file listing                                  |
+| `/api/agent/vault/:filename` | GET    | Agent-facing raw file content (used by `vault-read` CLI)         |
 
 ### Security
 
@@ -389,7 +401,7 @@ Vault `.md` files are named after the report origin label (e.g., `playwright-rep
 
 Archiving also removes each run's ephemeral output directory (`runDir`) from disk and clears its `runDir` reference via `clearAnalysisRunDir()`, while keeping the row so the archived report still maps to its (now relocated) analysis file. The report-size cache is invalidated for the archived report id.
 
-**Clear is unconditional.** The physical `fs.rmSync(runDir)` and the DB `clearAnalysisRunDir()` are deliberately split: `clearAnalysisRunDir()` runs *outside* the `try/catch` that wraps the removal, so the `runDir` reference is detached even when the physical delete throws (a common Windows scenario — a locked file, partial deletion, or antivirus hold). If the clear were left inside the same `try` after `rmSync`, a throw would skip it, leaving a stale `runDir` that points at a now-gone directory. That stale row surfaces as a misleading `(missing on disk)` badge in the report's Info dialog even though the output dir was intentionally dropped on archive.
+**Clear is unconditional.** The physical `fs.rmSync(runDir)` and the DB `clearAnalysisRunDir()` are deliberately split: `clearAnalysisRunDir()` runs _outside_ the `try/catch` that wraps the removal, so the `runDir` reference is detached even when the physical delete throws (a common Windows scenario — a locked file, partial deletion, or antivirus hold). If the clear were left inside the same `try` after `rmSync`, a throw would skip it, leaving a stale `runDir` that points at a now-gone directory. That stale row surfaces as a misleading `(missing on disk)` badge in the report's Info dialog even though the output dir was intentionally dropped on archive.
 
 ### Dual-Location Vault Resolution
 
@@ -447,7 +459,7 @@ The per-row **Info** button (always visible) opens a modal that surfaces a repor
 
 ### Two-artifact lifecycle model
 
-An `analysis_runs` row represents the **report ↔ analysis-file** mapping. Its `reportId` column holds the report's stable `uuid` (not the recyclable folder name), so the mapping survives renames, archive moves, and folder-name recycling. The `runDir` column is a *detachable reference* to the ephemeral failure-analysis output directory (`<currentPath>/tmp/run-<timestamp>/`). The two artifacts have decoupled lifecycles:
+An `analysis_runs` row represents the **report ↔ analysis-file** mapping. Its `reportId` column holds the report's stable `uuid` (not the recyclable folder name), so the mapping survives renames, archive moves, and folder-name recycling. The `runDir` column is a _detachable reference_ to the ephemeral failure-analysis output directory (`<currentPath>/tmp/run-<timestamp>/`). The two artifacts have decoupled lifecycles:
 
 - **Output directory** (`runDir`): ephemeral, frequently purged (often daily). Deleting it removes the directory from disk and **clears** the `runDir` column via `clearAnalysisRunDir()`, while keeping the row so the analysis file stays mapped to the report. Deleting the whole report (or archiving it) also removes the output dir from disk, guarded by `isWithin(currentPath, runDir)`.
 - **Analysis file** (`<runName>.md`, resolved via `resolveVaultFile()`): long-lived. On archive it is moved into `<archivePath>/analysis/`. Deleting it removes the `.md` from disk; the row is pruned (`deleteAnalysisRun()`) only when the output dir reference is already gone.
@@ -456,13 +468,13 @@ Because the report folder (`<currentPath>/<reportId>`) is a **sibling** of `tmp/
 
 ### Endpoints
 
-| Route | Method | Purpose |
-|-------|--------|---------|
-| `/api/report-info?reportId=` | GET | Returns `folderExists`, a `runs[]` array (each with `runDir`, `runDirExists`, `analysisFile`, `analysisFileExists`, `failuresUrl`, `vaultUrl`), and a `digests[]` array (each with `id`, `testTitle`, `createdAt`, `digestDir`, `digestDirExists`, `digestUrl`). Includes runs whose output dir was cleared or whose `.md` is missing. Cheap — no disk scan. |
-| `/api/report-size?reportId=` | GET | Recursive byte size of the report folder, **cached** in an in-memory `Map` after first calculation. Pass `?refresh=1` to recompute. |
-| `/api/analysis-run/output-dir` | DELETE | `{ reportId, runName }` — validates the dir is within `currentPath`, removes it, clears the `runDir` reference. |
-| `/api/analysis-run/analysis-file` | DELETE | `{ reportId, runName }` — validates the file is within `vaultPath`/`archivePath/analysis`, unlinks it, prunes the row if the output dir is already gone. |
-| `/api/digest` | DELETE | `{ reportId, digestId }` — validates the digest directory is within `currentPath`, removes it (plus the now-empty `run-<timestamp>` wrapper), and drops the `digests` row. |
+| Route                             | Method | Purpose                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/api/report-info?reportId=`      | GET    | Returns `folderExists`, a `runs[]` array (each with `runDir`, `runDirExists`, `analysisFile`, `analysisFileExists`, `failuresUrl`, `vaultUrl`), and a `digests[]` array (each with `id`, `testTitle`, `createdAt`, `digestDir`, `digestDirExists`, `digestUrl`). Includes runs whose output dir was cleared or whose `.md` is missing. Cheap — no disk scan. |
+| `/api/report-size?reportId=`      | GET    | Recursive byte size of the report folder, **cached** in an in-memory `Map` after first calculation. Pass `?refresh=1` to recompute.                                                                                                                                                                                                                          |
+| `/api/analysis-run/output-dir`    | DELETE | `{ reportId, runName }` — validates the dir is within `currentPath`, removes it, clears the `runDir` reference.                                                                                                                                                                                                                                              |
+| `/api/analysis-run/analysis-file` | DELETE | `{ reportId, runName }` — validates the file is within `vaultPath`/`archivePath/analysis`, unlinks it, prunes the row if the output dir is already gone.                                                                                                                                                                                                     |
+| `/api/digest`                     | DELETE | `{ reportId, digestId }` — validates the digest directory is within `currentPath`, removes it (plus the now-empty `run-<timestamp>` wrapper), and drops the `digests` row.                                                                                                                                                                                   |
 
 ### Size calculation & caching
 
@@ -481,4 +493,3 @@ Output-dir and analysis-file deletes are independent and each route through a si
 ### Trace digests
 
 Below the **Analysis runs** section, the dialog renders a **Digests** section (`#report-info-digests`) from the `digests[]` array. Each digest card shows the test title, creation date, and the on-disk digest directory (`path.join(runDir, folder)`), with the same copy (button + right-click) and open interactions \u2014 the open link points at the digest's `digest.json`. A per-digest delete button routes through the shared confirmation modal and calls `DELETE /api/digest`, which removes the digest directory (and the now-empty `run-<timestamp>` wrapper) and drops the row. Digests are keyed by the report's stable `uuid`, so they survive renames and folder recycling, and are purged alongside the report on delete/archive (`purgeReportDigests()`) and by `pruneOrphanDigests()` on each scan.
-

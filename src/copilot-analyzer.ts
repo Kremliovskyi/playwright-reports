@@ -1,6 +1,6 @@
-import fs from 'fs';
-import path from 'path';
-import { CopilotClient, approveAll } from '@github/copilot-sdk';
+import fs from "fs";
+import path from "path";
+import { CopilotClient, approveAll } from "@github/copilot-sdk";
 
 // Per-trace timeout for the assistant response (ms).
 const PER_TRACE_TIMEOUT_MS = 180000;
@@ -55,8 +55,11 @@ export interface UnderstandingRecord {
   folder: string;
   testTitle: string | null;
   spec: string;
+  // Named test.step ancestry leading to the terminal failure.
   stepPath: string[];
-  deepestFailingStep: string;
+  // Deepest Playwright action or assertion that failed inside the final test.step.
+  // It may equal the last stepPath item when no more specific operation is available.
+  failingOperation: string;
   errorVerbatim: string;
   errorNormalized: string;
   network: UnderstandingRecordNetworkItem[];
@@ -81,10 +84,13 @@ export interface UnderstandingRecord {
 // The per-failure AI understanding — the record fields from `stepPath` onward
 // (folder/testTitle/spec are dropped: folder/testTitle live on the manifest entry
 // and the spec path is the leading `<file>:<line>` of testTitle).
-export type AiAnalysis = Omit<UnderstandingRecord, 'folder' | 'testTitle' | 'spec'>;
+export type AiAnalysis = Omit<
+  UnderstandingRecord,
+  "folder" | "testTitle" | "spec"
+>;
 
 // File name of the per-failure AI analysis written next to error.md in each folder.
-export const AI_ANALYSIS_FILENAME = 'ai-analysis.md';
+export const AI_ANALYSIS_FILENAME = "ai-analysis.md";
 
 export interface AnalyzeRunSummary {
   total: number;
@@ -106,7 +112,7 @@ export interface AnalyzeProgress {
   completed?: number;
   folder: string;
   testTitle: string | null;
-  status: 'start' | 'done' | 'error';
+  status: "start" | "done" | "error";
   message?: string;
 }
 
@@ -129,43 +135,45 @@ export interface CopilotAnalysisModels {
 }
 
 export type CopilotAnalysisErrorCode =
-  | 'COPILOT_NOT_AUTHENTICATED'
-  | 'COPILOT_NO_MODELS'
-  | 'COPILOT_MODEL_UNAVAILABLE';
+  | "COPILOT_NOT_AUTHENTICATED"
+  | "COPILOT_NO_MODELS"
+  | "COPILOT_MODEL_UNAVAILABLE";
 
 export class CopilotAnalysisError extends Error {
   constructor(
     readonly code: CopilotAnalysisErrorCode,
     message: string,
     readonly model: string,
-    readonly modelRole?: 'small' | 'big'
+    readonly modelRole?: "small" | "big",
   ) {
     super(message);
-    this.name = 'CopilotAnalysisError';
+    this.name = "CopilotAnalysisError";
   }
 }
 
 const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
-  'folder',
-  'testTitle',
-  'spec',
-  'stepPath',
-  'deepestFailingStep',
-  'errorVerbatim',
-  'errorNormalized',
-  'network',
-  'issues',
-  'finalPageState',
-  'transientVsFinalContradiction',
-  'rootCauseHypothesis',
-  'discriminators'
+  "folder",
+  "testTitle",
+  "spec",
+  "stepPath",
+  "failingOperation",
+  "errorVerbatim",
+  "errorNormalized",
+  "network",
+  "issues",
+  "finalPageState",
+  "transientVsFinalContradiction",
+  "rootCauseHypothesis",
+  "discriminators",
 ];
 
 // --- Filtering -----------------------------------------------------------
 
 // Before Hooks / skipped attempts are not real failures and must be omitted.
 export const isAnalyzableEntry = (entry: FailureManifestEntry): boolean =>
-  entry.testTitle !== null && entry.outcome !== 'skipped' && entry.title !== 'Before Hooks';
+  entry.testTitle !== null &&
+  entry.outcome !== "skipped" &&
+  entry.title !== "Before Hooks";
 
 // Project an understanding record down to the AI-analysis fields (everything from
 // `stepPath` onward; folder/testTitle/spec are dropped — see AiAnalysis).
@@ -180,98 +188,107 @@ export const toAiAnalysis = (record: UnderstandingRecord): AiAnalysis => {
 // Render an understanding record as a human-readable `ai-analysis.md`, written
 // next to error.md in the failure folder. The reduce phase reads this instead of
 // a separate records.json or an index.json embed.
-export const renderAiAnalysisMarkdown = (record: UnderstandingRecord, model: string): string => {
+export const renderAiAnalysisMarkdown = (
+  record: UnderstandingRecord,
+  model: string,
+): string => {
   const ai = toAiAnalysis(record);
   const lines: string[] = [];
 
-  lines.push('# AI Analysis');
-  lines.push('');
+  lines.push("# AI Analysis");
+  lines.push("");
   lines.push(`> Model: \`${model}\``);
-  lines.push('');
+  lines.push("");
 
   if (ai._error) {
-    lines.push('> ⚠️ AI analysis failed for this folder — fall back to investigating the raw files (error.md, failure.json, screenshots) manually.');
-    lines.push('');
-    lines.push('## Error');
-    lines.push('');
-    lines.push('```');
+    lines.push(
+      "> ⚠️ AI analysis failed for this folder — fall back to investigating the raw files (error.md, failure.json, screenshots) manually.",
+    );
+    lines.push("");
+    lines.push("## Error");
+    lines.push("");
+    lines.push("```");
     lines.push(ai._error);
-    lines.push('```');
+    lines.push("```");
     if (ai._raw) {
-      lines.push('');
-      lines.push('## Raw response (truncated)');
-      lines.push('');
-      lines.push('```');
+      lines.push("");
+      lines.push("## Raw response (truncated)");
+      lines.push("");
+      lines.push("```");
       lines.push(ai._raw);
-      lines.push('```');
+      lines.push("```");
     }
-    lines.push('');
-    return lines.join('\n');
+    lines.push("");
+    return lines.join("\n");
   }
 
-  lines.push('## Step path');
-  lines.push('');
+  lines.push("## Step path");
+  lines.push("");
   if (ai.stepPath.length) {
     for (const step of ai.stepPath) lines.push(`- ${step}`);
   } else {
-    lines.push('_None_');
+    lines.push("_None_");
   }
-  lines.push('');
-  lines.push(`**Deepest failing step:** ${ai.deepestFailingStep || '_unknown_'}`);
-  lines.push('');
+  lines.push("");
+  lines.push(`**Failing operation:** ${ai.failingOperation || "_unknown_"}`);
+  lines.push("");
 
-  lines.push('## Error');
-  lines.push('');
-  lines.push(`- **Verbatim:** ${ai.errorVerbatim || '_none_'}`);
-  lines.push(`- **Normalized:** ${ai.errorNormalized || '_none_'}`);
-  lines.push('');
+  lines.push("## Error");
+  lines.push("");
+  lines.push(`- **Verbatim:** ${ai.errorVerbatim || "_none_"}`);
+  lines.push(`- **Normalized:** ${ai.errorNormalized || "_none_"}`);
+  lines.push("");
 
-  lines.push('## Issues');
-  lines.push('');
+  lines.push("## Issues");
+  lines.push("");
   if (ai.issues.length) {
     ai.issues.forEach((issue, i) => {
-      lines.push(`${i + 1}. **${issue.kind}** at \`${issue.step || 'unknown'}\` — ${issue.errorVerbatim}`);
+      lines.push(
+        `${i + 1}. **${issue.kind}** at \`${issue.step || "unknown"}\` — ${issue.errorVerbatim}`,
+      );
       lines.push(`   - ${issue.explanation}`);
     });
   } else {
-    lines.push('_none_');
+    lines.push("_none_");
   }
-  lines.push('');
+  lines.push("");
 
-  lines.push('## Network');
-  lines.push('');
+  lines.push("## Network");
+  lines.push("");
   if (ai.network.length) {
-    lines.push('| Call | Status | Gist | Relation to step |');
-    lines.push('| --- | --- | --- | --- |');
+    lines.push("| Call | Status | Gist | Relation to step |");
+    lines.push("| --- | --- | --- | --- |");
     for (const n of ai.network) {
-      lines.push(`| ${n.call} | ${n.status ?? '—'} | ${n.gist} | ${n.relToStep} |`);
+      lines.push(
+        `| ${n.call} | ${n.status ?? "—"} | ${n.gist} | ${n.relToStep} |`,
+      );
     }
   } else {
-    lines.push('_No network errors._');
+    lines.push("_No network errors._");
   }
-  lines.push('');
+  lines.push("");
 
-  lines.push('## Final page state');
-  lines.push('');
-  lines.push(ai.finalPageState || '_none_');
-  lines.push('');
+  lines.push("## Final page state");
+  lines.push("");
+  lines.push(ai.finalPageState || "_none_");
+  lines.push("");
 
-  lines.push('## Transient vs final check');
-  lines.push('');
-  lines.push(ai.transientVsFinalContradiction || '_none_');
-  lines.push('');
+  lines.push("## Transient vs final check");
+  lines.push("");
+  lines.push(ai.transientVsFinalContradiction || "_none_");
+  lines.push("");
 
-  lines.push('## Root cause hypothesis');
-  lines.push('');
-  lines.push(ai.rootCauseHypothesis || '_none_');
-  lines.push('');
+  lines.push("## Root cause hypothesis");
+  lines.push("");
+  lines.push(ai.rootCauseHypothesis || "_none_");
+  lines.push("");
 
-  lines.push('## Discriminators');
-  lines.push('');
-  lines.push(ai.discriminators || '_none_');
-  lines.push('');
+  lines.push("## Discriminators");
+  lines.push("");
+  lines.push(ai.discriminators || "_none_");
+  lines.push("");
 
-  return lines.join('\n');
+  return lines.join("\n");
 };
 
 // --- Preflight -----------------------------------------------------------
@@ -282,36 +299,55 @@ const NOT_AUTHENTICATED_MESSAGE =
 // Create a client. When a token is provided it is used directly (gitHubToken
 // takes priority over the logged-in user); otherwise the Copilot CLI login is used.
 const createClient = (token?: string): CopilotClient =>
-  token && token.trim() ? new CopilotClient({ gitHubToken: token.trim() }) : new CopilotClient();
+  token && token.trim()
+    ? new CopilotClient({ gitHubToken: token.trim() })
+    : new CopilotClient();
 
 export const withCopilotAnalysisClient = async <T>(
   models: CopilotAnalysisModels,
   token: string | undefined,
-  callback: (client: CopilotClient) => Promise<T>
+  callback: (client: CopilotClient) => Promise<T>,
 ): Promise<T> => {
   const client = createClient(token);
   try {
     await client.start();
     const auth = await client.getAuthStatus();
     if (!auth.isAuthenticated) {
-      throw new CopilotAnalysisError('COPILOT_NOT_AUTHENTICATED', NOT_AUTHENTICATED_MESSAGE, '');
+      throw new CopilotAnalysisError(
+        "COPILOT_NOT_AUTHENTICATED",
+        NOT_AUTHENTICATED_MESSAGE,
+        "",
+      );
     }
 
-    const availableModels = (await client.listModels()).map(item => item.id);
+    const availableModels = (await client.listModels()).map((item) => item.id);
     if (!availableModels.length) {
-      throw new CopilotAnalysisError('COPILOT_NO_MODELS', 'No Copilot models are available for this account.', '');
+      throw new CopilotAnalysisError(
+        "COPILOT_NO_MODELS",
+        "No Copilot models are available for this account.",
+        "",
+      );
     }
 
-    const selections: Array<{ role: 'small' | 'big'; label: string; model: string }> = [
-      { role: 'small', label: 'Small model', model: models.smallModel },
-      { role: 'big', label: 'Big model', model: models.bigModel }
+    const selections: Array<{
+      role: "small" | "big";
+      label: string;
+      model: string;
+    }> = [
+      { role: "small", label: "Small model", model: models.smallModel },
+      { role: "big", label: "Big model", model: models.bigModel },
     ];
     for (const selection of selections) {
       if (!selection.model || !availableModels.includes(selection.model)) {
         const message = selection.model
           ? `${selection.label} "${selection.model}" is not available. Select another model in Preferences > Copilot.`
           : `${selection.label} is not selected. Select it in Preferences > Copilot.`;
-        throw new CopilotAnalysisError('COPILOT_MODEL_UNAVAILABLE', message, selection.model, selection.role);
+        throw new CopilotAnalysisError(
+          "COPILOT_MODEL_UNAVAILABLE",
+          message,
+          selection.model,
+          selection.role,
+        );
       }
     }
 
@@ -327,7 +363,9 @@ export const withCopilotAnalysisClient = async <T>(
 
 // Verify that Copilot is accessible. The header status chip calls this without
 // listing or selecting models, so checking access can never mutate config.
-export const copilotAccessCheck = async (token?: string): Promise<CopilotAccessResult> => {
+export const copilotAccessCheck = async (
+  token?: string,
+): Promise<CopilotAccessResult> => {
   const client = createClient(token);
   try {
     await client.start();
@@ -338,13 +376,13 @@ export const copilotAccessCheck = async (token?: string): Promise<CopilotAccessR
       login: auth.login,
       authType: auth.authType,
       host: auth.host,
-      error: auth.isAuthenticated ? undefined : NOT_AUTHENTICATED_MESSAGE
+      error: auth.isAuthenticated ? undefined : NOT_AUTHENTICATED_MESSAGE,
     };
   } catch (err) {
     return {
       ok: false,
       authenticated: false,
-      error: err instanceof Error ? err.message : String(err)
+      error: err instanceof Error ? err.message : String(err),
     };
   } finally {
     try {
@@ -356,15 +394,22 @@ export const copilotAccessCheck = async (token?: string): Promise<CopilotAccessR
 };
 
 // List models only when Preferences opens a model picker.
-export const copilotModels = async (token?: string): Promise<CopilotModelsResult> => {
+export const copilotModels = async (
+  token?: string,
+): Promise<CopilotModelsResult> => {
   const client = createClient(token);
   try {
     await client.start();
     const auth = await client.getAuthStatus();
     if (!auth.isAuthenticated) {
-      return { ok: false, authenticated: false, availableModels: [], error: NOT_AUTHENTICATED_MESSAGE };
+      return {
+        ok: false,
+        authenticated: false,
+        availableModels: [],
+        error: NOT_AUTHENTICATED_MESSAGE,
+      };
     }
-    const availableModels = (await client.listModels()).map(item => item.id);
+    const availableModels = (await client.listModels()).map((item) => item.id);
     return {
       ok: availableModels.length > 0,
       authenticated: true,
@@ -372,14 +417,16 @@ export const copilotModels = async (token?: string): Promise<CopilotModelsResult
       authType: auth.authType,
       host: auth.host,
       availableModels,
-      error: availableModels.length ? undefined : 'No Copilot models are available for this account.'
+      error: availableModels.length
+        ? undefined
+        : "No Copilot models are available for this account.",
     };
   } catch (err) {
     return {
       ok: false,
       authenticated: false,
       availableModels: [],
-      error: err instanceof Error ? err.message : String(err)
+      error: err instanceof Error ? err.message : String(err),
     };
   } finally {
     try {
@@ -398,46 +445,60 @@ const errorDetailBlocks = (errorMd: string): string[] => {
   const sectionStart = heading.index + heading[0].length;
   const remainder = errorMd.slice(sectionStart);
   const nextHeading = remainder.search(/^# (?:Page snapshot|Test source)\s*$/m);
-  const section = nextHeading === -1 ? remainder : remainder.slice(0, nextHeading);
-  return [...section.matchAll(/^```[^\n]*\n([\s\S]*?)^```\s*$/gm)].map(match => match[1].trim());
+  const section =
+    nextHeading === -1 ? remainder : remainder.slice(0, nextHeading);
+  return [...section.matchAll(/^```[^\n]*\n([\s\S]*?)^```\s*$/gm)].map(
+    (match) => match[1].trim(),
+  );
 };
 
 const failureMetadata = (failureJsonText: string): string => {
   const failure = JSON.parse(failureJsonText) as Record<string, unknown>;
   const sanitizeStep = (value: unknown): unknown => {
-    if (typeof value !== 'object' || value === null) return value;
+    if (typeof value !== "object" || value === null) return value;
     const step = value as Record<string, unknown>;
     const { error: _error, children, ...metadata } = step;
     void _error;
     return {
       ...metadata,
-      children: Array.isArray(children) ? children.map(sanitizeStep) : []
+      children: Array.isArray(children) ? children.map(sanitizeStep) : [],
     };
   };
-  return JSON.stringify({
-    schemaVersion: failure.schemaVersion,
-    testTitle: failure.testTitle,
-    title: failure.title,
-    status: failure.status,
-    outcome: failure.outcome,
-    durationMs: failure.durationMs,
-    retryIndex: failure.retryIndex,
-    traceSha1: failure.traceSha1,
-    topLevelSteps: Array.isArray(failure.topLevelSteps) ? failure.topLevelSteps.map(sanitizeStep) : [],
-    screenshots: failure.screenshots,
-    files: failure.files
-  }, null, 2);
+  return JSON.stringify(
+    {
+      schemaVersion: failure.schemaVersion,
+      testTitle: failure.testTitle,
+      title: failure.title,
+      status: failure.status,
+      outcome: failure.outcome,
+      durationMs: failure.durationMs,
+      retryIndex: failure.retryIndex,
+      traceSha1: failure.traceSha1,
+      topLevelSteps: Array.isArray(failure.topLevelSteps)
+        ? failure.topLevelSteps.map(sanitizeStep)
+        : [],
+      screenshots: failure.screenshots,
+      files: failure.files,
+    },
+    null,
+    2,
+  );
 };
 
-const buildPrompt = (folderName: string, errorMd: string, failureJsonText: string, networkErrorsText: string | null): string => {
+const buildPrompt = (
+  folderName: string,
+  errorMd: string,
+  failureJsonText: string,
+  networkErrorsText: string | null,
+): string => {
   const expectedIssueCount = errorDetailBlocks(errorMd).length;
   const networkSection = networkErrorsText
     ? `\n## network-errors.json (failed/relevant requests)\n\`\`\`json\n${networkErrorsText}\n\`\`\`\n`
-    : '\n## network-errors.json\n(none — there were no network errors for this attempt)\n';
+    : "\n## network-errors.json\n(none — there were no network errors for this attempt)\n";
 
   return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the text materials provided below. Do NOT invent facts.
 
-error.md is the EXCLUSIVE source of failures for the "issues" array. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? '' : 's'} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? 'y' : 'ies'}, one per block and in the same order. The final block is the terminal failure that ended the attempt. The top-level step/error/finalPageState fields describe that terminal block only.
+error.md is the EXCLUSIVE source of failures for the "issues" array. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? "" : "s"} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? "y" : "ies"}, one per block and in the same order. The final block is the terminal failure that ended the attempt. The top-level failingOperation/error/finalPageState fields describe that terminal block only.
 
 The failure metadata is SUPPORTING CONTEXT ONLY. Use it only for testTitle, spec, retry metadata, and step-title ancestry. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from a manifest/failure-metadata step, parent step, action diagnostic, trace issue, source code, or network/console entry. In particular, a parent test.step can repeat a child's error and is not another issue. If evidence appears outside the fenced blocks under error.md's "# Error details", it MUST NOT appear in "issues".
 
@@ -448,7 +509,7 @@ ${folderName}
 
 ## error.md (primary surface: error diff, YAML page snapshot, test codeframe)
 \`\`\`md
-${errorMd || '(error.md not present)'}
+${errorMd || "(error.md not present)"}
 \`\`\`
 
 ## failure metadata (supporting step tree and identifiers; NOT an issue source)
@@ -461,8 +522,8 @@ ${networkSection}
   "folder": "${folderName}",
   "testTitle": "<from failure.json>",
   "spec": "<spec file>:<line>",
-  "stepPath": ["<ordered ancestor steps down to the TERMINAL failing one>"],
-  "deepestFailingStep": "<the deepest/leaf step of the TERMINAL failure — the one that ended the attempt>",
+  "stepPath": ["<ordered named test.step ancestry containing the TERMINAL failure>"],
+  "failingOperation": "<the deepest Playwright action or assertion that failed inside the final test.step; use the final stepPath item only when no more specific operation is available>",
   "errorVerbatim": "<the exact error line of the TERMINAL (last) error block>",
   "errorNormalized": "<short normalized form of the terminal error, e.g. 'timeout waiting for locator'>",
   "network": [
@@ -478,6 +539,7 @@ ${networkSection}
 }
 
 Rules:
+- "stepPath" contains the named test.step ancestry; "failingOperation" contains the deepest failing action or assertion and may differ from the final stepPath item.
 - The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
 - "issues" MUST contain exactly ${expectedIssueCount} entries: every fenced error block under error.md's "# Error details", in order, including the terminal one. One block = one entry. Never merge blocks, never duplicate a block through its parent step, and never import an error from failure metadata or any other section.
 - ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". It reflects only the LAST-SEEN UI (the terminal failure). A failed SOFT assertion captures a transient mid-flight state in its diff's "Received" value; when the terminal block is such an assertion and the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall. For intermediate blocks, use their own diff and call-log resolved values only.
@@ -497,11 +559,11 @@ const extractJson = (text: string): unknown => {
   }
 
   // Fall back to the first {...} span.
-  if (!candidate.startsWith('{')) {
-    const start = candidate.indexOf('{');
-    const end = candidate.lastIndexOf('}');
+  if (!candidate.startsWith("{")) {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
     if (start === -1 || end === -1 || end <= start) {
-      throw new Error('No JSON object found in response');
+      throw new Error("No JSON object found in response");
     }
     candidate = candidate.slice(start, end + 1);
   }
@@ -510,7 +572,7 @@ const extractJson = (text: string): unknown => {
 };
 
 const validateRecord = (obj: unknown): obj is UnderstandingRecord => {
-  if (typeof obj !== 'object' || obj === null) return false;
+  if (typeof obj !== "object" || obj === null) return false;
   const rec = obj as Record<string, unknown>;
   for (const key of REQUIRED_RECORD_KEYS) {
     if (!(key in rec)) return false;
@@ -525,7 +587,7 @@ const validateRecord = (obj: unknown): obj is UnderstandingRecord => {
 
 const readIfExists = (filePath: string): string | null => {
   try {
-    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null;
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
   } catch {
     return null;
   }
@@ -534,8 +596,11 @@ const readIfExists = (filePath: string): string | null => {
 // Minimal shape of a session we rely on (the SDK types these fully).
 interface AnalyzerSession {
   sendAndWait(
-    options: { prompt: string; attachments?: Array<{ type: string; path: string }> },
-    timeout?: number
+    options: {
+      prompt: string;
+      attachments?: Array<{ type: string; path: string }>;
+    },
+    timeout?: number,
   ): Promise<{ data?: { content?: string } } | undefined>;
   disconnect(): Promise<void>;
 }
@@ -548,22 +613,38 @@ const analyzeFolder = async (
   client: AnalyzerClient,
   runDir: string,
   entry: FailureManifestEntry,
-  model: string
+  model: string,
 ): Promise<UnderstandingRecord> => {
   const folderPath = path.join(runDir, entry.folder);
-  const failureJsonText = fs.readFileSync(path.join(folderPath, 'failure.json'), 'utf8');
+  const failureJsonText = fs.readFileSync(
+    path.join(folderPath, "failure.json"),
+    "utf8",
+  );
   const failureJson = JSON.parse(failureJsonText) as Record<string, unknown>;
 
-  const files = (failureJson.files as Record<string, string | null> | undefined) || {};
-  const errorMd = files.errorMarkdown ? readIfExists(path.join(folderPath, files.errorMarkdown)) || '' : readIfExists(path.join(folderPath, 'error.md')) || '';
-  const networkErrorsText = files.networkErrors ? readIfExists(path.join(folderPath, files.networkErrors)) : null;
+  const files =
+    (failureJson.files as Record<string, string | null> | undefined) || {};
+  const errorMd = files.errorMarkdown
+    ? readIfExists(path.join(folderPath, files.errorMarkdown)) || ""
+    : readIfExists(path.join(folderPath, "error.md")) || "";
+  const networkErrorsText = files.networkErrors
+    ? readIfExists(path.join(folderPath, files.networkErrors))
+    : null;
 
-  const prompt = buildPrompt(entry.folder, errorMd, failureJsonText, networkErrorsText);
+  const prompt = buildPrompt(
+    entry.folder,
+    errorMd,
+    failureJsonText,
+    networkErrorsText,
+  );
 
-  const session = await client.createSession({ model, onPermissionRequest: approveAll });
+  const session = await client.createSession({
+    model,
+    onPermissionRequest: approveAll,
+  });
   try {
     let result = await session.sendAndWait({ prompt }, PER_TRACE_TIMEOUT_MS);
-    let content = result?.data?.content ?? '';
+    let content = result?.data?.content ?? "";
 
     let parsed: unknown;
     try {
@@ -571,30 +652,38 @@ const analyzeFolder = async (
     } catch {
       // One corrective retry in the same session.
       result = await session.sendAndWait(
-        { prompt: 'Your previous response could not be parsed as JSON. Return ONLY the JSON object described earlier, with no surrounding text or code fences.' },
-        PER_TRACE_TIMEOUT_MS
+        {
+          prompt:
+            "Your previous response could not be parsed as JSON. Return ONLY the JSON object described earlier, with no surrounding text or code fences.",
+        },
+        PER_TRACE_TIMEOUT_MS,
       );
-      content = result?.data?.content ?? '';
+      content = result?.data?.content ?? "";
       parsed = extractJson(content);
     }
 
-    if (!validateRecord(parsed) || (parsed as UnderstandingRecord).issues.length !== errorDetailBlocks(errorMd).length) {
+    if (
+      !validateRecord(parsed) ||
+      (parsed as UnderstandingRecord).issues.length !==
+        errorDetailBlocks(errorMd).length
+    ) {
       return {
         folder: entry.folder,
         testTitle: entry.testTitle,
-        spec: '',
+        spec: "",
         stepPath: [],
-        deepestFailingStep: '',
-        errorVerbatim: '',
-        errorNormalized: '',
+        failingOperation: "",
+        errorVerbatim: "",
+        errorNormalized: "",
         network: [],
         issues: [],
-        finalPageState: '',
-        transientVsFinalContradiction: '',
-        rootCauseHypothesis: '',
-        discriminators: '',
-        _error: 'Response did not contain a valid record matching the error.md issue count',
-        _raw: content.slice(0, 4000)
+        finalPageState: "",
+        transientVsFinalContradiction: "",
+        rootCauseHypothesis: "",
+        discriminators: "",
+        _error:
+          "Response did not contain a valid record matching the error.md issue count",
+        _raw: content.slice(0, 4000),
       };
     }
 
@@ -614,7 +703,7 @@ export const analyzeRun = async (
   runDir: string,
   manifest: FailureManifest,
   model: string,
-  onProgress?: (p: AnalyzeProgress) => void
+  onProgress?: (p: AnalyzeProgress) => void,
 ): Promise<AnalyzeRunResult> => {
   const entries = (manifest.failures || []).filter(isAnalyzableEntry);
   const skipped = (manifest.failures || []).length - entries.length;
@@ -632,18 +721,51 @@ export const analyzeRun = async (
   // Process a single failure folder in full isolation: own input files, own
   // Copilot session, own ai-analysis.md. Never throws — failures are captured
   // as an error record so one bad trace can't abort the others.
-  const processEntry = async (entry: FailureManifestEntry, index: number): Promise<void> => {
-    onProgress?.({ index, total, folder: entry.folder, testTitle: entry.testTitle, status: 'start' });
+  const processEntry = async (
+    entry: FailureManifestEntry,
+    index: number,
+  ): Promise<void> => {
+    onProgress?.({
+      index,
+      total,
+      folder: entry.folder,
+      testTitle: entry.testTitle,
+      status: "start",
+    });
     try {
-      const record = await analyzeFolder(client as unknown as AnalyzerClient, runDir, entry, model);
+      const record = await analyzeFolder(
+        client as unknown as AnalyzerClient,
+        runDir,
+        entry,
+        model,
+      );
       records[index - 1] = record;
-      fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(record, model), 'utf8');
+      fs.writeFileSync(
+        path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME),
+        renderAiAnalysisMarkdown(record, model),
+        "utf8",
+      );
       if (record._error) {
         failed++;
-        onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message: record._error });
+        onProgress?.({
+          index,
+          total,
+          completed: ++completed,
+          folder: entry.folder,
+          testTitle: entry.testTitle,
+          status: "error",
+          message: record._error,
+        });
       } else {
         analyzed++;
-        onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'done' });
+        onProgress?.({
+          index,
+          total,
+          completed: ++completed,
+          folder: entry.folder,
+          testTitle: entry.testTitle,
+          status: "done",
+        });
       }
     } catch (err) {
       failed++;
@@ -651,26 +773,38 @@ export const analyzeRun = async (
       const errorRecord: UnderstandingRecord = {
         folder: entry.folder,
         testTitle: entry.testTitle,
-        spec: '',
+        spec: "",
         stepPath: [],
-        deepestFailingStep: '',
-        errorVerbatim: '',
-        errorNormalized: '',
+        failingOperation: "",
+        errorVerbatim: "",
+        errorNormalized: "",
         network: [],
         issues: [],
-        finalPageState: '',
-        transientVsFinalContradiction: '',
-        rootCauseHypothesis: '',
-        discriminators: '',
-        _error: message
+        finalPageState: "",
+        transientVsFinalContradiction: "",
+        rootCauseHypothesis: "",
+        discriminators: "",
+        _error: message,
       };
       records[index - 1] = errorRecord;
       try {
-        fs.writeFileSync(path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME), renderAiAnalysisMarkdown(errorRecord, model), 'utf8');
+        fs.writeFileSync(
+          path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME),
+          renderAiAnalysisMarkdown(errorRecord, model),
+          "utf8",
+        );
       } catch {
         /* ignore write failure */
       }
-      onProgress?.({ index, total, completed: ++completed, folder: entry.folder, testTitle: entry.testTitle, status: 'error', message });
+      onProgress?.({
+        index,
+        total,
+        completed: ++completed,
+        folder: entry.folder,
+        testTitle: entry.testTitle,
+        status: "error",
+        message,
+      });
     }
   };
 
@@ -688,5 +822,12 @@ export const analyzeRun = async (
 
   // Each analyzable failure folder now holds an `ai-analysis.md` next to error.md.
   // index.json is left untouched (no embed, no separate records.json).
-  return { total, analyzed, failed, skipped, analysisFileName: AI_ANALYSIS_FILENAME, records };
+  return {
+    total,
+    analyzed,
+    failed,
+    skipped,
+    analysisFileName: AI_ANALYSIS_FILENAME,
+    records,
+  };
 };

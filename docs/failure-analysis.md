@@ -52,7 +52,7 @@ The console and network error files are created only when the trace contains tha
 After trace extraction, the dashboard uses the selected Copilot model to read the evidence for each analyzable failure and writes `ai-analysis.md` beside `error.md`. This file is a compact interpretation intended for quick review and downstream analysis. It includes:
 
 - The model that generated the record.
-- The ordered test-step path and deepest failing step.
+- The ordered named `test.step` path and the deepest failing Playwright operation inside it.
 - The terminal error in verbatim and normalized forms.
 - A list of all detected issues, including failed soft assertions that occurred before the terminal failure.
 - Relevant failed network calls and how they relate to the failing step.

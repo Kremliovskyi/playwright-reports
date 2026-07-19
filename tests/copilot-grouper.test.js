@@ -1,96 +1,109 @@
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const test = require('node:test');
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
 
 const {
   groupRun,
   parseGroupingResponse,
   renderGroupedAnalysis,
-  validateGroupingResponse
-} = require('../dist/copilot-grouper');
+  validateGroupingResponse,
+} = require("../dist/copilot-grouper");
 
-const entry = (folder, retryIndex, outcome, testName = 'e2eFlowTC01') => ({
+const entry = (folder, retryIndex, outcome, testName = "e2eFlowTC01") => ({
   folder,
   testTitle: `tests/e2e/example.spec.ts:42 › flow › ${testName}`,
-  title: 'Complete the flow',
+  title: "Complete the flow",
   retryIndex,
-  status: 'failed',
-  outcome
+  status: "failed",
+  outcome,
 });
 
 const record = (folder, issues, overrides = {}) => ({
   folder,
   testTitle: `tests/e2e/example.spec.ts:42 › flow › e2eFlowTC01`,
-  spec: 'tests/e2e/example.spec.ts:42',
-  stepPath: ['Open flow', 'Complete the flow'],
-  deepestFailingStep: 'Complete the flow',
-  errorVerbatim: 'Timeout 10000ms exceeded',
-  errorNormalized: 'timeout waiting for result',
+  spec: "tests/e2e/example.spec.ts:42",
+  stepPath: ["Open flow", "Complete the flow"],
+  failingOperation: "Click result button",
+  errorVerbatim: "Timeout 10000ms exceeded",
+  errorNormalized: "timeout waiting for result",
   network: [],
   issues,
-  finalPageState: 'The result screen is visible.',
-  transientVsFinalContradiction: 'none',
-  rootCauseHypothesis: 'The result exceeded the assertion window.',
-  discriminators: 'Open flow passed; completion timed out.',
-  ...overrides
+  finalPageState: "The result screen is visible.",
+  transientVsFinalContradiction: "none",
+  rootCauseHypothesis: "The result exceeded the assertion window.",
+  discriminators: "Open flow passed; completion timed out.",
+  ...overrides,
 });
 
 const softIssue = {
-  kind: 'soft assertion',
-  step: 'Check loading screen',
-  errorVerbatim: 'Unexpected Back button',
-  explanation: 'The loading screen contains an extra Back button.'
+  kind: "soft assertion",
+  step: "Check loading screen",
+  errorVerbatim: "Unexpected Back button",
+  explanation: "The loading screen contains an extra Back button.",
 };
 
 const terminalIssue = {
-  kind: 'timeout',
-  step: 'Complete the flow',
-  errorVerbatim: 'Timeout 10000ms exceeded',
-  explanation: 'The result appeared after the assertion window.'
+  kind: "timeout",
+  step: "Complete the flow",
+  errorVerbatim: "Timeout 10000ms exceeded",
+  explanation: "The result appeared after the assertion window.",
 };
 
-test('renders retries and secondary issues without inflating reconciliation', () => {
+test("renders retries and secondary issues without inflating reconciliation", () => {
   const manifest = {
     count: 3,
-    runDir: '/tmp/run-test',
+    runDir: "/tmp/run-test",
     failures: [
-      entry('attempt-a__retry0', 0, 'unexpected'),
-      entry('attempt-a__retry1', 1, 'flaky'),
-      { ...entry('skipped__retry0', 0, 'skipped'), outcome: 'skipped' }
-    ]
+      entry("attempt-a__retry0", 0, "unexpected"),
+      entry("attempt-a__retry1", 1, "flaky"),
+      { ...entry("skipped__retry0", 0, "skipped"), outcome: "skipped" },
+    ],
   };
   const records = [
-    record('attempt-a__retry0', [softIssue, terminalIssue]),
-    record('attempt-a__retry1', [terminalIssue])
+    record("attempt-a__retry0", [softIssue, terminalIssue]),
+    record("attempt-a__retry1", [terminalIssue]),
   ];
-  const response = validateGroupingResponse({
-    summary: 'One loading-state issue and one shared terminal timeout.',
-    problems: [
-      {
-        title: 'Unexpected loading controls',
-        error: 'Unexpected Back button',
-        whatHappens: 'The loading screen shows an extra control.',
-        rootCause: 'The loading snapshot changed | unexpectedly.',
-        issueRefs: [{ folder: 'attempt-a__retry0', issueIndex: 1 }]
-      },
-      {
-        title: 'Result exceeds assertion window',
-        error: 'Timeout 10000ms exceeded',
-        whatHappens: 'The result eventually appears.',
-        rootCause: 'The result is slow.',
-        issueRefs: [
-          { folder: 'attempt-a__retry0', issueIndex: 2 },
-          { folder: 'attempt-a__retry1', issueIndex: 1 }
-        ]
-      }
-    ]
-  }, records);
+  const response = validateGroupingResponse(
+    {
+      summary: "One loading-state issue and one shared terminal timeout.",
+      problems: [
+        {
+          title: "Unexpected loading controls",
+          error: "Unexpected Back button",
+          whatHappens: "The loading screen shows an extra control.",
+          rootCause: "The loading snapshot changed | unexpectedly.",
+          issueRefs: [{ folder: "attempt-a__retry0", issueIndex: 1 }],
+        },
+        {
+          title: "Result exceeds assertion window",
+          error: "Timeout 10000ms exceeded",
+          whatHappens: "The result eventually appears.",
+          rootCause: "The result is slow.",
+          issueRefs: [
+            { folder: "attempt-a__retry0", issueIndex: 2 },
+            { folder: "attempt-a__retry1", issueIndex: 1 },
+          ],
+        },
+      ],
+    },
+    records,
+  );
 
-  const markdown = renderGroupedAnalysis('/tmp/run-test', manifest, records, response, 'small-model', 'big-model');
+  const markdown = renderGroupedAnalysis(
+    "/tmp/run-test",
+    manifest,
+    records,
+    response,
+    "small-model",
+    "big-model",
+  );
   assert.match(markdown, /\| 1 \| Unexpected loading controls \| 1 \| 0\*/);
-  assert.match(markdown, /\| 2 \| Result exceeds assertion window \| 1 \| 2 \| 1 unexpected, 1 flaky/);
+  assert.match(
+    markdown,
+    /\| 2 \| Result exceeds assertion window \| 1 \| 2 \| 1 unexpected, 1 flaky/,
+  );
   assert.match(markdown, /retry0/);
   assert.match(markdown, /retry1/);
   assert.match(markdown, /changed \\| unexpectedly/);
@@ -99,72 +112,142 @@ test('renders retries and secondary issues without inflating reconciliation', ()
   assert.doesNotMatch(markdown, /skipped__retry0/);
 });
 
-test('rejects duplicate and unknown issue references', () => {
-  const records = [record('attempt__retry0', [softIssue, terminalIssue])];
-  assert.throws(() => validateGroupingResponse({
-    summary: 'Duplicate',
-    problems: [{
-      title: 'Duplicate', error: 'error', whatHappens: 'behavior', rootCause: 'cause',
-      issueRefs: [
-        { folder: 'attempt__retry0', issueIndex: 1 },
-        { folder: 'attempt__retry0', issueIndex: 1 }
-      ]
-    }]
-  }, records), /more than once/);
+test("rejects duplicate and unknown issue references", () => {
+  const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+  assert.throws(
+    () =>
+      validateGroupingResponse(
+        {
+          summary: "Duplicate",
+          problems: [
+            {
+              title: "Duplicate",
+              error: "error",
+              whatHappens: "behavior",
+              rootCause: "cause",
+              issueRefs: [
+                { folder: "attempt__retry0", issueIndex: 1 },
+                { folder: "attempt__retry0", issueIndex: 1 },
+              ],
+            },
+          ],
+        },
+        records,
+      ),
+    /more than once/,
+  );
 
-  assert.throws(() => validateGroupingResponse({
-    summary: 'Unknown',
-    problems: [{
-      title: 'Unknown', error: 'error', whatHappens: 'behavior', rootCause: 'cause',
-      issueRefs: [{ folder: 'attempt__retry0', issueIndex: 3 }]
-    }]
-  }, records), /unknown issue/);
+  assert.throws(
+    () =>
+      validateGroupingResponse(
+        {
+          summary: "Unknown",
+          problems: [
+            {
+              title: "Unknown",
+              error: "error",
+              whatHappens: "behavior",
+              rootCause: "cause",
+              issueRefs: [{ folder: "attempt__retry0", issueIndex: 3 }],
+            },
+          ],
+        },
+        records,
+      ),
+    /unknown issue/,
+  );
 });
 
-test('preserves partial grouping and classifies omitted issues', () => {
-  const manifest = { count: 1, runDir: '/tmp/run-test', failures: [entry('attempt__retry0', 0, 'unexpected')] };
-  const records = [record('attempt__retry0', [softIssue, terminalIssue])];
-  const response = validateGroupingResponse({
-    summary: 'The model grouped one of two issues.',
-    problems: [{
-      title: 'Unexpected loading controls',
-      error: 'Unexpected Back button',
-      whatHappens: 'The loading screen shows an extra control.',
-      rootCause: 'The loading snapshot changed.',
-      issueRefs: [{ folder: 'attempt__retry0', issueIndex: 1 }]
-    }]
-  }, records);
+test("preserves partial grouping and classifies omitted issues", () => {
+  const manifest = {
+    count: 1,
+    runDir: "/tmp/run-test",
+    failures: [entry("attempt__retry0", 0, "unexpected")],
+  };
+  const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+  const response = validateGroupingResponse(
+    {
+      summary: "The model grouped one of two issues.",
+      problems: [
+        {
+          title: "Unexpected loading controls",
+          error: "Unexpected Back button",
+          whatHappens: "The loading screen shows an extra control.",
+          rootCause: "The loading snapshot changed.",
+          issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+        },
+      ],
+    },
+    records,
+  );
 
   assert.equal(response.problems.length, 2);
-  assert.equal(response.problems[0].title, 'Unexpected loading controls');
-  assert.deepEqual(response.problems[1].issueRefs, [{ folder: 'attempt__retry0', issueIndex: 2 }]);
+  assert.equal(response.problems[0].title, "Unexpected loading controls");
+  assert.deepEqual(response.problems[1].issueRefs, [
+    { folder: "attempt__retry0", issueIndex: 2 },
+  ]);
 
-  const markdown = renderGroupedAnalysis('/tmp/run-test', manifest, records, response, 'small-model', 'big-model');
+  const markdown = renderGroupedAnalysis(
+    "/tmp/run-test",
+    manifest,
+    records,
+    response,
+    "small-model",
+    "big-model",
+  );
   assert.match(markdown, /Unclassified - omitted by grouping model/);
-  assert.match(markdown, /The grouping response omitted required issue references/);
+  assert.match(
+    markdown,
+    /The grouping response omitted required issue references/,
+  );
   assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
 });
 
-test('places failed per-trace records in an unclassified terminal problem', () => {
-  const manifest = { count: 1, runDir: '/tmp/run-test', failures: [entry('failed-ai__retry0', 0, 'unexpected')] };
-  const records = [record('failed-ai__retry0', [], { _error: 'Model response was invalid' })];
-  const response = validateGroupingResponse(parseGroupingResponse(JSON.stringify({
-    summary: 'One attempt could not be classified.',
-    problems: []
-  })), records);
-  const markdown = renderGroupedAnalysis('/tmp/run-test', manifest, records, response, 'small-model', 'big-model');
+test("places failed per-trace records in an unclassified terminal problem", () => {
+  const manifest = {
+    count: 1,
+    runDir: "/tmp/run-test",
+    failures: [entry("failed-ai__retry0", 0, "unexpected")],
+  };
+  const records = [
+    record("failed-ai__retry0", [], { _error: "Model response was invalid" }),
+  ];
+  const response = validateGroupingResponse(
+    parseGroupingResponse(
+      JSON.stringify({
+        summary: "One attempt could not be classified.",
+        problems: [],
+      }),
+    ),
+    records,
+  );
+  const markdown = renderGroupedAnalysis(
+    "/tmp/run-test",
+    manifest,
+    records,
+    response,
+    "small-model",
+    "big-model",
+  );
   assert.match(markdown, /Unclassified - per-trace analysis unavailable/);
   assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
 });
 
-test('embeds grouping records in one tool-free big-model call and writes only a validated report', async () => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'copilot-group-run-'));
+test("embeds grouping records in one tool-free big-model call and writes only a validated report", async () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-group-run-"));
   try {
-    const manifest = { count: 1, runDir, failures: [entry('attempt__retry0', 0, 'unexpected')] };
-    const records = [record('attempt__retry0', [terminalIssue])];
-    fs.writeFileSync(path.join(runDir, 'index.json'), JSON.stringify(manifest));
-    fs.mkdirSync(path.join(runDir, 'attempt__retry0'));
-    fs.writeFileSync(path.join(runDir, 'attempt__retry0', 'ai-analysis.md'), '# AI Analysis\n\n## Issues\n\n1. timeout');
+    const manifest = {
+      count: 1,
+      runDir,
+      failures: [entry("attempt__retry0", 0, "unexpected")],
+    };
+    const records = [record("attempt__retry0", [terminalIssue])];
+    fs.writeFileSync(path.join(runDir, "index.json"), JSON.stringify(manifest));
+    fs.mkdirSync(path.join(runDir, "attempt__retry0"));
+    fs.writeFileSync(
+      path.join(runDir, "attempt__retry0", "ai-analysis.md"),
+      "# AI Analysis\n\n## Issues\n\n1. timeout",
+    );
 
     let sessionConfig;
     let callCount = 0;
@@ -180,40 +263,68 @@ test('embeds grouping records in one tool-free big-model call and writes only a 
             return {
               data: {
                 content: JSON.stringify({
-                  summary: 'One terminal timeout.',
-                  problems: [{
-                    title: 'Terminal timeout',
-                    error: 'Timeout 10000ms exceeded',
-                    whatHappens: 'The result appears too late.',
-                    rootCause: 'The result exceeded the assertion window.',
-                    issueRefs: [{ folder: 'attempt__retry0', issueIndex: 1 }]
-                  }]
-                })
-              }
+                  summary: "One terminal timeout.",
+                  problems: [
+                    {
+                      title: "Terminal timeout",
+                      error: "Timeout 10000ms exceeded",
+                      whatHappens: "The result appears too late.",
+                      rootCause: "The result exceeded the assertion window.",
+                      issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+                    },
+                  ],
+                }),
+              },
             };
           },
           async disconnect() {
             disconnected = true;
-          }
+          },
         };
-      }
+      },
     };
 
-    const result = await groupRun(client, runDir, manifest, records, 'small-model', 'big-model');
-    assert.deepEqual(sessionConfig, { model: 'big-model', availableTools: [] });
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    assert.deepEqual(sessionConfig, { model: "big-model", availableTools: [] });
     assert.equal(callCount, 1);
     assert.equal(sentOptions.attachments, undefined);
     assert.match(sentOptions.prompt, /<grouping-input-json>/);
     assert.match(sentOptions.prompt, /"folder":"attempt__retry0"/);
     assert.match(sentOptions.prompt, /"issueIndex":1/);
-    assert.match(sentOptions.prompt, /"discriminators":"Open flow passed; completion timed out\."/);
-    assert.match(sentOptions.prompt, /ancestor step names are scenario context, not standalone failure signatures/);
-    assert.match(sentOptions.prompt, /Differences only in those labels must not split issues/);
-    assert.match(sentOptions.prompt, /Do not merge solely because issues share a product, broad timeout category, missing-element category, or similar root-cause wording/);
-    assert.match(sentOptions.prompt, /Bias toward splitting when a material field conflicts or the evidence needed to compare the break points is missing/);
+    assert.match(
+      sentOptions.prompt,
+      /"failingOperation":"Click result button"/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /"discriminators":"Open flow passed; completion timed out\."/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /ancestor step names are scenario context, not standalone failure signatures/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /Differences only in those labels must not split issues/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /Do not merge solely because issues share a product, broad timeout category, missing-element category, or similar root-cause wording/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /Bias toward splitting when a material field conflicts or the evidence needed to compare the break points is missing/,
+    );
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
-    assert.equal(fs.existsSync(path.join(runDir, 'grouped-analysis.md')), true);
+    assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

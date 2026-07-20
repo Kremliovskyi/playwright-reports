@@ -233,6 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const failuresModalCopyBtn = document.getElementById('failures-modal-copy-btn') as HTMLButtonElement;
   const failuresModalViewLink = document.getElementById('failures-modal-view-link') as HTMLAnchorElement;
     const failuresModalGroupedLink = document.getElementById('failures-modal-grouped-link') as HTMLAnchorElement;
+    const activeFailureAnalyses = new Set<string>();
 
   const reportInfoModal = document.getElementById('report-info-modal') as HTMLElement;
   const closeReportInfoModalBtn = document.getElementById('close-report-info-modal-btn') as HTMLButtonElement;
@@ -1444,6 +1445,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Logic to handle failure analysis (playwright-traces-reader `failures` + Copilot SDK per-trace records)
   const handleFailures = async (reportPath: string, row: HTMLElement) => {
+      if (activeFailureAnalyses.has(reportPath)) return;
+      activeFailureAnalyses.add(reportPath);
       showRowProgress(row, 'Checking Copilot...');
 
       // Subscribe to per-trace AI analysis progress over SSE.
@@ -1480,6 +1483,10 @@ document.addEventListener('DOMContentLoaded', () => {
           });
           const data = await response.json();
           if (!response.ok) {
+              if (data.code === 'FAILURE_ANALYSIS_IN_PROGRESS') {
+                  hideRowProgress(row, 'error', 'Analysis already running');
+                  return;
+              }
               if (data.code === 'COPILOT_MODEL_UNAVAILABLE') {
                   hideRowProgress(row, 'error', `Select ${data.modelRole || 'a'} model`);
                   const warningModal = document.getElementById('copilot-model-warning-modal');
@@ -1523,6 +1530,7 @@ document.addEventListener('DOMContentLoaded', () => {
           showErrorDialog('Failure analysis failed', err);
       } finally {
           if (aiEvents) aiEvents.close();
+          activeFailureAnalyses.delete(reportPath);
       }
   };
 

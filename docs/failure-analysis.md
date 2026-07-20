@@ -21,6 +21,18 @@ The dashboard runs the installed [`@andrii_kremlovskyi/playwright-traces-reader`
 <currentPath>/tmp/run-<timestamp>/
 ```
 
+## Concurrent requests and trace extraction
+
+Only one failure-analysis request may run for a report at a time. Repeated clicks in the same dashboard page are ignored while that report is active. If another browser tab or client starts the same report concurrently, the server returns `FAILURE_ANALYSIS_IN_PROGRESS`; the row briefly shows **Analysis already running** instead of starting a second CLI process. Different reports can still be analyzed independently, and the bounded three-way Copilot processing inside one completed digest is unaffected.
+
+The trace reader does not extract ZIPs into the report. It uses a persistent, content-addressed cache under the operating system's temporary directory:
+
+```text
+<os.tmpdir>/playwright-traces-reader/trace-cache/
+```
+
+Concurrent readers publish completed cache entries atomically. The reader accepts a verified competing entry and retries transient Windows `EPERM` rename failures, including brief antivirus or indexing locks. The source report remains unchanged. The cache has no automatic size limit; when no analysis or trace-reader command is running, it can be deleted and will be rebuilt on demand. See [Troubleshooting](troubleshooting.md#failure-analysis-fails-with-a-trace-cache-eperm-error) for recovery steps.
+
 ## Analysis directory layout
 
 Every failed attempt, including each retry, receives a separate folder. A generated run has this general layout:

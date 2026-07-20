@@ -38,6 +38,24 @@ Click the header's **Copilot** chip to see the current authentication or model e
 
 See [Configuration](configuration.md) for model selection behavior.
 
+## Failure analysis fails with a trace-cache `EPERM` error
+
+An error containing `EPERM: operation not permitted, rename` and a path below `%TEMP%\playwright-traces-reader\trace-cache` is a trace ZIP cache publication failure on Windows. Current versions serialize analysis of the same report, accept a verified cache entry produced by another process, and retry transient antivirus or indexing locks.
+
+If the error persists:
+
+1. Wait for other dashboard analyses or standalone `playwright-traces-reader` commands to finish.
+2. Rebuild and restart the dashboard so the server and installed reader version are current: `npm run restart`.
+3. With no reader command running, remove the disposable cache in PowerShell:
+
+	```powershell
+	Remove-Item "$env:TEMP\playwright-traces-reader\trace-cache" -Recurse -Force
+	```
+
+4. Retry **Analyze Failures** once. If it still fails, inspect `npm run logs` and check whether antivirus, indexing software, or directory permissions are repeatedly locking the reported path.
+
+Deleting this cache does not modify reports or previous analysis output. ZIP traces are extracted again when needed.
+
 ## BrowserStack runs do not start
 
 Check the BrowserStack tab in **Preferences** for the username, access key, and config filename. The config path is relative to the configured Playwright project root.

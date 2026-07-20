@@ -35,6 +35,7 @@ let appConfig: AppConfig = getConfig();
 // it — the cache only needs clearing when the report folder itself is mutated (extract/archive/rename/delete).
 const reportSizeCache = new Map<string, number>();
 const invalidateReportSize = (reportId: string): void => { reportSizeCache.delete(reportId); };
+const activeFailureAnalyses = new Set<string>();
 
 const refreshConfigCache = () => {
   appConfig = getConfig();
@@ -784,6 +785,15 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
   }
   if (!appConfig.currentPath) return res.status(400).json({ error: "Current directory not configured" });
 
+  const analysisKey = process.platform === 'win32' ? path.resolve(reportRootPath).toLowerCase() : path.resolve(reportRootPath);
+  if (activeFailureAnalyses.has(analysisKey)) {
+    return res.status(409).json({
+      code: 'FAILURE_ANALYSIS_IN_PROGRESS',
+      error: 'Failure analysis is already running for this report.'
+    });
+  }
+  activeFailureAnalyses.add(analysisKey);
+
   const config = appConfig;
   try {
     const result = await withCopilotAnalysisClient({
@@ -910,6 +920,8 @@ app.post('/api/failures', async (req: Request, res: Response): Promise<any> => {
       return res.status(status).json({ code: error.code, error: error.message, model: error.model, modelRole: error.modelRole });
     }
     res.status(500).json({ error: "Failed to analyze failures: " + error.message });
+  } finally {
+    activeFailureAnalyses.delete(analysisKey);
   }
 });
 

@@ -352,11 +352,165 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.equal(result.problemCount, 1);
     assert.equal(result.diagnostics.stage, "complete");
     assert.equal(result.diagnostics.reasoningEffort, "high");
+    assert.equal(result.diagnostics.requestCount, 1);
+    assert.equal(result.diagnostics.repairAttempted, false);
     assert.equal(result.diagnostics.contextTokenLimit, 272000);
     assert.equal(result.diagnostics.inputTokens, 2200);
     assert.equal(result.diagnostics.outputTokens, 300);
     assert.equal(result.diagnostics.finishReason, "stop");
     assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("repairs omitted issues in the same grouping session", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-repair-"),
+  );
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry("attempt__retry0", 0, "unexpected")],
+  };
+  const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+  const prompts = [];
+  const responses = [
+    {
+      summary: "One issue was grouped and one was omitted.",
+      problems: [
+        {
+          title: "Unexpected loading controls",
+          error: "Unexpected Back button",
+          whatHappens: "The loading screen shows an extra control.",
+          rootCause: "The loading snapshot changed.",
+          issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+        },
+      ],
+    },
+    {
+      summary: "A loading issue and a terminal timeout occurred.",
+      problems: [
+        {
+          title: "Unexpected loading controls",
+          error: "Unexpected Back button",
+          whatHappens: "The loading screen shows an extra control.",
+          rootCause: "The loading snapshot changed.",
+          issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+        },
+        {
+          title: "Result exceeds assertion window",
+          error: "Timeout 10000ms exceeded",
+          whatHappens: "The result appears after the timeout.",
+          rootCause: "The result is slow.",
+          issueRefs: [{ folder: "attempt__retry0", issueIndex: 2 }],
+        },
+      ],
+    },
+  ];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: { content: JSON.stringify(responses[prompts.length - 1]) },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const markdown = fs.readFileSync(result.filePath, "utf8");
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /FULL corrected grouping JSON object/);
+    assert.match(prompts[1], /"issueIndex":2/);
+    assert.match(prompts[1], /Unexpected loading controls/);
+    assert.equal(result.problemCount, 2);
+    assert.equal(result.diagnostics.requestCount, 2);
+    assert.equal(result.diagnostics.repairAttempted, true);
+    assert.equal(result.diagnostics.omittedIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 0);
+    assert.doesNotMatch(markdown, /Unclassified - omitted by grouping model/);
+    assert.match(markdown, /Result exceeds assertion window/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("retains the initial partial grouping when omission repair is invalid", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-repair-error-"),
+  );
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry("attempt__retry0", 0, "unexpected")],
+  };
+  const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+  let callCount = 0;
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait() {
+          callCount++;
+          if (callCount === 2)
+            return { data: { content: '{"summary":"truncated"' } };
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "One issue was grouped and one was omitted.",
+                problems: [
+                  {
+                    title: "Unexpected loading controls",
+                    error: "Unexpected Back button",
+                    whatHappens: "The loading screen shows an extra control.",
+                    rootCause: "The loading snapshot changed.",
+                    issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+                  },
+                ],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const markdown = fs.readFileSync(result.filePath, "utf8");
+    assert.equal(callCount, 2);
+    assert.equal(result.diagnostics.repairAttempted, true);
+    assert.equal(result.diagnostics.omittedIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 1);
+    assert.match(result.diagnostics.repairErrorMessage, /JSON/);
+    assert.match(markdown, /Unexpected loading controls/);
+    assert.match(markdown, /Unclassified - omitted by grouping model/);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

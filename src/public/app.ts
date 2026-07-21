@@ -1968,10 +1968,25 @@ document.addEventListener("DOMContentLoaded", () => {
         const lines = [
           `Grouping ${diagnostics.stage === "complete" ? "completed" : `failed at ${diagnostics.stage}`}`,
           `${diagnostics.model} · ${diagnostics.reasoningEffort} reasoning · ${diagnostics.contextTier} context`,
-          `${diagnostics.attemptCount} attempts · ${diagnostics.issueCount} issues · ${formatBytes(diagnostics.promptBytes)} prompt · ${formatBytes(diagnostics.responseBytes)} response`,
+          `${diagnostics.attemptCount} attempts · ${diagnostics.issueCount} issues · ${diagnostics.requestCount} model request${diagnostics.requestCount === 1 ? "" : "s"}`,
+          `${formatBytes(diagnostics.promptBytes)} total prompt · ${formatBytes(diagnostics.responseBytes)} total response`,
           `${formatTokens(diagnostics.inputTokens)} input tokens · ${formatTokens(diagnostics.outputTokens)} output tokens`,
-          `Context ${formatTokens(diagnostics.contextTokens)} / ${formatTokens(diagnostics.contextTokenLimit)} tokens · ${(diagnostics.durationMs / 1000).toFixed(1)}s / ${(diagnostics.timeoutMs / 1000).toFixed(0)}s timeout`,
+          `Context ${formatTokens(diagnostics.contextTokens)} / ${formatTokens(diagnostics.contextTokenLimit)} tokens · ${(diagnostics.durationMs / 1000).toFixed(1)}s elapsed · ${(diagnostics.timeoutMs / 1000).toFixed(0)}s per-request timeout`,
         ];
+        if (diagnostics.repairAttempted) {
+          const repaired =
+            diagnostics.omittedIssueCountBeforeRepair -
+            diagnostics.omittedIssueCountAfterRepair;
+          if (diagnostics.repairErrorMessage) {
+            lines.push(
+              `Repair failed: ${diagnostics.repairErrorMessage} · ${diagnostics.omittedIssueCountAfterRepair} issue${diagnostics.omittedIssueCountAfterRepair === 1 ? "" : "s"} left unclassified`,
+            );
+          } else {
+            lines.push(
+              `Repair resolved ${repaired}/${diagnostics.omittedIssueCountBeforeRepair} omitted issues · ${diagnostics.omittedIssueCountAfterRepair} left unclassified`,
+            );
+          }
+        }
         if (diagnostics.finishReason)
           lines.push(`Finish reason: ${diagnostics.finishReason}`);
         if (diagnostics.truncationCount || diagnostics.compactionCount) {

@@ -41,6 +41,9 @@ export type GroupingStage =
   | "request"
   | "parse"
   | "validate"
+  | "repair-request"
+  | "repair-parse"
+  | "repair-validate"
   | "render"
   | "write"
   | "complete";
@@ -54,8 +57,13 @@ export interface GroupingDiagnostics {
   stage: GroupingStage;
   attemptCount: number;
   issueCount: number;
+  requestCount: number;
   promptBytes: number;
   responseBytes: number;
+  repairAttempted: boolean;
+  omittedIssueCountBeforeRepair: number;
+  omittedIssueCountAfterRepair: number;
+  repairErrorMessage?: string;
   inputTokens?: number;
   outputTokens?: number;
   finishReason?: string;
@@ -176,6 +184,61 @@ Rules:
 ${JSON.stringify(buildGroupingInput(manifest, records))}
 </grouping-input-json>`;
 
+const buildGroupingRepairPrompt = (
+  manifest: FailureManifest,
+  records: UnderstandingRecord[],
+  response: GroupingResponse,
+  missingRefs: GroupingIssueRef[],
+): string => {
+  const entryByFolder = new Map(
+    manifest.failures.map((entry) => [entry.folder, entry]),
+  );
+  const recordByFolder = new Map(
+    records.map((record) => [record.folder, record]),
+  );
+  const omittedIssues = missingRefs.map((ref) => {
+    const entry = entryByFolder.get(ref.folder);
+    const record = recordByFolder.get(ref.folder)!;
+    return {
+      ref,
+      testTitle: entry?.testTitle || record.testTitle,
+      spec: record.spec,
+      retryIndex: entry?.retryIndex,
+      outcome: entry?.outcome,
+      manifestStep: entry?.title,
+      stepPath: record.stepPath,
+      failingOperation: record.failingOperation,
+      terminalErrorNormalized: record.errorNormalized,
+      network: record.network,
+      issue: record.issues[ref.issueIndex - 1],
+      finalPageState: record.finalPageState,
+      transientVsFinalContradiction: record.transientVsFinalContradiction,
+      rootCauseHypothesis: record.rootCauseHypothesis,
+      discriminators: record.discriminators,
+    };
+  });
+
+  return `Your previous grouping response was structurally usable but omitted the exact issue references listed below.
+
+Return the FULL corrected grouping JSON object using the same schema as your previous response. Return JSON only, with no prose or markdown fences.
+
+Rules:
+- Preserve every existing issue reference exactly once. Do not drop, duplicate, or rename existing references.
+- Assign every omitted issue exactly once.
+- When an omitted issue has positive matching evidence for an existing problem, append its reference to that problem's issueRefs.
+- Otherwise create a new fully described problem for it.
+- Keep materially different failing operations, break points, final states, network correlations, or transient-vs-final results separate.
+- Do not return only a patch or only the omitted issues; return the complete corrected summary and problems array.
+
+<previous-grouping-response-json>
+${JSON.stringify(response)}
+</previous-grouping-response-json>
+
+<omitted-issues-json>
+${JSON.stringify(omittedIssues)}
+</omitted-issues-json>`;
+};
+
 const extractJson = (text: string): unknown => {
   let candidate = text.trim();
   const fenceMatch = candidate.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -260,6 +323,29 @@ export const validateGroupingResponse = (
   response: GroupingResponse,
   records: UnderstandingRecord[],
 ): GroupingResponse => {
+  const missing = validateGroupingReferences(response, records);
+  if (!missing.length) return response;
+
+  return {
+    ...response,
+    problems: [
+      ...response.problems,
+      {
+        title: "Unclassified - omitted by grouping model",
+        error: `${missing.length} issue${missing.length === 1 ? "" : "s"} were omitted from the grouping response.`,
+        whatHappens:
+          "The grouping model returned a usable partial result but did not assign these per-trace issues to a problem.",
+        rootCause: "The grouping response omitted required issue references.",
+        issueRefs: missing,
+      },
+    ],
+  };
+};
+
+const validateGroupingReferences = (
+  response: GroupingResponse,
+  records: UnderstandingRecord[],
+): GroupingIssueRef[] => {
   const expected = new Set<string>();
   for (const record of records) {
     if (record._error || record.issues.length === 0) continue;
@@ -286,27 +372,12 @@ export const validateGroupingResponse = (
     }
   }
 
-  const missing = [...expected].filter((key) => !seen.has(key));
-  if (!missing.length) return response;
-
-  const issueRefs = missing.map((key) => {
-    const [folder, issueIndex] = key.split("\0");
-    return { folder, issueIndex: Number(issueIndex) };
-  });
-  return {
-    ...response,
-    problems: [
-      ...response.problems,
-      {
-        title: "Unclassified - omitted by grouping model",
-        error: `${missing.length} issue${missing.length === 1 ? "" : "s"} were omitted from the grouping response.`,
-        whatHappens:
-          "The grouping model returned a usable partial result but did not assign these per-trace issues to a problem.",
-        rootCause: "The grouping response omitted required issue references.",
-        issueRefs,
-      },
-    ],
-  };
+  return [...expected]
+    .filter((key) => !seen.has(key))
+    .map((key) => {
+      const [folder, issueIndex] = key.split("\0");
+      return { folder, issueIndex: Number(issueIndex) };
+    });
 };
 
 const markdownCell = (value: string): string =>
@@ -544,8 +615,12 @@ export const groupRun = async (
       (total, record) => total + record.issues.length,
       0,
     ),
+    requestCount: 1,
     promptBytes: Buffer.byteLength(prompt, "utf8"),
     responseBytes: 0,
+    repairAttempted: false,
+    omittedIssueCountBeforeRepair: 0,
+    omittedIssueCountAfterRepair: 0,
     truncationCount: 0,
     compactionCount: 0,
   };
@@ -575,8 +650,12 @@ export const groupRun = async (
     } else if (event.type === "session.compaction_complete") {
       diagnostics.compactionCount++;
     } else if (event.type === "session.error") {
-      diagnostics.errorType = event.data.errorType;
-      diagnostics.errorMessage = event.data.message;
+      if (diagnostics.stage.startsWith("repair-")) {
+        diagnostics.repairErrorMessage = event.data.message;
+      } else {
+        diagnostics.errorType = event.data.errorType;
+        diagnostics.errorMessage = event.data.message;
+      }
       diagnostics.providerCallId = event.data.providerCallId;
       diagnostics.serviceRequestId = event.data.serviceRequestId;
     }
@@ -589,7 +668,57 @@ export const groupRun = async (
     diagnostics.stage = "parse";
     const parsedResponse = parseGroupingResponse(content);
     diagnostics.stage = "validate";
-    const response = validateGroupingResponse(parsedResponse, records);
+    const missingRefs = validateGroupingReferences(parsedResponse, records);
+    diagnostics.omittedIssueCountBeforeRepair = missingRefs.length;
+    let response: GroupingResponse;
+    if (missingRefs.length) {
+      diagnostics.repairAttempted = true;
+      diagnostics.stage = "repair-request";
+      const repairPrompt = buildGroupingRepairPrompt(
+        manifest,
+        records,
+        parsedResponse,
+        missingRefs,
+      );
+      diagnostics.requestCount++;
+      diagnostics.promptBytes += Buffer.byteLength(repairPrompt, "utf8");
+      try {
+        const repairResult = await session.sendAndWait(
+          { prompt: repairPrompt },
+          GROUPING_TIMEOUT_MS,
+        );
+        const repairContent = repairResult?.data?.content || "";
+        diagnostics.responseBytes += Buffer.byteLength(repairContent, "utf8");
+        diagnostics.stage = "repair-parse";
+        const repairedResponse = parseGroupingResponse(repairContent);
+        diagnostics.stage = "repair-validate";
+        const remainingRefs = validateGroupingReferences(
+          repairedResponse,
+          records,
+        );
+        if (remainingRefs.length) {
+          diagnostics.repairErrorMessage = `Repair response still omitted ${remainingRefs.length} issue${remainingRefs.length === 1 ? "" : "s"}.`;
+          diagnostics.omittedIssueCountAfterRepair = missingRefs.length;
+          response = validateGroupingResponse(parsedResponse, records);
+        } else {
+          diagnostics.omittedIssueCountAfterRepair = 0;
+          response = repairedResponse;
+        }
+      } catch (repairError) {
+        diagnostics.repairErrorMessage =
+          diagnostics.repairErrorMessage ||
+          diagnostics.errorMessage ||
+          (repairError instanceof Error
+            ? repairError.message
+            : String(repairError));
+        diagnostics.errorType = undefined;
+        diagnostics.errorMessage = undefined;
+        diagnostics.omittedIssueCountAfterRepair = missingRefs.length;
+        response = validateGroupingResponse(parsedResponse, records);
+      }
+    } else {
+      response = parsedResponse;
+    }
     diagnostics.stage = "render";
     const markdown = renderGroupedAnalysis(
       runDir,

@@ -79,14 +79,16 @@ If Copilot cannot produce a valid record for one folder, the dashboard still wri
 
 ## Grouped problem analysis
 
-After every per-attempt record finishes, the dashboard makes one additional Copilot request using the configured big model. The request attaches only:
+After every per-attempt record finishes, the dashboard makes an initial Copilot grouping request using the configured big model. The request embeds only:
 
-- The run's `index.json` manifest.
-- Each analyzable folder's `ai-analysis.md` file.
+- The manifest metadata needed for retries, outcomes, and test identity.
+- The distilled fields from each valid per-attempt `ai-analysis.md` record.
 
 It never sends `error.md`, `failure.json`, screenshots, console/network JSON, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
 
 Grouping prioritizes each record's discriminators and precise break point, followed by its failing step/path, normalized error and spec family, network correlation, and final page state. Every distinct issue in the records, including earlier soft assertions, must be assigned exactly once. The dashboard validates those folder-and-issue references before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
+
+If the initial response is usable but omits issue references, the dashboard sends one focused repair turn in the same session. It supplies the previous grouping and only the omitted issue evidence, asking for a complete corrected response that either adds each issue to a matching existing problem or creates a new problem. The corrected response is fully revalidated. A failed or incomplete repair does not discard the initial result; any remaining omissions are retained under `Unclassified - omitted by grouping model`.
 
 `grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and a failed-attempt reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
 

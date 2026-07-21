@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const {
   groupRun,
+  GroupingRunError,
   parseGroupingResponse,
   renderGroupedAnalysis,
   validateGroupingResponse,
@@ -253,13 +254,33 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     let callCount = 0;
     let sentOptions;
     let disconnected = false;
+    let eventHandler;
     const client = {
       async createSession(config) {
         sessionConfig = config;
         return {
+          on(handler) {
+            eventHandler = handler;
+            return () => {
+              eventHandler = undefined;
+            };
+          },
           async sendAndWait(options) {
             callCount += 1;
             sentOptions = options;
+            eventHandler({
+              type: "session.usage_info",
+              data: { currentTokens: 2500, tokenLimit: 272000 },
+            });
+            eventHandler({
+              type: "assistant.usage",
+              data: {
+                model: "big-model",
+                inputTokens: 2200,
+                outputTokens: 300,
+                finishReason: "stop",
+              },
+            });
             return {
               data: {
                 content: JSON.stringify({
@@ -292,7 +313,12 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
       "small-model",
       "big-model",
     );
-    assert.deepEqual(sessionConfig, { model: "big-model", availableTools: [] });
+    assert.deepEqual(sessionConfig, {
+      model: "big-model",
+      reasoningEffort: "high",
+      contextTier: "default",
+      availableTools: [],
+    });
     assert.equal(callCount, 1);
     assert.equal(sentOptions.attachments, undefined);
     assert.match(sentOptions.prompt, /<grouping-input-json>/);
@@ -324,7 +350,72 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     );
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
+    assert.equal(result.diagnostics.stage, "complete");
+    assert.equal(result.diagnostics.reasoningEffort, "high");
+    assert.equal(result.diagnostics.contextTokenLimit, 272000);
+    assert.equal(result.diagnostics.inputTokens, 2200);
+    assert.equal(result.diagnostics.outputTokens, 300);
+    assert.equal(result.diagnostics.finishReason, "stop");
     assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("preserves grouping diagnostics when the model response is invalid", async () => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-group-error-"));
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry("attempt__retry0", 0, "unexpected")],
+  };
+  const records = [record("attempt__retry0", [terminalIssue])];
+  let disconnected = false;
+  const client = {
+    async createSession() {
+      return {
+        on(handler) {
+          this.eventHandler = handler;
+          return () => {};
+        },
+        async sendAndWait() {
+          this.eventHandler({
+            type: "assistant.usage",
+            data: {
+              model: "big-model",
+              inputTokens: 1800,
+              outputTokens: 128000,
+              finishReason: "length",
+            },
+          });
+          return { data: { content: '{"summary":"truncated"' } };
+        },
+        async disconnect() {
+          disconnected = true;
+        },
+      };
+    },
+  };
+
+  try {
+    await assert.rejects(
+      groupRun(client, runDir, manifest, records, "small-model", "big-model"),
+      (error) => {
+        assert.equal(error instanceof GroupingRunError, true);
+        assert.equal(error.diagnostics.stage, "parse");
+        assert.equal(error.diagnostics.inputTokens, 1800);
+        assert.equal(error.diagnostics.outputTokens, 128000);
+        assert.equal(error.diagnostics.finishReason, "length");
+        assert.equal(error.diagnostics.responseBytes, 22);
+        assert.match(error.diagnostics.errorMessage, /JSON/);
+        return true;
+      },
+    );
+    assert.equal(disconnected, true);
+    assert.equal(
+      fs.existsSync(path.join(runDir, "grouped-analysis.md")),
+      false,
+    );
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

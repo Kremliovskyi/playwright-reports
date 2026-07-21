@@ -1785,6 +1785,20 @@ p {
   border: 1px solid var(--border-color);
 }
 
+.grouping-diagnostics {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .digest-actions-row {
   display: flex;
   align-items: center;

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { CopilotClient } from "@github/copilot-sdk";
+import { CopilotClient, type SessionEvent } from "@github/copilot-sdk";
 import {
   FailureManifest,
   FailureManifestEntry,
@@ -34,6 +34,49 @@ export interface GroupRunResult {
   problemCount: number;
   fileName: string;
   filePath: string;
+  diagnostics: GroupingDiagnostics;
+}
+
+export type GroupingStage =
+  | "request"
+  | "parse"
+  | "validate"
+  | "render"
+  | "write"
+  | "complete";
+
+export interface GroupingDiagnostics {
+  model: string;
+  reasoningEffort: "high";
+  contextTier: "default";
+  timeoutMs: number;
+  durationMs: number;
+  stage: GroupingStage;
+  attemptCount: number;
+  issueCount: number;
+  promptBytes: number;
+  responseBytes: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  finishReason?: string;
+  contextTokens?: number;
+  contextTokenLimit?: number;
+  truncationCount: number;
+  compactionCount: number;
+  errorType?: string;
+  errorMessage?: string;
+  providerCallId?: string;
+  serviceRequestId?: string;
+}
+
+export class GroupingRunError extends Error {
+  constructor(
+    message: string,
+    readonly diagnostics: GroupingDiagnostics,
+  ) {
+    super(message);
+    this.name = "GroupingRunError";
+  }
 }
 
 interface RenderProblem {
@@ -484,19 +527,70 @@ export const groupRun = async (
   smallModel: string,
   bigModel: string,
 ): Promise<GroupRunResult> => {
+  const prompt = buildGroupingPrompt(manifest, records);
+  const validRecords = records.filter(
+    (record) => !record._error && record.issues.length > 0,
+  );
+  const startedAt = Date.now();
+  const diagnostics: GroupingDiagnostics = {
+    model: bigModel,
+    reasoningEffort: "high",
+    contextTier: "default",
+    timeoutMs: GROUPING_TIMEOUT_MS,
+    durationMs: 0,
+    stage: "request",
+    attemptCount: validRecords.length,
+    issueCount: validRecords.reduce(
+      (total, record) => total + record.issues.length,
+      0,
+    ),
+    promptBytes: Buffer.byteLength(prompt, "utf8"),
+    responseBytes: 0,
+    truncationCount: 0,
+    compactionCount: 0,
+  };
   const session = await client.createSession({
     model: bigModel,
+    reasoningEffort: "high",
+    contextTier: "default",
     availableTools: [],
   });
+  const onSessionEvent = (event: SessionEvent): void => {
+    if (event.type === "session.usage_info") {
+      diagnostics.contextTokens = event.data.currentTokens;
+      diagnostics.contextTokenLimit = event.data.tokenLimit;
+    } else if (event.type === "assistant.usage") {
+      if (event.data.inputTokens !== undefined)
+        diagnostics.inputTokens =
+          (diagnostics.inputTokens || 0) + event.data.inputTokens;
+      if (event.data.outputTokens !== undefined)
+        diagnostics.outputTokens =
+          (diagnostics.outputTokens || 0) + event.data.outputTokens;
+      diagnostics.finishReason = event.data.finishReason;
+      diagnostics.providerCallId = event.data.providerCallId;
+      diagnostics.serviceRequestId = event.data.serviceRequestId;
+    } else if (event.type === "session.truncation") {
+      diagnostics.truncationCount++;
+      diagnostics.contextTokenLimit = event.data.tokenLimit;
+    } else if (event.type === "session.compaction_complete") {
+      diagnostics.compactionCount++;
+    } else if (event.type === "session.error") {
+      diagnostics.errorType = event.data.errorType;
+      diagnostics.errorMessage = event.data.message;
+      diagnostics.providerCallId = event.data.providerCallId;
+      diagnostics.serviceRequestId = event.data.serviceRequestId;
+    }
+  };
+  const unsubscribe = session.on(onSessionEvent);
   try {
-    const result = await session.sendAndWait(
-      { prompt: buildGroupingPrompt(manifest, records) },
-      GROUPING_TIMEOUT_MS,
-    );
-    const response = validateGroupingResponse(
-      parseGroupingResponse(result?.data?.content || ""),
-      records,
-    );
+    const result = await session.sendAndWait({ prompt }, GROUPING_TIMEOUT_MS);
+    const content = result?.data?.content || "";
+    diagnostics.responseBytes = Buffer.byteLength(content, "utf8");
+    diagnostics.stage = "parse";
+    const parsedResponse = parseGroupingResponse(content);
+    diagnostics.stage = "validate";
+    const response = validateGroupingResponse(parsedResponse, records);
+    diagnostics.stage = "render";
     const markdown = renderGroupedAnalysis(
       runDir,
       manifest,
@@ -505,6 +599,7 @@ export const groupRun = async (
       smallModel,
       bigModel,
     );
+    diagnostics.stage = "write";
     const filePath = path.join(runDir, GROUPED_ANALYSIS_FILENAME);
     const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
     try {
@@ -518,6 +613,8 @@ export const groupRun = async (
       }
       throw error;
     }
+    diagnostics.stage = "complete";
+    diagnostics.durationMs = Date.now() - startedAt;
     return {
       problemCount:
         response.problems.length +
@@ -526,8 +623,15 @@ export const groupRun = async (
           : 0),
       fileName: GROUPED_ANALYSIS_FILENAME,
       filePath,
+      diagnostics: { ...diagnostics },
     };
+  } catch (error) {
+    diagnostics.durationMs = Date.now() - startedAt;
+    const message = error instanceof Error ? error.message : String(error);
+    diagnostics.errorMessage ||= message;
+    throw new GroupingRunError(message, { ...diagnostics });
   } finally {
+    unsubscribe();
     await session.disconnect();
   }
 };

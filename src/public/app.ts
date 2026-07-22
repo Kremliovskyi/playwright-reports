@@ -1974,16 +1974,18 @@ document.addEventListener("DOMContentLoaded", () => {
           `Context ${formatTokens(diagnostics.contextTokens)} / ${formatTokens(diagnostics.contextTokenLimit)} tokens · ${(diagnostics.durationMs / 1000).toFixed(1)}s elapsed · ${(diagnostics.timeoutMs / 1000).toFixed(0)}s per-request timeout`,
         ];
         if (diagnostics.repairAttempted) {
-          const repaired =
-            diagnostics.omittedIssueCountBeforeRepair -
-            diagnostics.omittedIssueCountAfterRepair;
+          const referenceDefects = [
+            `${diagnostics.omittedIssueCountBeforeRepair} missing`,
+            `${diagnostics.unknownIssueCountBeforeRepair || 0} unknown`,
+            `${diagnostics.duplicateIssueCountBeforeRepair || 0} duplicate`,
+          ].join(" · ");
           if (diagnostics.repairErrorMessage) {
             lines.push(
-              `Repair failed: ${diagnostics.repairErrorMessage} · ${diagnostics.omittedIssueCountAfterRepair} issue${diagnostics.omittedIssueCountAfterRepair === 1 ? "" : "s"} left unclassified`,
+              `Reference repair failed: ${diagnostics.repairErrorMessage} · fallback sanitized the initial response (${referenceDefects}) · ${diagnostics.omittedIssueCountAfterRepair} issue${diagnostics.omittedIssueCountAfterRepair === 1 ? "" : "s"} placed in Unclassified`,
             );
           } else {
             lines.push(
-              `Repair resolved ${repaired}/${diagnostics.omittedIssueCountBeforeRepair} omitted issues · ${diagnostics.omittedIssueCountAfterRepair} left unclassified`,
+              `Reference repair resolved ${referenceDefects} · ${diagnostics.omittedIssueCountAfterRepair} issues placed in Unclassified`,
             );
           }
         }

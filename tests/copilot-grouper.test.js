@@ -52,6 +52,15 @@ const terminalIssue = {
   explanation: "The result appeared after the assertion window.",
 };
 
+const modelProblem = (issueIds, overrides = {}) => ({
+  title: "Grouped issue",
+  error: "Representative error",
+  whatHappens: "The observed operation fails.",
+  rootCause: "The operation did not reach the expected state.",
+  issueIds,
+  ...overrides,
+});
+
 test("renders retries and secondary issues without inflating reconciliation", () => {
   const manifest = {
     count: 3,
@@ -291,7 +300,7 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
                       error: "Timeout 10000ms exceeded",
                       whatHappens: "The result appears too late.",
                       rootCause: "The result exceeded the assertion window.",
-                      issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+                      issueIds: ["I1"],
                     },
                   ],
                 }),
@@ -323,7 +332,8 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.equal(sentOptions.attachments, undefined);
     assert.match(sentOptions.prompt, /<grouping-input-json>/);
     assert.match(sentOptions.prompt, /"folder":"attempt__retry0"/);
-    assert.match(sentOptions.prompt, /"issueIndex":1/);
+    assert.match(sentOptions.prompt, /"issueId":"I1"/);
+    assert.match(sentOptions.prompt, /"issueIds": \["I1", "I2"\]/);
     assert.match(
       sentOptions.prompt,
       /"failingOperation":"Click result button"/,
@@ -384,7 +394,7 @@ test("repairs omitted issues in the same grouping session", async () => {
           error: "Unexpected Back button",
           whatHappens: "The loading screen shows an extra control.",
           rootCause: "The loading snapshot changed.",
-          issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+          issueIds: ["I1"],
         },
       ],
     },
@@ -396,14 +406,14 @@ test("repairs omitted issues in the same grouping session", async () => {
           error: "Unexpected Back button",
           whatHappens: "The loading screen shows an extra control.",
           rootCause: "The loading snapshot changed.",
-          issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+          issueIds: ["I1"],
         },
         {
           title: "Result exceeds assertion window",
           error: "Timeout 10000ms exceeded",
           whatHappens: "The result appears after the timeout.",
           rootCause: "The result is slow.",
-          issueRefs: [{ folder: "attempt__retry0", issueIndex: 2 }],
+          issueIds: ["I2"],
         },
       ],
     },
@@ -437,7 +447,8 @@ test("repairs omitted issues in the same grouping session", async () => {
     const markdown = fs.readFileSync(result.filePath, "utf8");
     assert.equal(prompts.length, 2);
     assert.match(prompts[1], /FULL corrected grouping JSON object/);
-    assert.match(prompts[1], /"issueIndex":2/);
+    assert.match(prompts[1], /"issueId":"I2"/);
+    assert.match(prompts[1], /<allowed-issue-ids-json>/);
     assert.match(prompts[1], /Unexpected loading controls/);
     assert.equal(result.problemCount, 2);
     assert.equal(result.diagnostics.requestCount, 2);
@@ -446,6 +457,158 @@ test("repairs omitted issues in the same grouping session", async () => {
     assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 0);
     assert.doesNotMatch(markdown, /Unclassified - omitted by grouping model/);
     assert.match(markdown, /Result exceeds assertion window/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+for (const repairCase of [
+  {
+    name: "unknown issue IDs",
+    initialIssueIds: ["I1", "I99"],
+    diagnostics: {
+      omittedIssueCountBeforeRepair: 1,
+      unknownIssueCountBeforeRepair: 1,
+      duplicateIssueCountBeforeRepair: 0,
+    },
+    promptPattern: /"unknownIssueIds":\["I99"\]/,
+  },
+  {
+    name: "duplicate issue IDs",
+    initialIssueIds: ["I1", "I1", "I2"],
+    diagnostics: {
+      omittedIssueCountBeforeRepair: 0,
+      unknownIssueCountBeforeRepair: 0,
+      duplicateIssueCountBeforeRepair: 1,
+    },
+    promptPattern: /"duplicateIssueIds":\["I1"\]/,
+  },
+]) {
+  test(`repairs ${repairCase.name} in the same grouping session`, async () => {
+    const runDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "copilot-group-reference-repair-"),
+    );
+    const manifest = {
+      count: 1,
+      runDir,
+      failures: [entry("attempt__retry0", 0, "unexpected")],
+    };
+    const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+    const prompts = [];
+    const responses = [
+      {
+        summary: "The initial response has invalid references.",
+        problems: [modelProblem(repairCase.initialIssueIds)],
+      },
+      {
+        summary: "Both issues are assigned exactly once.",
+        problems: [modelProblem(["I1", "I2"])],
+      },
+    ];
+    const client = {
+      async createSession() {
+        return {
+          on() {
+            return () => {};
+          },
+          async sendAndWait(options) {
+            prompts.push(options.prompt);
+            return {
+              data: { content: JSON.stringify(responses[prompts.length - 1]) },
+            };
+          },
+          async disconnect() {},
+        };
+      },
+    };
+
+    try {
+      const result = await groupRun(
+        client,
+        runDir,
+        manifest,
+        records,
+        "small-model",
+        "big-model",
+      );
+      const markdown = fs.readFileSync(result.filePath, "utf8");
+      assert.equal(prompts.length, 2);
+      assert.match(prompts[1], repairCase.promptPattern);
+      assert.equal(result.diagnostics.repairAttempted, true);
+      for (const [key, value] of Object.entries(repairCase.diagnostics))
+        assert.equal(result.diagnostics[key], value);
+      assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 0);
+      assert.equal(result.diagnostics.unknownIssueCountAfterRepair, 0);
+      assert.equal(result.diagnostics.duplicateIssueCountAfterRepair, 0);
+      assert.doesNotMatch(markdown, /Unclassified/);
+      assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
+    } finally {
+      fs.rmSync(runDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test("sanitizes unknown, duplicate, and missing IDs when repair fails", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-reference-fallback-"),
+  );
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry("attempt__retry0", 0, "unexpected")],
+  };
+  const records = [record("attempt__retry0", [softIssue, terminalIssue])];
+  let callCount = 0;
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait() {
+          callCount++;
+          if (callCount === 2)
+            return { data: { content: '{"summary":"truncated"' } };
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "The initial response has every reference defect.",
+                problems: [
+                  modelProblem(["I1", "I404"], { title: "Valid placement" }),
+                  modelProblem(["I1"], { title: "Duplicate placement" }),
+                ],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const markdown = fs.readFileSync(result.filePath, "utf8");
+    assert.equal(callCount, 2);
+    assert.equal(result.problemCount, 2);
+    assert.equal(result.diagnostics.omittedIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.unknownIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.duplicateIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 1);
+    assert.equal(result.diagnostics.unknownIssueCountAfterRepair, 0);
+    assert.equal(result.diagnostics.duplicateIssueCountAfterRepair, 0);
+    assert.match(markdown, /Valid placement/);
+    assert.doesNotMatch(markdown, /Duplicate placement/);
+    assert.doesNotMatch(markdown, /I404/);
+    assert.match(markdown, /Unclassified - invalid grouping references/);
+    assert.match(markdown, /\*\*Total: 1 = 1 failed attempts\*\*/);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
@@ -482,7 +645,7 @@ test("retains the initial partial grouping when omission repair is invalid", asy
                     error: "Unexpected Back button",
                     whatHappens: "The loading screen shows an extra control.",
                     rootCause: "The loading snapshot changed.",
-                    issueRefs: [{ folder: "attempt__retry0", issueIndex: 1 }],
+                    issueIds: ["I1"],
                   },
                 ],
               }),
@@ -510,7 +673,7 @@ test("retains the initial partial grouping when omission repair is invalid", asy
     assert.equal(result.diagnostics.omittedIssueCountAfterRepair, 1);
     assert.match(result.diagnostics.repairErrorMessage, /JSON/);
     assert.match(markdown, /Unexpected loading controls/);
-    assert.match(markdown, /Unclassified - omitted by grouping model/);
+    assert.match(markdown, /Unclassified - invalid grouping references/);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

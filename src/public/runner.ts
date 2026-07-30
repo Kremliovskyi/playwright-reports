@@ -767,7 +767,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await showDialog("Playwright config has to be selected for test run");
       return;
     }
-    if (selectedProjects.length === 0) {
+    if (allProjects.length > 0 && selectedProjects.length === 0) {
       await showDialog("Project has to be selected for test run");
       return;
     }

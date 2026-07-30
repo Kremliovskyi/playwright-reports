@@ -551,8 +551,8 @@
             <div class="form-group" style="margin-top: 1.5rem">
               <label for="project-path-input">Playwright Project Path</label>
               <p class="form-hint">
-                Absolute path to your Playwright project containing
-                playwright.config.ts.
+                Absolute project root scanned for Playwright and BrowserStack
+                config files.
               </p>
               <input
                 type="text"
@@ -603,20 +603,6 @@
                 id="browserstack-key-input"
                 class="path-input full-width"
                 placeholder="Your access key"
-              />
-            </div>
-
-            <div class="form-group" style="margin-top: 1.5rem">
-              <label for="browserstack-config-input">BrowserStack Config</label>
-              <p class="form-hint">
-                Config filename relative to project root (e.g.,
-                browserstack.falcons.yml).
-              </p>
-              <input
-                type="text"
-                id="browserstack-config-input"
-                class="path-input full-width"
-                placeholder="e.g., browserstack.falcons.yml"
               />
             </div>
           </div>

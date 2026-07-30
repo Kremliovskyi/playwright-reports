@@ -11,12 +11,12 @@ After the first launch, open **Preferences** in the top-right corner and configu
 
 Use absolute paths for each directory.
 
-| Setting | Purpose |
-| --- | --- |
-| Current Reports Directory | Folder where the Playwright project writes new HTML reports, such as `playwright-report` |
-| Archived Reports Directory | Folder where historical reports should be stored |
-| Playwright Project Path | Project directory containing `playwright.config.ts`; required by the test runner |
-| Obsidian Vault Path | Optional directory containing Markdown analysis files |
+| Setting                    | Purpose                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Current Reports Directory  | Folder where the Playwright project writes new HTML reports, such as `playwright-report`                   |
+| Archived Reports Directory | Folder where historical reports should be stored                                                           |
+| Playwright Project Path    | Project root recursively scanned for Playwright and BrowserStack config files; required by the test runner |
+| Obsidian Vault Path        | Optional directory containing Markdown analysis files                                                      |
 
 ## BrowserStack
 
@@ -24,7 +24,8 @@ Configure these fields when tests will run on BrowserStack:
 
 - **BrowserStack Username**: Your BrowserStack username.
 - **BrowserStack Access Key**: Your access key. The UI displays this as a password field.
-- **BrowserStack Config**: Config filename relative to the Playwright project root, such as `browserstack.falcons.yml`.
+
+BrowserStack config files are selected in the test runner, not Preferences.
 
 ## Copilot
 
@@ -32,10 +33,10 @@ The optional **GitHub Token** authenticates the Copilot SDK used for AI failure 
 
 Select two model roles in the same tab:
 
-| Setting | Purpose |
-| --- | --- |
+| Setting     | Purpose                                                                          |
+| ----------- | -------------------------------------------------------------------------------- |
 | Small model | Creates one distilled `ai-analysis.md` record for each analyzable failed attempt |
-| Big model | Groups all completed per-attempt records into `grouped-analysis.md` |
+| Big model   | Groups all completed per-attempt records into `grouped-analysis.md`              |
 
 Click either model field to open the shared model picker. Selecting a model saves that field immediately; the two roles are independent and may use the same model. Missing or unavailable selections are not replaced automatically.
 

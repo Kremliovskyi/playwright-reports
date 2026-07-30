@@ -30,7 +30,7 @@ See [Getting Started](getting-started.md) for all server management commands.
 
 ## The test runner has no projects
 
-Verify that Playwright Project Path points to the directory containing `playwright.config.ts`. The dashboard resolves projects from that configuration file.
+Verify that Playwright Project Path contains a file matching `**/*playwright*.config.{ts,js,mts,mjs,cts,cjs}` and select it in the runner. Configs below `node_modules` and `test-results` are ignored.
 
 ## Failure analysis cannot select a model
 
@@ -48,9 +48,9 @@ If the error persists:
 2. Rebuild and restart the dashboard so the server and installed reader version are current: `npm run restart`.
 3. With no reader command running, remove the disposable cache in PowerShell:
 
-	```powershell
-	Remove-Item "$env:TEMP\playwright-traces-reader\trace-cache" -Recurse -Force
-	```
+   ```powershell
+   Remove-Item "$env:TEMP\playwright-traces-reader\trace-cache" -Recurse -Force
+   ```
 
 4. Retry **Analyze Failures** once. If it still fails, inspect `npm run logs` and check whether antivirus, indexing software, or directory permissions are repeatedly locking the reported path.
 
@@ -58,7 +58,7 @@ Deleting this cache does not modify reports or previous analysis output. ZIP tra
 
 ## BrowserStack runs do not start
 
-Check the BrowserStack tab in **Preferences** for the username, access key, and config filename. The config path is relative to the configured Playwright project root.
+Check the BrowserStack tab in **Preferences** for the username and access key, then select a discovered BrowserStack config in the runner. Config paths are stored relative to the configured Playwright project root.
 
 ## More technical detail
 

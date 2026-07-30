@@ -218,9 +218,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const browserstackKeyInput = document.getElementById(
     "browserstack-key-input",
   ) as HTMLInputElement;
-  const browserstackConfigInput = document.getElementById(
-    "browserstack-config-input",
-  ) as HTMLInputElement;
   const copilotTokenInput = document.getElementById(
     "copilot-token-input",
   ) as HTMLInputElement;
@@ -3101,7 +3098,6 @@ document.addEventListener("DOMContentLoaded", () => {
       vaultPathInput.value = data.vaultPath || "";
       browserstackUsernameInput.value = data.browserstackUsername || "";
       browserstackKeyInput.value = data.browserstackAccessKey || "";
-      browserstackConfigInput.value = data.browserstackConfig || "";
       copilotTokenInput.value = data.copilotToken || "";
       setCopilotModelFieldValue("small", data.copilotModel || "");
       setCopilotModelFieldValue("big", data.copilotBigModel || "");
@@ -3171,7 +3167,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const vaultPath = vaultPathInput.value.trim();
     const browserstackUsername = browserstackUsernameInput.value.trim();
     const browserstackAccessKey = browserstackKeyInput.value.trim();
-    const browserstackConfig = browserstackConfigInput.value.trim();
     const copilotToken = copilotTokenInput.value.trim();
 
     modalError.classList.add("hidden");
@@ -3189,7 +3184,6 @@ document.addEventListener("DOMContentLoaded", () => {
           vaultPath,
           browserstackUsername,
           browserstackAccessKey,
-          browserstackConfig,
           copilotToken,
         }),
       });

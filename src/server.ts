@@ -36,6 +36,10 @@ import treeKill from "tree-kill";
 import MarkdownIt from "markdown-it";
 import { randomUUID } from "node:crypto";
 import {
+  discoverRunnerConfigs,
+  resolveDiscoveredConfig,
+} from "./runner-configs";
+import {
   analyzeRun,
   isAnalyzableEntry,
   copilotAccessCheck,
@@ -136,7 +140,6 @@ app.post("/api/config", (req: Request, res: Response): any => {
     vaultPath,
     browserstackUsername,
     browserstackAccessKey,
-    browserstackConfig,
     copilotToken,
     copilotModel,
     copilotBigModel,
@@ -171,10 +174,6 @@ app.post("/api/config", (req: Request, res: Response): any => {
         browserstackAccessKey !== undefined
           ? browserstackAccessKey.trim()
           : appConfig.browserstackAccessKey,
-      browserstackConfig:
-        browserstackConfig !== undefined
-          ? browserstackConfig.trim()
-          : appConfig.browserstackConfig,
       copilotToken:
         copilotToken !== undefined
           ? copilotToken.trim()
@@ -701,17 +700,22 @@ app.get("/api/agent/reports/prepare", (req: Request, res: Response): any => {
   }
 });
 
-// Test Runner Integrations
-const resolvePlaywrightConfigPath = (
-  projectPath: string,
-): string | undefined => {
-  const configTs = path.join(projectPath, "playwright.config.ts");
-  const configJs = path.join(projectPath, "playwright.config.js");
+app.get(
+  "/api/runner-configs",
+  async (req: Request, res: Response): Promise<any> => {
+    refreshConfigCache();
+    if (!appConfig.projectPath || !fs.existsSync(appConfig.projectPath)) {
+      return res.json({ playwrightConfigs: [], browserstackConfigs: [] });
+    }
 
-  if (fs.existsSync(configTs)) return configTs;
-  if (fs.existsSync(configJs)) return configJs;
-  return undefined;
-};
+    try {
+      return res.json(await discoverRunnerConfigs(appConfig.projectPath));
+    } catch (error: any) {
+      console.error("Error discovering runner configs:", error);
+      return res.status(500).json({ error: error.message });
+    }
+  },
+);
 
 app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
@@ -720,8 +724,19 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
   }
 
   try {
-    const configPath = resolvePlaywrightConfigPath(appConfig.projectPath);
-    if (!configPath) return res.json({ projects: [] });
+    const { playwrightConfigs } = await discoverRunnerConfigs(
+      appConfig.projectPath,
+    );
+    const requestedConfig =
+      typeof req.query.config === "string" ? req.query.config : "";
+    const selectedConfig = requestedConfig || playwrightConfigs[0];
+    if (!selectedConfig) return res.json({ projects: [] });
+    const configPath = resolveDiscoveredConfig(
+      appConfig.projectPath,
+      selectedConfig,
+      playwrightConfigs,
+      "Playwright config",
+    );
 
     // Create a fresh Jiti instance with cache: false and moduleCache: false.
     // We use the recommended async `localJiti.import()` to avoid deprecated sync warning.
@@ -734,12 +749,12 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
 
     if (cfg.projects && Array.isArray(cfg.projects)) {
       const projects = cfg.projects.map((p: any) => p.name).filter(Boolean);
-      return res.json({ projects });
+      return res.json({ projects, config: selectedConfig });
     }
-    return res.json({ projects: [] });
-  } catch (error) {
+    return res.json({ projects: [], config: selectedConfig });
+  } catch (error: any) {
     console.error("Error parsing config:", error);
-    return res.json({ projects: [] });
+    return res.status(400).json({ projects: [], error: error.message });
   }
 });
 
@@ -762,15 +777,12 @@ const removeHeadlessConfigOverride = (configPath: string | null): void => {
   }
 };
 
-const createHeadlessConfigOverride = (projectPath: string): string => {
-  const configPath = resolvePlaywrightConfigPath(projectPath);
-  if (!configPath) throw new Error("Playwright config was not found");
-
+const createHeadlessConfigOverride = (configPath: string): string => {
   const overridePath = path.join(
-    projectPath,
-    `.playwright-reports-headless-${randomUUID()}.config.ts`,
+    path.dirname(configPath),
+    `.pw-reports-headless-${randomUUID()}.ts`,
   );
-  const importPath = `./${path.parse(configPath).name}`;
+  const importPath = `./${path.basename(configPath)}`;
   const source = [
     `import baseConfig from ${JSON.stringify(importPath)};`,
     "",
@@ -851,19 +863,49 @@ app.post(
       env = {},
       useBrowserstack = false,
       headless = false,
+      playwrightConfig = "",
+      browserstackConfig = "",
     } = req.body;
     if (!appConfig.projectPath) {
       return res.status(400).json({ error: "Project path is not configured" });
     }
     if (headless && useBrowserstack) {
-      return res
-        .status(400)
-        .json({
-          error: "Headless override is not available for BrowserStack runs",
-        });
+      return res.status(400).json({
+        error: "Headless override is not available for BrowserStack runs",
+      });
+    }
+
+    let selectedPlaywrightConfigPath: string;
+    try {
+      const discoveredConfigs = await discoverRunnerConfigs(
+        appConfig.projectPath,
+      );
+      selectedPlaywrightConfigPath = resolveDiscoveredConfig(
+        appConfig.projectPath,
+        playwrightConfig,
+        discoveredConfigs.playwrightConfigs,
+        "Playwright config",
+      );
+      if (useBrowserstack) {
+        if (!appConfig.browserstackUsername || !appConfig.browserstackAccessKey)
+          throw new Error("BrowserStack credentials are not configured");
+        resolveDiscoveredConfig(
+          appConfig.projectPath,
+          browserstackConfig,
+          discoveredConfigs.browserstackConfigs,
+          "BrowserStack config",
+        );
+      }
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message });
     }
 
     const customEnv = { ...process.env, FORCE_COLOR: "1", ...env };
+    if (useBrowserstack) {
+      customEnv.BROWSERSTACK_USERNAME = appConfig.browserstackUsername;
+      customEnv.BROWSERSTACK_ACCESS_KEY = appConfig.browserstackAccessKey;
+      customEnv.PLAYWRIGHT_HTML_OPEN = "never";
+    }
     const command = process.platform === "win32" ? "npx.cmd" : "npx";
 
     // We explicitly wrap the argument following --grep in double quotes
@@ -881,13 +923,25 @@ app.post(
 
     let headlessConfigPath: string | null = null;
     try {
+      let runConfig = playwrightConfig;
       if (headless) {
         headlessConfigPath = createHeadlessConfigOverride(
-          appConfig.projectPath,
+          selectedPlaywrightConfigPath,
         );
         activeHeadlessConfigPath = headlessConfigPath;
-        finalArgs.push("--config", path.basename(headlessConfigPath));
+        runConfig = path.relative(appConfig.projectPath, headlessConfigPath);
       }
+      const shellConfigArgument =
+        process.platform === "win32" ? `"${runConfig}"` : runConfig;
+      finalArgs.push("--config", shellConfigArgument);
+      if (useBrowserstack)
+        finalArgs.push(
+          `--browserstack.config=${
+            process.platform === "win32"
+              ? `"${browserstackConfig}"`
+              : browserstackConfig
+          }`,
+        );
 
       const spawnArgs = useBrowserstack
         ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
@@ -1795,14 +1849,21 @@ app.post(
     // Load playwright config once at the beginning of the request using async localJiti.import
     let resolvedCfg: any = null;
     try {
-      const configTs = path.join(appConfig.projectPath, "playwright.config.ts");
-      const configJs = path.join(appConfig.projectPath, "playwright.config.js");
-      const configPath = fs.existsSync(configTs)
-        ? configTs
-        : fs.existsSync(configJs)
-          ? configJs
-          : "";
-      if (configPath) {
+      const { playwrightConfigs } = await discoverRunnerConfigs(
+        appConfig.projectPath,
+      );
+      const selectedConfig = playwrightConfigs.includes(
+        appConfig.runnerOptions.playwrightConfig,
+      )
+        ? appConfig.runnerOptions.playwrightConfig
+        : playwrightConfigs[0];
+      if (selectedConfig) {
+        const configPath = resolveDiscoveredConfig(
+          appConfig.projectPath,
+          selectedConfig,
+          playwrightConfigs,
+          "Playwright config",
+        );
         const localJiti = createJiti(__filename, {
           moduleCache: false,
           cache: false,

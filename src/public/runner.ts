@@ -25,6 +25,12 @@ document.addEventListener("DOMContentLoaded", () => {
     "selected-count",
   ) as HTMLSpanElement;
   const projectGrid = document.getElementById("project-grid") as HTMLDivElement;
+  const playwrightConfigSelect = document.getElementById(
+    "playwright-config",
+  ) as HTMLSelectElement;
+  const browserstackConfigSelect = document.getElementById(
+    "browserstack-config",
+  ) as HTMLSelectElement;
 
   // Preset Elements
   const presetsBtn = document.getElementById(
@@ -150,14 +156,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let allProjects: string[] = [];
   let selectedProjects: string[] = [];
+  let playwrightConfigs: string[] = [];
+  let browserstackConfigs: string[] = [];
+  let selectedPlaywrightConfig = "";
+  let selectedBrowserstackConfig = "";
+  let projectLoadId = 0;
   let isRunning = false;
 
   let saveTimeout: any = null;
 
-  // BrowserStack config state (loaded from preferences, not persisted in runner)
+  // BrowserStack credentials are loaded from Preferences.
   let bsUsername = "";
   let bsAccessKey = "";
-  let bsConfig = "";
 
   // Saved state for options that get disabled during BrowserStack mode
   let savedHeaded = false;
@@ -169,7 +179,12 @@ document.addEventListener("DOMContentLoaded", () => {
   let savedWorkers = "";
 
   const updateBrowserstackCheckbox = () => {
-    const allSet = !!(bsUsername && bsAccessKey && bsConfig);
+    const allSet = !!(
+      bsUsername &&
+      bsAccessKey &&
+      selectedBrowserstackConfig &&
+      browserstackConfigs.includes(selectedBrowserstackConfig)
+    );
 
     if (allSet) {
       optBrowserstack.disabled = false;
@@ -177,16 +192,20 @@ document.addEventListener("DOMContentLoaded", () => {
       browserstackTooltip.classList.remove("show-tooltip");
     } else {
       optBrowserstack.disabled = true;
-      optBrowserstack.checked = false;
       labelBrowserstack.classList.add("is-disabled");
       browserstackTooltip.classList.add("show-tooltip");
-      setBrowserstackDisabledOptions(false);
+      if (optBrowserstack.checked) {
+        optBrowserstack.checked = false;
+        setBrowserstackDisabledOptions(false);
+      }
     }
+    browserstackConfigSelect.disabled =
+      !browserstackConfigs.length || !optBrowserstack.checked;
 
     // Update tooltip indicators
     bsTipUsername.classList.toggle("is-set", !!bsUsername);
     bsTipKey.classList.toggle("is-set", !!bsAccessKey);
-    bsTipConfig.classList.toggle("is-set", !!bsConfig);
+    bsTipConfig.classList.toggle("is-set", !!selectedBrowserstackConfig);
   };
 
   const setBrowserstackDisabledOptions = (disabled: boolean) => {
@@ -237,6 +256,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   optBrowserstack.addEventListener("change", () => {
     setBrowserstackDisabledOptions(optBrowserstack.checked);
+    browserstackConfigSelect.disabled = !optBrowserstack.checked;
   });
 
   // Load state from backend config
@@ -257,24 +277,17 @@ document.addEventListener("DOMContentLoaded", () => {
         optRepeat.value = config.runnerOptions.repeatEach || "";
         optWorkers.value = config.runnerOptions.workers || "";
         optEnv.value = config.runnerOptions.envVariables || "";
+        selectedPlaywrightConfig = config.runnerOptions.playwrightConfig || "";
+        selectedBrowserstackConfig =
+          config.runnerOptions.browserstackConfig || "";
       }
       if (config.selectedProjects) {
         selectedProjects = config.selectedProjects || [];
       }
 
-      // BrowserStack config
+      // BrowserStack credentials
       bsUsername = config.browserstackUsername || "";
       bsAccessKey = config.browserstackAccessKey || "";
-      bsConfig = config.browserstackConfig || "";
-      updateBrowserstackCheckbox();
-
-      // Re-render projects if they were loaded before state
-      if (allProjects.length > 0) {
-        selectedProjects = selectedProjects.filter((p) =>
-          allProjects.includes(p),
-        );
-        renderProjects();
-      }
     } catch (e) {
       console.error("Failed to load options from backend:", e);
     }
@@ -295,6 +308,8 @@ document.addEventListener("DOMContentLoaded", () => {
         repeatEach: optRepeat.value,
         workers: optWorkers.value,
         envVariables: optEnv.value,
+        playwrightConfig: selectedPlaywrightConfig,
+        browserstackConfig: selectedBrowserstackConfig,
       };
 
       try {
@@ -338,8 +353,6 @@ document.addEventListener("DOMContentLoaded", () => {
       el.addEventListener("input", saveState);
     }
   });
-
-  loadState();
 
   // Render Projects
   const renderProjects = () => {
@@ -402,20 +415,127 @@ document.addEventListener("DOMContentLoaded", () => {
     renderProjects();
   });
 
-  // Load initial projects
-  fetch("/api/projects")
-    .then((res) => res.json())
-    .then((data) => {
+  const renderConfigOptions = (
+    select: HTMLSelectElement,
+    configs: string[],
+    selectedConfig: string,
+  ) => {
+    select.innerHTML = "";
+    if (!configs.length) {
+      const option = document.createElement("option");
+      option.textContent = "No configs found";
+      option.value = "";
+      select.appendChild(option);
+      select.disabled = true;
+      return;
+    }
+
+    for (const config of configs) {
+      const option = document.createElement("option");
+      option.textContent = config;
+      option.value = config;
+      option.selected = config === selectedConfig;
+      select.appendChild(option);
+    }
+    select.disabled = false;
+  };
+
+  const loadProjects = async () => {
+    const loadId = ++projectLoadId;
+    if (!selectedPlaywrightConfig) {
+      allProjects = [];
+      selectedProjects = [];
+      renderProjects();
+      return;
+    }
+
+    projectGrid.innerHTML = `<div style="color: var(--text-secondary); font-size: 13px; grid-column: 1 / -1;">Loading projects...</div>`;
+    try {
+      const response = await fetch(
+        `/api/projects?config=${encodeURIComponent(selectedPlaywrightConfig)}`,
+      );
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(data.error || "Failed to load projects");
+      if (loadId !== projectLoadId) return;
       allProjects = data.projects || [];
-      // Only keep selected projects that actually exist
-      selectedProjects = selectedProjects.filter((p) =>
-        allProjects.includes(p),
+      selectedProjects = selectedProjects.filter((project) =>
+        allProjects.includes(project),
       );
       renderProjects();
-    })
-    .catch((err) => {
+    } catch (error) {
+      if (loadId !== projectLoadId) return;
+      allProjects = [];
+      selectedProjects = [];
+      selectedCountSpan.textContent = "(0)";
       projectGrid.innerHTML = `<div style="color: var(--danger); font-size: 13px; grid-column: 1 / -1;">Error loading projects</div>`;
-    });
+      console.error(error);
+    }
+  };
+
+  const loadRunnerConfigs = async () => {
+    const response = await fetch("/api/runner-configs");
+    const data = await response.json();
+    if (!response.ok)
+      throw new Error(data.error || "Failed to discover runner configs");
+
+    playwrightConfigs = data.playwrightConfigs || [];
+    browserstackConfigs = data.browserstackConfigs || [];
+    const previousPlaywrightConfig = selectedPlaywrightConfig;
+    const previousBrowserstackConfig = selectedBrowserstackConfig;
+    if (!playwrightConfigs.includes(selectedPlaywrightConfig))
+      selectedPlaywrightConfig = playwrightConfigs[0] || "";
+    if (!browserstackConfigs.includes(selectedBrowserstackConfig))
+      selectedBrowserstackConfig = browserstackConfigs[0] || "";
+
+    renderConfigOptions(
+      playwrightConfigSelect,
+      playwrightConfigs,
+      selectedPlaywrightConfig,
+    );
+    renderConfigOptions(
+      browserstackConfigSelect,
+      browserstackConfigs,
+      selectedBrowserstackConfig,
+    );
+    updateBrowserstackCheckbox();
+    await loadProjects();
+
+    if (
+      previousPlaywrightConfig !== selectedPlaywrightConfig ||
+      previousBrowserstackConfig !== selectedBrowserstackConfig
+    ) {
+      saveState();
+    }
+  };
+
+  playwrightConfigSelect.addEventListener("change", async () => {
+    selectedPlaywrightConfig = playwrightConfigSelect.value;
+    await loadProjects();
+    saveState();
+  });
+
+  browserstackConfigSelect.addEventListener("change", () => {
+    selectedBrowserstackConfig = browserstackConfigSelect.value;
+    updateBrowserstackCheckbox();
+    saveState();
+  });
+
+  const initializeRunner = async () => {
+    try {
+      await loadState();
+      await loadRunnerConfigs();
+    } catch (error) {
+      playwrightConfigSelect.innerHTML = `<option value="">Config discovery failed</option>`;
+      playwrightConfigSelect.disabled = true;
+      browserstackConfigSelect.innerHTML = `<option value="">Config discovery failed</option>`;
+      browserstackConfigSelect.disabled = true;
+      projectGrid.innerHTML = `<div style="color: var(--danger); font-size: 13px; grid-column: 1 / -1;">Error discovering configs</div>`;
+      console.error(error);
+    }
+  };
+
+  void initializeRunner();
 
   // --- Presets Logic ---
   let currentPresets: any[] = [];
@@ -643,6 +763,10 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    if (!selectedPlaywrightConfig) {
+      await showDialog("Playwright config has to be selected for test run");
+      return;
+    }
     if (selectedProjects.length === 0) {
       await showDialog("Project has to be selected for test run");
       return;
@@ -691,16 +815,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // BrowserStack mode
     const useBrowserstack = optBrowserstack.checked;
-    if (useBrowserstack) {
-      env["BROWSERSTACK_USERNAME"] = bsUsername;
-      env["BROWSERSTACK_ACCESS_KEY"] = bsAccessKey;
-      env["PLAYWRIGHT_HTML_OPEN"] = "never";
-      args.push(`--browserstack.config=${bsConfig}`);
+    if (useBrowserstack && !selectedBrowserstackConfig) {
+      await showDialog("BrowserStack config has to be selected for this run");
+      return;
     }
 
     runBtn.disabled = true;
     try {
-      await fetch("/api/run-tests", {
+      const response = await fetch("/api/run-tests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -708,8 +830,12 @@ document.addEventListener("DOMContentLoaded", () => {
           env,
           useBrowserstack,
           headless: optHeadless.checked,
+          playwrightConfig: selectedPlaywrightConfig,
+          browserstackConfig: selectedBrowserstackConfig,
         }),
       });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Failed to start tests");
       // start is handled by SSE event 'start'
     } catch (err: any) {
       term.writeln("\x1b[31mError starting tests: " + err.message + "\x1b[0m");

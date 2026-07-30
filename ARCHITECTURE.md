@@ -19,7 +19,7 @@ This document outlines the core architecture, data flows, and critical design de
 The application enforces a strictly zero-configuration data model out of the box. Instead of using a heavy ORM or requiring a running database server, we utilize `better-sqlite3` to maintain a localized, synchronous `app.db` file.
 
 - **WAL Mode:** The database is initialized with `journal_mode = WAL` (Write-Ahead Logging) to ensure high concurrent read performance when the frontend dashboard aggressively polls.
-- **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, the serialized JSON payload for user-selected Test Runner Options, BrowserStack credentials (`browserstackUsername`, `browserstackAccessKey`, `browserstackConfig`), and Copilot settings (`copilotToken`, `copilotModel` for small per-trace analysis, and `copilotBigModel` for run-level grouping). BrowserStack and Copilot columns are added via `ALTER TABLE` with existence checks during migration.
+- **`config` Table:** Designed to support multiple configurations (e.g., for different teams or projects). The current implementation primarily uses an `id: 'default'` row, but the schema inherently allows scaling to multiple rows containing the physical paths to Current, Archive, and Project root directories, the serialized JSON payload for user-selected Test Runner Options (including relative Playwright and BrowserStack config selections), BrowserStack credentials (`browserstackUsername`, `browserstackAccessKey`), and Copilot settings (`copilotToken`, `copilotModel` for small per-trace analysis, and `copilotBigModel` for run-level grouping). The legacy `browserstackConfig` column remains for schema compatibility; any existing value is migrated once into runner options and then cleared.
 - **`presets` Table:** Stores user-created saved project selections. This allows users to instantly recall groups of test suites without manually checking boxes every time.
 - **`reports` Table:** Persists metadata for all scanned reports. The primary `id` is the report folder name — it is both the physical folder name on disk and the exact display label shown as "Report Origin" in the dashboard. No transformation is applied; what is on disk is what is shown. Because folder names are frequently recycled (a report is deleted and a new run is later written to the same `playwright-report_2`/`_3` folder), the table also stores a **`uuid`** column that is the _stable per-instance identity_ of a report. `analysis_runs` and `digests` are keyed by this `uuid`, never by the recyclable folder name. Storing report metadata in SQLite allows for persistent user-entered labels that survive filesystem refreshes and folder moves (archiving).
 - **`digests` Table:** Persists one row per saved trace digest (`id`, `reportId` = report `uuid`, `runDir`, `folder`, `testTitle`, `createdAt`). A digest's on-disk location is `path.join(runDir, folder)` under the ephemeral `<currentPath>/tmp/`. Rows are written by `/api/digest-test` after a successful digest and are surfaced in the report's Info dialog. Like `analysis_runs`, they are keyed by the stable `uuid` so they survive renames and archive moves of the folder name, and are removed on report delete/archive and by an orphan prune on each scan.
@@ -235,6 +235,10 @@ The execution engine runs Playwright tests natively on the host machine, piping 
 - **Server-Sent Events (SSE):** The frontend opens an EventSource connection to `/api/logs`. The backend captures stdout/stderr buffers from the spawn output and pushes them down instantly. The UI layer (`xterm.js`) renders these buffers preserving their original ANSI color codes for a perfect native terminal replica.
 - **Zombie Process Protection:** Standard `child.kill()` fails to wipe out deep nested browser threads spawned by Playwright, leaving zombie Chromium processes hanging in the background. We imported `tree-kill` to aggressively trace the process PID tree and issue a clean `SIGKILL` when the user clicks 'Stop Tests'.
 
+### Config Discovery
+
+The `src/runner-configs.ts` helper uses `glob` within `projectPath` to discover `**/*playwright*.config.{ts,js,mts,mjs,cts,cjs}` and `**/*browserstack*.{yml,yaml}` while ignoring `node_modules`, `test-results`, and temporary Headless overrides. Results are sorted by path depth, basename length, and lexical order so a conventional root `playwright.config.ts` is preferred. The runner persists selected paths relative to `projectPath`; the server accepts a selection only when it is present in the current discovered set and resolves inside the project root.
+
 ### Run Tests Button Guard
 
 The **Run Tests** button in the main dashboard header is disabled when `projectPath` is not configured in Preferences. This prevents launching the runner page for a project that cannot execute.
@@ -253,7 +257,7 @@ Headed and Headless are mutually exclusive runner options. With neither selected
 When the user enables the BrowserStack checkbox in the runner, the spawned command changes from `npx playwright test ...` to `npx browserstack-node-sdk playwright test ...`. The SDK wraps the local Playwright execution and tunnels it through BrowserStack's infrastructure.
 
 - **Credential Injection:** `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY` are injected into the child process `env` from the persisted config (never exposed in the command line or frontend source).
-- **Config Argument:** The `--browserstack.config=<filename>` argument is appended to point the SDK at the correct YAML config (e.g., `browserstack.falcons.yml`).
+- **Config Argument:** The selected discovered relative path is appended as `--browserstack.config=<path>` (for example, `configs/browserstack.falcons.yml`).
 - **Incompatible Options:** BrowserStack cloud runs do not support local-only Playwright flags. When the checkbox is active, the frontend disables Headed, Headless, UI Mode, and Debug toggles, and locks the Workers and Repeat inputs. Visual cues (`.bs-disabled` class, tooltip) clearly communicate why these options are unavailable.
 - **State Restoration:** When BrowserStack is unchecked, previously selected options are restored to their prior state. The frontend remembers the pre-BrowserStack values so the user does not lose their local configuration.
 
@@ -312,7 +316,7 @@ Digesting a full test suite with 300–600 tests bulk-style is extremely resourc
 
 To reliably know where a given test project's aria snapshots are stored, and to execute tests accurately, **the dashboard requires Playwright to be installed in the underlying project workspace.**
 
-Furthermore, the backend needs to parse the user's `playwright.config.ts`.
+Furthermore, the backend needs to parse the Playwright config selected in the runner.
 
 - **The Problem:** Node cannot natively `require()` a TypeScript file without compilation.
 - **The Solution:** We use `jiti` to dynamically transpile and import the config on the fly. This is a crucial internal dependency for resolving workspace variables.

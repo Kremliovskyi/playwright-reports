@@ -11,7 +11,6 @@ export interface AppConfig {
   vaultPath: string;
   browserstackUsername: string;
   browserstackAccessKey: string;
-  browserstackConfig: string;
   copilotToken: string;
   copilotModel: string;
   copilotBigModel: string;
@@ -25,6 +24,8 @@ export interface AppConfig {
     repeatEach: string;
     workers: string;
     envVariables: string;
+    playwrightConfig: string;
+    browserstackConfig: string;
   };
   selectedProjects: string[];
 }
@@ -78,6 +79,8 @@ const DEFAULT_RUNNER_OPTIONS = {
   repeatEach: "",
   workers: "",
   envVariables: "",
+  playwrightConfig: "",
+  browserstackConfig: "",
 };
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -88,7 +91,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   vaultPath: "",
   browserstackUsername: "",
   browserstackAccessKey: "",
-  browserstackConfig: "",
   copilotToken: "",
   copilotModel: "",
   copilotBigModel: "",
@@ -252,12 +254,33 @@ if (!existing) {
   );
 }
 
+// Move the former Preferences value into runner-owned state once.
+for (const row of db
+  .prepare(
+    "SELECT id, browserstackConfig, runnerOptions FROM config WHERE browserstackConfig <> ''",
+  )
+  .all() as {
+  id: string;
+  browserstackConfig: string;
+  runnerOptions: string;
+}[]) {
+  const runnerOptions = JSON.parse(row.runnerOptions || "{}");
+  if (!runnerOptions.browserstackConfig)
+    runnerOptions.browserstackConfig = row.browserstackConfig
+      .replaceAll("\\", "/")
+      .replace(/^\.\//, "");
+  db.prepare(
+    "UPDATE config SET runnerOptions = ?, browserstackConfig = '' WHERE id = ?",
+  ).run(JSON.stringify(runnerOptions), row.id);
+}
+
 // --- Config Operations ---
 export const getConfig = (): AppConfig => {
   const row = db
     .prepare("SELECT * FROM config WHERE id = ?")
     .get("default") as any;
   if (!row) return { ...DEFAULT_CONFIG };
+  const storedRunnerOptions = JSON.parse(row.runnerOptions);
   return {
     id: row.id,
     currentPath: row.currentPath,
@@ -266,18 +289,20 @@ export const getConfig = (): AppConfig => {
     vaultPath: row.vaultPath || "",
     browserstackUsername: row.browserstackUsername || "",
     browserstackAccessKey: row.browserstackAccessKey || "",
-    browserstackConfig: row.browserstackConfig || "",
     copilotToken: row.copilotToken || "",
     copilotModel: row.copilotModel || "",
     copilotBigModel: row.copilotBigModel || "",
-    runnerOptions: JSON.parse(row.runnerOptions),
+    runnerOptions: {
+      ...DEFAULT_RUNNER_OPTIONS,
+      ...storedRunnerOptions,
+    },
     selectedProjects: JSON.parse(row.selectedProjects),
   };
 };
 
 export const updateConfig = (config: AppConfig): void => {
   db.prepare(
-    "UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, browserstackConfig = ?, copilotToken = ?, copilotModel = ?, copilotBigModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?",
+    "UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, copilotToken = ?, copilotModel = ?, copilotBigModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?",
   ).run(
     config.currentPath,
     config.archivePath,
@@ -285,7 +310,6 @@ export const updateConfig = (config: AppConfig): void => {
     config.vaultPath,
     config.browserstackUsername,
     config.browserstackAccessKey,
-    config.browserstackConfig,
     config.copilotToken,
     config.copilotModel,
     config.copilotBigModel,

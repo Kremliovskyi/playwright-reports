@@ -11,6 +11,7 @@ Click **Run Tests** on the dashboard to open the integrated runner.
 The runner parses the configured `playwright.config.ts` and lists its projects. Select the required projects, then configure the available execution options:
 
 - Headed mode
+- Headless mode
 - UI mode
 - Debug mode
 - Grep filters
@@ -20,6 +21,8 @@ The runner parses the configured `playwright.config.ts` and lists its projects. 
 
 Runner options are persisted across dashboard restarts.
 
+**Headed** and **Headless** are mutually exclusive overrides. Select neither to use the `use.headless` value from `playwright.config.ts`; select either mode to override that value for the run. Debug mode opens a headed browser, so selecting Debug clears Headless.
+
 ## Save project presets
 
 Save the current project selection as a named preset to reuse a common test group. When a preset references projects that no longer exist in `playwright.config.ts`, the runner identifies the missing projects before execution.
@@ -28,7 +31,7 @@ Save the current project selection as a named preset to reuse a common test grou
 
 Enable **BrowserStack** to dispatch the run through `browserstack-node-sdk` using credentials from [Configuration](configuration.md).
 
-BrowserStack mode automatically disables incompatible local options such as Headed, UI Mode, and Debug, and locks the Workers and Repeat inputs.
+BrowserStack mode automatically disables incompatible local options such as Headed, Headless, UI Mode, and Debug, and locks the Workers and Repeat inputs.
 
 ## Follow or stop the run
 

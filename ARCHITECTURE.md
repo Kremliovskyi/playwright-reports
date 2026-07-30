@@ -244,13 +244,17 @@ The **Run Tests** button in the main dashboard header is disabled when `projectP
 - **Live update:** `updateRunTestsBtnForProjectPath` is also called after a successful Preferences save so the button re-enables immediately without a page reload.
 - **Two independent disable reasons:** The button also disables while a Runner tab is already open (governed by `BroadcastChannel('runner_state')`). The two states are tracked by separate `isProjectPathMissing` and `isRunnerOpen` flags so closing the runner tab does not re-enable the button if the project path is still missing.
 
+### Browser Mode Overrides
+
+Headed and Headless are mutually exclusive runner options. With neither selected, the target project's `use.headless` setting is preserved. Headed uses Playwright's `--headed` CLI override. Because `playwright test` has no corresponding `--headless` option, Headless creates a temporary config beside the target config that preserves the base configuration and sets `use.headless: true` at both the top level and for every project. The server passes that file through `--config` and removes it after completion, stop, or process-start failure.
+
 ### BrowserStack Cloud Execution
 
 When the user enables the BrowserStack checkbox in the runner, the spawned command changes from `npx playwright test ...` to `npx browserstack-node-sdk playwright test ...`. The SDK wraps the local Playwright execution and tunnels it through BrowserStack's infrastructure.
 
 - **Credential Injection:** `BROWSERSTACK_USERNAME` and `BROWSERSTACK_ACCESS_KEY` are injected into the child process `env` from the persisted config (never exposed in the command line or frontend source).
 - **Config Argument:** The `--browserstack.config=<filename>` argument is appended to point the SDK at the correct YAML config (e.g., `browserstack.falcons.yml`).
-- **Incompatible Options:** BrowserStack cloud runs do not support local-only Playwright flags. When the checkbox is active, the frontend disables Headed, UI Mode, and Debug toggles, and locks the Workers and Repeat inputs. Visual cues (`.bs-disabled` class, tooltip) clearly communicate why these options are unavailable.
+- **Incompatible Options:** BrowserStack cloud runs do not support local-only Playwright flags. When the checkbox is active, the frontend disables Headed, Headless, UI Mode, and Debug toggles, and locks the Workers and Repeat inputs. Visual cues (`.bs-disabled` class, tooltip) clearly communicate why these options are unavailable.
 - **State Restoration:** When BrowserStack is unchecked, previously selected options are restored to their prior state. The frontend remembers the pre-BrowserStack values so the user does not lose their local configuration.
 
 ---

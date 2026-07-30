@@ -667,11 +667,9 @@ app.get("/api/agent/reports/search", (req: Request, res: Response): any => {
     });
   } catch (error: any) {
     console.error("Agent search error:", error);
-    return res
-      .status(400)
-      .json({
-        error: error.message || "Failed to search reports for agent workflow",
-      });
+    return res.status(400).json({
+      error: error.message || "Failed to search reports for agent workflow",
+    });
   }
 });
 
@@ -697,15 +695,24 @@ app.get("/api/agent/reports/prepare", (req: Request, res: Response): any => {
     });
   } catch (error: any) {
     console.error("Agent prepare error:", error);
-    return res
-      .status(404)
-      .json({
-        error: error.message || "Failed to prepare report for analysis",
-      });
+    return res.status(404).json({
+      error: error.message || "Failed to prepare report for analysis",
+    });
   }
 });
 
 // Test Runner Integrations
+const resolvePlaywrightConfigPath = (
+  projectPath: string,
+): string | undefined => {
+  const configTs = path.join(projectPath, "playwright.config.ts");
+  const configJs = path.join(projectPath, "playwright.config.js");
+
+  if (fs.existsSync(configTs)) return configTs;
+  if (fs.existsSync(configJs)) return configJs;
+  return undefined;
+};
+
 app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   if (!appConfig.projectPath || !fs.existsSync(appConfig.projectPath)) {
@@ -713,13 +720,8 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
   }
 
   try {
-    const configTs = path.join(appConfig.projectPath, "playwright.config.ts");
-    const configJs = path.join(appConfig.projectPath, "playwright.config.js");
-
-    let configPath = "";
-    if (fs.existsSync(configTs)) configPath = configTs;
-    else if (fs.existsSync(configJs)) configPath = configJs;
-    else return res.json({ projects: [] });
+    const configPath = resolvePlaywrightConfigPath(appConfig.projectPath);
+    if (!configPath) return res.json({ projects: [] });
 
     // Create a fresh Jiti instance with cache: false and moduleCache: false.
     // We use the recommended async `localJiti.import()` to avoid deprecated sync warning.
@@ -742,7 +744,50 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
 });
 
 let activeProcess: ChildProcess | null = null;
+let activeHeadlessConfigPath: string | null = null;
 let sseClients: Response[] = [];
+
+const removeHeadlessConfigOverride = (configPath: string | null): void => {
+  if (!configPath) return;
+  try {
+    fs.rmSync(configPath, { force: true });
+  } catch (error) {
+    console.error(
+      `Failed to remove headless config override: ${configPath}`,
+      error,
+    );
+  } finally {
+    if (activeHeadlessConfigPath === configPath)
+      activeHeadlessConfigPath = null;
+  }
+};
+
+const createHeadlessConfigOverride = (projectPath: string): string => {
+  const configPath = resolvePlaywrightConfigPath(projectPath);
+  if (!configPath) throw new Error("Playwright config was not found");
+
+  const overridePath = path.join(
+    projectPath,
+    `.playwright-reports-headless-${randomUUID()}.config.ts`,
+  );
+  const importPath = `./${path.parse(configPath).name}`;
+  const source = [
+    `import baseConfig from ${JSON.stringify(importPath)};`,
+    "",
+    "export default {",
+    "  ...baseConfig,",
+    "  use: { ...baseConfig.use, headless: true },",
+    "  projects: baseConfig.projects?.map(project => ({",
+    "    ...project,",
+    "    use: { ...project.use, headless: true },",
+    "  })),",
+    "};",
+    "",
+  ].join("\n");
+
+  fs.writeFileSync(overridePath, source, { flag: "wx" });
+  return overridePath;
+};
 
 const broadcastLog = (type: string, data: string) => {
   sseClients.forEach((client) => {
@@ -774,11 +819,15 @@ app.get("/api/logs", (req: Request, res: Response) => {
 const stopTests = (): Promise<void> => {
   return new Promise((resolve) => {
     if (activeProcess && activeProcess.pid) {
-      treeKill(activeProcess.pid, "SIGKILL", () => {
-        activeProcess = null;
+      const processToStop = activeProcess;
+      const configPathToRemove = activeHeadlessConfigPath;
+      treeKill(processToStop.pid!, "SIGKILL", () => {
+        if (activeProcess === processToStop) activeProcess = null;
+        removeHeadlessConfigOverride(configPathToRemove);
         resolve();
       });
     } else {
+      removeHeadlessConfigOverride(activeHeadlessConfigPath);
       resolve();
     }
   });
@@ -797,9 +846,21 @@ app.post(
       await stopTests();
     }
 
-    const { args = [], env = {}, useBrowserstack = false } = req.body;
+    const {
+      args = [],
+      env = {},
+      useBrowserstack = false,
+      headless = false,
+    } = req.body;
     if (!appConfig.projectPath) {
       return res.status(400).json({ error: "Project path is not configured" });
+    }
+    if (headless && useBrowserstack) {
+      return res
+        .status(400)
+        .json({
+          error: "Headless override is not available for BrowserStack runs",
+        });
     }
 
     const customEnv = { ...process.env, FORCE_COLOR: "1", ...env };
@@ -818,15 +879,23 @@ app.post(
       }
     }
 
-    const spawnArgs = useBrowserstack
-      ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
-      : ["playwright", "test", ...finalArgs];
-
-    const logPrefix = useBrowserstack
-      ? "browserstack-node-sdk playwright test"
-      : "npx playwright test";
-
+    let headlessConfigPath: string | null = null;
     try {
+      if (headless) {
+        headlessConfigPath = createHeadlessConfigOverride(
+          appConfig.projectPath,
+        );
+        activeHeadlessConfigPath = headlessConfigPath;
+        finalArgs.push("--config", path.basename(headlessConfigPath));
+      }
+
+      const spawnArgs = useBrowserstack
+        ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
+        : ["playwright", "test", ...finalArgs];
+      const logPrefix = useBrowserstack
+        ? "browserstack-node-sdk playwright test"
+        : "npx playwright test";
+
       const child = spawn(command, spawnArgs, {
         cwd: appConfig.projectPath,
         env: customEnv,
@@ -847,10 +916,18 @@ app.post(
         broadcastLog("output", `\nProcess exited with code ${code}\n`);
         broadcastLog("complete", code?.toString() || "0");
         if (activeProcess === child) activeProcess = null;
+        removeHeadlessConfigOverride(headlessConfigPath);
+      });
+      child.on("error", (error) => {
+        broadcastLog("output", `\nFailed to start tests: ${error.message}\n`);
+        broadcastLog("complete", "1");
+        if (activeProcess === child) activeProcess = null;
+        removeHeadlessConfigOverride(headlessConfigPath);
       });
 
       res.json({ success: true });
     } catch (error: any) {
+      removeHeadlessConfigOverride(headlessConfigPath);
       res.status(500).json({ error: error.message });
     }
   },
@@ -1198,14 +1275,12 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
     console.error("Failures endpoint error:", error);
     if (error instanceof CopilotAnalysisError) {
       const status = error.code === "COPILOT_NOT_AUTHENTICATED" ? 401 : 409;
-      return res
-        .status(status)
-        .json({
-          code: error.code,
-          error: error.message,
-          model: error.model,
-          modelRole: error.modelRole,
-        });
+      return res.status(status).json({
+        code: error.code,
+        error: error.message,
+        model: error.model,
+        modelRole: error.modelRole,
+      });
     }
     res
       .status(500)
@@ -1270,13 +1345,11 @@ app.post("/api/report-tests", (req: Request, res: Response): any => {
     child.on("close", (code) => {
       if (code !== 0) {
         console.error("find-traces command failed:", stderr || stdout);
-        return res
-          .status(500)
-          .json({
-            error:
-              "find-traces command failed: " +
-              (stderr.trim() || `exit code ${code}`),
-          });
+        return res.status(500).json({
+          error:
+            "find-traces command failed: " +
+            (stderr.trim() || `exit code ${code}`),
+        });
       }
       try {
         const result = JSON.parse(stdout);
@@ -1369,13 +1442,10 @@ app.post("/api/digest-test", (req: Request, res: Response): any => {
     child.on("close", (code) => {
       if (code !== 0) {
         console.error("digest command failed:", stderr || stdout);
-        return res
-          .status(500)
-          .json({
-            error:
-              "digest command failed: " +
-              (stderr.trim() || `exit code ${code}`),
-          });
+        return res.status(500).json({
+          error:
+            "digest command failed: " + (stderr.trim() || `exit code ${code}`),
+        });
       }
       try {
         const manifest = JSON.parse(stdout);
@@ -1424,12 +1494,10 @@ app.post("/api/archive", (req: Request, res: Response): any => {
   if (!reportPath)
     return res.status(400).json({ error: "reportPath is required" });
   if (!appConfig.archivePath)
-    return res
-      .status(400)
-      .json({
-        error:
-          "Archive directory is not configured! Please open Preferences and set an archive path first.",
-      });
+    return res.status(400).json({
+      error:
+        "Archive directory is not configured! Please open Preferences and set an archive path first.",
+    });
 
   try {
     // Determine source directory
@@ -2458,11 +2526,9 @@ app.delete(
           !appConfig.currentPath ||
           !isWithin(appConfig.currentPath, run.runDir)
         ) {
-          return res
-            .status(400)
-            .json({
-              error: "Output directory is outside the configured current path",
-            });
+          return res.status(400).json({
+            error: "Output directory is outside the configured current path",
+          });
         }
         if (fs.existsSync(run.runDir))
           fs.rmSync(run.runDir, { recursive: true, force: true });
@@ -2509,11 +2575,9 @@ app.delete(
             : null,
         ].filter((p): p is string => !!p);
         if (!vaultRoots.some((root) => isWithin(root, resolved))) {
-          return res
-            .status(400)
-            .json({
-              error: "Analysis file is outside the configured vault paths",
-            });
+          return res.status(400).json({
+            error: "Analysis file is outside the configured vault paths",
+          });
         }
         fs.unlinkSync(resolved);
       }
@@ -2557,11 +2621,9 @@ app.delete("/api/digest", (req: Request, res: Response): any => {
         !appConfig.currentPath ||
         !isWithin(appConfig.currentPath, digestDir)
       ) {
-        return res
-          .status(400)
-          .json({
-            error: "Digest directory is outside the configured current path",
-          });
+        return res.status(400).json({
+          error: "Digest directory is outside the configured current path",
+        });
       }
       if (fs.existsSync(digestDir))
         fs.rmSync(digestDir, { recursive: true, force: true });

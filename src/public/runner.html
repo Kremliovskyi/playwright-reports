@@ -1,14 +1,20 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Playwright Test Runner</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="style.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css"
+    />
     <style>
       :root {
         color-scheme: dark;
@@ -25,7 +31,7 @@
         --danger: #f85149;
         --danger-hover: #da3633;
         --success: #238636;
-        
+
         --radius: 6px;
       }
       * {
@@ -85,7 +91,7 @@
         margin: 0 auto;
         padding: 2rem 1.5rem;
       }
-      
+
       /* Project List Styles */
       .section-container {
         margin-bottom: 20px;
@@ -145,7 +151,7 @@
         font-size: 14px;
         cursor: pointer;
       }
-      
+
       /* Options Styles */
       .options-header-row {
         display: flex;
@@ -187,7 +193,7 @@
         border-color: var(--primary);
         box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
       }
-      
+
       /* Run Button */
       .run-btn {
         width: 100%;
@@ -218,7 +224,7 @@
       .btn-danger:hover {
         background-color: var(--danger-hover);
       }
-      
+
       /* Terminal */
       .terminal-container {
         height: 600px;
@@ -271,7 +277,7 @@
         color: var(--text-secondary);
       }
       .browserstack-tooltip::after {
-        content: '';
+        content: "";
         position: absolute;
         top: 100%;
         left: 50%;
@@ -300,12 +306,12 @@
         gap: 6px;
       }
       .browserstack-tooltip li::before {
-        content: '○';
+        content: "○";
         color: var(--danger);
         font-size: 10px;
       }
       .browserstack-tooltip li.is-set::before {
-        content: '●';
+        content: "●";
         color: var(--success);
       }
 
@@ -316,9 +322,9 @@
         pointer-events: none;
       }
     </style>
-</head>
-<body>
-    <div class="app-container" style="padding: 0; max-width: none;">
+  </head>
+  <body>
+    <div class="app-container" style="padding: 0; max-width: none">
       <header class="header">
         <div class="header-content">
           <div class="logo">
@@ -346,39 +352,81 @@
       </header>
 
       <main class="main-content">
-        
         <!-- Projects Section -->
         <div class="section-container">
-          <div class="section-title" style="display: flex; align-items: center; gap: 8px;">
+          <div
+            class="section-title"
+            style="display: flex; align-items: center; gap: 8px"
+          >
             Projects
-            <span id="selected-count" style="font-size: 12px; color: var(--text-secondary); font-weight: normal;"></span>
+            <span
+              id="selected-count"
+              style="
+                font-size: 12px;
+                color: var(--text-secondary);
+                font-weight: normal;
+              "
+            ></span>
           </div>
           <div class="project-toolbar">
-            <input type="text" id="project-search" class="search-input" placeholder="Search projects...">
+            <input
+              type="text"
+              id="project-search"
+              class="search-input"
+              placeholder="Search projects..."
+            />
             <button id="select-all-btn" class="action-link">Select All</button>
             <button id="select-none-btn" class="action-link">None</button>
-            <button id="presets-btn" class="btn secondary-btn" style="padding: 4px 10px; font-size: 13px;">★ Presets</button>
+            <button
+              id="presets-btn"
+              class="btn secondary-btn"
+              style="padding: 4px 10px; font-size: 13px"
+            >
+              ★ Presets
+            </button>
           </div>
           <div class="project-grid" id="project-grid">
-             <div style="color: var(--text-secondary); font-size: 13px;">Loading projects...</div>
+            <div style="color: var(--text-secondary); font-size: 13px">
+              Loading projects...
+            </div>
           </div>
         </div>
-        
+
         <!-- Options Section -->
         <div class="section-container">
           <div class="options-header-row">
-            <div class="section-title" style="margin: 0;">Options</div>
+            <div class="section-title" style="margin: 0">Options</div>
           </div>
-          
+
           <div class="options-grid">
-            <label class="checkbox-label" id="label-headed"><input type="checkbox" id="opt-headed"> Headed</label>
-            <label class="checkbox-label" id="label-ui"><input type="checkbox" id="opt-ui"> UI Mode</label>
-            <label class="checkbox-label" id="label-debug"><input type="checkbox" id="opt-debug"> Debug</label>
-            <label class="checkbox-label" id="label-update-snapshots"><input type="checkbox" id="opt-update-snapshots"> Update Snapshots</label>
+            <label class="checkbox-label" id="label-headed"
+              ><input type="checkbox" id="opt-headed" /> Headed</label
+            >
+            <label class="checkbox-label" id="label-headless"
+              ><input type="checkbox" id="opt-headless" /> Headless</label
+            >
+            <label class="checkbox-label" id="label-ui"
+              ><input type="checkbox" id="opt-ui" /> UI Mode</label
+            >
+            <label class="checkbox-label" id="label-debug"
+              ><input type="checkbox" id="opt-debug" /> Debug</label
+            >
+            <label class="checkbox-label" id="label-update-snapshots"
+              ><input type="checkbox" id="opt-update-snapshots" /> Update
+              Snapshots</label
+            >
             <div class="browserstack-wrapper" id="browserstack-wrapper">
-              <label class="checkbox-label is-disabled" id="label-browserstack"><input type="checkbox" id="opt-browserstack" disabled> BrowserStack Run</label>
-              <div class="browserstack-tooltip show-tooltip" id="browserstack-tooltip">
-                <div class="tooltip-title">Configure in Preferences to enable:</div>
+              <label class="checkbox-label is-disabled" id="label-browserstack"
+                ><input type="checkbox" id="opt-browserstack" disabled />
+                BrowserStack Run</label
+              >
+              <div
+                class="browserstack-tooltip show-tooltip"
+                id="browserstack-tooltip"
+              >
+                <div class="tooltip-title">
+                  Configure in Preferences to enable:
+                </div>
                 <ul>
                   <li id="bs-tip-username">BrowserStack Username</li>
                   <li id="bs-tip-key">BrowserStack Access Key</li>
@@ -387,26 +435,50 @@
               </div>
             </div>
           </div>
-          
+
           <div class="input-group">
             <div class="input-wrapper">
               <span class="input-label">Grep (Filter)</span>
-              <input type="text" id="opt-grep" class="text-input" placeholder="e.g. login">
+              <input
+                type="text"
+                id="opt-grep"
+                class="text-input"
+                placeholder="e.g. login"
+              />
             </div>
             <div class="input-wrapper" id="wrapper-repeat">
               <span class="input-label">Repeat Each</span>
-              <input type="number" id="opt-repeat" class="text-input" placeholder="1" min="1">
+              <input
+                type="number"
+                id="opt-repeat"
+                class="text-input"
+                placeholder="1"
+                min="1"
+              />
             </div>
             <div class="input-wrapper" id="wrapper-workers">
               <span class="input-label">Workers</span>
-              <input type="number" id="opt-workers" class="text-input" placeholder="Max" min="1">
+              <input
+                type="number"
+                id="opt-workers"
+                class="text-input"
+                placeholder="Max"
+                min="1"
+              />
             </div>
           </div>
-          
+
           <div class="input-group">
             <div class="input-wrapper">
-              <span class="input-label">System Env Variables (e.g. ENV=UAT;REG=EU)</span>
-              <input type="text" id="opt-env" class="text-input" placeholder="Key=Value;Key2=Value2">
+              <span class="input-label"
+                >System Env Variables (e.g. ENV=UAT;REG=EU)</span
+              >
+              <input
+                type="text"
+                id="opt-env"
+                class="text-input"
+                placeholder="Key=Value;Key2=Value2"
+              />
             </div>
           </div>
         </div>
@@ -418,11 +490,16 @@
         <div>
           <div class="terminal-header">
             <span>Output</span>
-            <button id="clear-log-btn" class="action-link" style="color: var(--text-secondary);">Clear</button>
+            <button
+              id="clear-log-btn"
+              class="action-link"
+              style="color: var(--text-secondary)"
+            >
+              Clear
+            </button>
           </div>
           <div id="terminal" class="terminal-container"></div>
         </div>
-        
       </main>
     </div>
 
@@ -432,17 +509,49 @@
         <div class="modal-header">
           <h2>Presets</h2>
           <button id="close-presets-btn" class="icon-btn">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding-bottom: 0;">
-          <div style="display: flex; gap: 10px; margin-bottom: 20px;">
-            <input type="text" id="new-preset-name" class="path-input full-width" placeholder="New preset name..." />
-            <button id="save-preset-btn" class="btn primary-btn">Save Current</button>
+        <div class="modal-body" style="padding-bottom: 0">
+          <div style="display: flex; gap: 10px; margin-bottom: 20px">
+            <input
+              type="text"
+              id="new-preset-name"
+              class="path-input full-width"
+              placeholder="New preset name..."
+            />
+            <button id="save-preset-btn" class="btn primary-btn">
+              Save Current
+            </button>
           </div>
           <div class="section-title">Saved Presets</div>
-          <div id="presets-list" style="max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;">
-            <div style="color: var(--text-secondary); font-size: 13px;">Loading presets...</div>
+          <div
+            id="presets-list"
+            style="
+              max-height: 250px;
+              overflow-y: auto;
+              display: flex;
+              flex-direction: column;
+              gap: 8px;
+              margin-bottom: 20px;
+            "
+          >
+            <div style="color: var(--text-secondary); font-size: 13px">
+              Loading presets...
+            </div>
           </div>
         </div>
       </div>
@@ -450,15 +559,35 @@
 
     <!-- Generic Dialog Modal -->
     <div id="dialog-modal" class="modal-backdrop hidden">
-      <div class="modal-content" style="max-width: 450px;">
+      <div class="modal-content" style="max-width: 450px">
         <div class="modal-header">
           <h2 id="dialog-title">Notification</h2>
           <button id="dialog-header-close-btn" class="icon-btn">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
           </button>
         </div>
         <div class="modal-body">
-          <p id="dialog-message" style="font-size: 14px; color: var(--text-color); white-space: pre-wrap;"></p>
+          <p
+            id="dialog-message"
+            style="
+              font-size: 14px;
+              color: var(--text-color);
+              white-space: pre-wrap;
+            "
+          ></p>
         </div>
         <div class="modal-footer" id="dialog-footer">
           <!-- Buttons will be injected here -->
@@ -469,5 +598,5 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit/lib/addon-fit.js"></script>
     <script src="runner.js"></script>
-</body>
+  </body>
 </html>

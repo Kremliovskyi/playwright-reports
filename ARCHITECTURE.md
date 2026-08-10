@@ -230,8 +230,8 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 
 The execution engine runs Playwright tests natively on the host machine, piping the output live to the dashboard browser window.
 
-- **Process Spawning:** Tests are launched via standard Node `child_process.spawn`. It leverages `npx playwright test` securely executing inside the user's defined `projectPath`.
-- **Windows Polish:** It dynamically handles pathing anomalies by executing `npx.cmd` with `shell: true` exclusively on `win32` platforms.
+- **Process Spawning:** Tests are launched via standard Node `child_process.spawn` inside the configured `projectPath`. On macOS and Linux, options remain separate argv entries with `shell: false`; multiword grep values therefore require no literal quote characters. Command logging formats those arguments separately for readability.
+- **Windows Polish:** Windows executes `npx.cmd` with `shell: true` and retains the `cmd.exe` quoting required around multiword grep values. POSIX platforms do not enable a shell because it would reinterpret user-provided arguments.
 - **Server-Sent Events (SSE):** The frontend opens an EventSource connection to `/api/logs`. The backend captures stdout/stderr buffers from the spawn output and pushes them down instantly. The UI layer (`xterm.js`) renders these buffers preserving their original ANSI color codes for a perfect native terminal replica.
 - **Zombie Process Protection:** Standard `child.kill()` fails to wipe out deep nested browser threads spawned by Playwright, leaving zombie Chromium processes hanging in the background. We imported `tree-kill` to aggressively trace the process PID tree and issue a clean `SIGKILL` when the user clicks 'Stop Tests'.
 
@@ -239,13 +239,16 @@ The execution engine runs Playwright tests natively on the host machine, piping 
 
 The `src/runner-configs.ts` helper uses `glob` within `projectPath` to discover `**/*playwright*.config.{ts,js,mts,mjs,cts,cjs}` and `**/*browserstack*.{yml,yaml}` while ignoring `node_modules`, `test-results`, and temporary Headless overrides. Results are sorted by path depth, basename length, and lexical order so a conventional root `playwright.config.ts` is preferred. The runner persists selected paths relative to `projectPath`; the server accepts a selection only when it is present in the current discovered set and resolves inside the project root.
 
+Each Playwright config is evaluated in a short-lived child process. The child loads one config with Jiti and returns only the serializable fields the dashboard needs: project names and the ARIA snapshot path template. This prevents different projects or Playwright versions from sharing module and process-global state in the long-running dashboard server.
+
 ### Run Tests Button Guard
 
 The **Run Tests** button in the main dashboard header is disabled when `projectPath` is not configured in Preferences. This prevents launching the runner page for a project that cannot execute.
 
 - **State check on load:** `app.ts` fetches `GET /api/config` immediately after the page loads and calls `updateRunTestsBtnForProjectPath(projectPath)`. If the value is empty the button is disabled and its opacity reduced to 0.7.
 - **Hover tooltip:** The button is wrapped in a `div.run-tests-wrapper`. When disabled, a `.run-tests-tooltip.show-tooltip` element is revealed on hover via CSS, showing _"Configure in Preferences to enable: Playwright Project Path"_ — the same visual pattern used by the BrowserStack checkbox in the runner page.
-- **Live update:** `updateRunTestsBtnForProjectPath` is also called after a successful Preferences save so the button re-enables immediately without a page reload.
+- **Preferences guard:** Saving Preferences sends a fresh runner-state ping. If any runner tab responds, the dashboard asks the user to close it and does not save. This prevents an open runner from retaining options for a project that is being replaced.
+- **Reload after save:** A successful Preferences save reloads the dashboard so all paths, report data, status controls, and runner configuration start from the persisted settings.
 - **Two independent disable reasons:** The button also disables while a Runner tab is already open (governed by `BroadcastChannel('runner_state')`). The two states are tracked by separate `isProjectPathMissing` and `isRunnerOpen` flags so closing the runner tab does not re-enable the button if the project path is still missing.
 
 ### Browser Mode Overrides

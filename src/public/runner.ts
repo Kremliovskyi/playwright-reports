@@ -5,7 +5,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const channel = new BroadcastChannel("runner_state");
   channel.postMessage({ state: "open" });
   channel.onmessage = (event) => {
-    if (event.data.type === "ping") channel.postMessage({ state: "open" });
+    if (event.data.type === "ping")
+      channel.postMessage({
+        state: "open",
+        requestId: event.data.requestId,
+      });
   };
   window.addEventListener("beforeunload", () =>
     channel.postMessage({ state: "closed" }),

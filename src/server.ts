@@ -31,7 +31,6 @@ import {
   pruneOrphanDigests,
 } from "./db";
 import { spawn, ChildProcess } from "child_process";
-import { createJiti } from "jiti";
 import treeKill from "tree-kill";
 import MarkdownIt from "markdown-it";
 import { randomUUID } from "node:crypto";
@@ -39,6 +38,8 @@ import {
   discoverRunnerConfigs,
   resolveDiscoveredConfig,
 } from "./runner-configs";
+import { formatRunnerArgs, prepareRunnerArgs } from "./runner-command";
+import { loadPlaywrightConfigProjection } from "./playwright-config-loader";
 import {
   analyzeRun,
   isAnalyzableEntry,
@@ -56,7 +57,6 @@ import {
   GroupingRunError,
 } from "./copilot-grouper";
 
-const jiti = createJiti(__filename, { moduleCache: false });
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
 
 const app = express();
@@ -738,20 +738,13 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
       "Playwright config",
     );
 
-    // Create a fresh Jiti instance with cache: false and moduleCache: false.
-    // We use the recommended async `localJiti.import()` to avoid deprecated sync warning.
-    const localJiti = createJiti(__filename, {
-      moduleCache: false,
-      cache: false,
+    const projection = await loadPlaywrightConfigProjection(configPath, {
+      cwd: appConfig.projectPath,
     });
-    const config = (await localJiti.import(configPath)) as any;
-    const cfg = config.default || config;
-
-    if (cfg.projects && Array.isArray(cfg.projects)) {
-      const projects = cfg.projects.map((p: any) => p.name).filter(Boolean);
-      return res.json({ projects, config: selectedConfig });
-    }
-    return res.json({ projects: [], config: selectedConfig });
+    return res.json({
+      projects: projection.projectNames,
+      config: selectedConfig,
+    });
   } catch (error: any) {
     console.error("Error parsing config:", error);
     return res.status(400).json({ projects: [], error: error.message });
@@ -908,18 +901,7 @@ app.post(
     }
     const command = process.platform === "win32" ? "npx.cmd" : "npx";
 
-    // We explicitly wrap the argument following --grep in double quotes
-    // so that all OS shells (and UI logging) treat it as a single contiguous string.
-    const finalArgs: string[] = [];
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] === "--grep" && i + 1 < args.length) {
-        finalArgs.push(args[i]);
-        finalArgs.push(`"${args[i + 1]}"`);
-        i++; // Skip the next argument since we just processed it
-      } else {
-        finalArgs.push(args[i]);
-      }
-    }
+    const finalArgs = prepareRunnerArgs(args);
 
     let headlessConfigPath: string | null = null;
     try {
@@ -957,7 +939,10 @@ app.post(
       });
 
       activeProcess = child;
-      broadcastLog("start", `Running ${logPrefix} ${finalArgs.join(" ")}\n`);
+      broadcastLog(
+        "start",
+        `Running ${logPrefix} ${formatRunnerArgs(finalArgs)}\n`,
+      );
 
       child.stdout?.on("data", (data) =>
         broadcastLog("output", data.toString()),
@@ -1846,8 +1831,7 @@ app.post(
     if (!appConfig.projectPath)
       return res.status(400).json({ error: "Project path is not configured" });
 
-    // Load playwright config once at the beginning of the request using async localJiti.import
-    let resolvedCfg: any = null;
+    let ariaSnapshotPathTemplate: string | undefined;
     try {
       const { playwrightConfigs } = await discoverRunnerConfigs(
         appConfig.projectPath,
@@ -1864,12 +1848,10 @@ app.post(
           playwrightConfigs,
           "Playwright config",
         );
-        const localJiti = createJiti(__filename, {
-          moduleCache: false,
-          cache: false,
+        const projection = await loadPlaywrightConfigProjection(configPath, {
+          cwd: appConfig.projectPath,
         });
-        const cfg = (await localJiti.import(configPath)) as any;
-        resolvedCfg = cfg.default || cfg;
+        ariaSnapshotPathTemplate = projection.ariaSnapshotPathTemplate;
       }
     } catch (e) {
       console.error("Failed to load playwright config for aria snapshots:", e);
@@ -2123,12 +2105,8 @@ app.post(
 
                 // Determine aria snapshots directory
                 let testAriaDir = `src/test-data/aria-snapshots/${test.location.file}`;
-                if (
-                  resolvedCfg &&
-                  resolvedCfg.expect?.toMatchAriaSnapshot?.pathTemplate
-                ) {
-                  const template =
-                    resolvedCfg.expect.toMatchAriaSnapshot.pathTemplate;
+                if (ariaSnapshotPathTemplate) {
+                  const template = ariaSnapshotPathTemplate;
                   const parsedRelPath = path.parse(test.location.file);
                   let resolvedDirTemplate = template
                     .replace(/\{(.)?testFilePath\}/g, test.location.file)

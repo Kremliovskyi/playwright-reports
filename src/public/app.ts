@@ -436,11 +436,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Show a blocking error dialog with the full server/exception message (e.g. ENOSPC
   // details that otherwise are only visible in the network tab).
-  const showErrorDialog = (title: string, error: unknown) => {
+  const showErrorDialog = (
+    title: string,
+    error: unknown,
+    options: { closeLabel?: string } = {},
+  ) => {
     errorModalTitle.textContent = title;
     errorModalMessage.textContent =
       (error instanceof Error ? error.message : String(error)) ||
       "Unknown error";
+    closeErrorModalFooterBtn.textContent = options.closeLabel || "Dismiss";
     errorModal.classList.remove("hidden");
   };
   closeErrorModalBtn.addEventListener("click", () =>
@@ -535,6 +540,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   let isProjectPathMissing = true;
   let isRunnerOpen = false;
+  const runnerStateChannel = new BroadcastChannel("runner_state");
 
   const updateRunTestsBtnForProjectPath = (projectPath: string) => {
     isProjectPathMissing = !projectPath;
@@ -552,9 +558,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   if (runTestsBtn) {
-    const channel = new BroadcastChannel("runner_state");
-
-    channel.onmessage = (event) => {
+    runnerStateChannel.onmessage = (event) => {
       if (event.data.state === "open") {
         isRunnerOpen = true;
         runTestsBtn.disabled = true;
@@ -577,7 +581,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     // Ask if runner is already open upon load
-    channel.postMessage({ type: "ping" });
+    runnerStateChannel.postMessage({ type: "ping" });
 
     runTestsBtn.addEventListener("click", () => {
       // Temporarily disable to prevent double clicks before tab loads
@@ -824,6 +828,28 @@ document.addEventListener("DOMContentLoaded", () => {
       void checkCopilotStatus(false);
     }
   }
+
+  const checkRunnerOpen = (): Promise<boolean> => {
+    const requestId = `${Date.now()}-${Math.random()}`;
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(() => {
+        runnerStateChannel.removeEventListener("message", onMessage);
+        isRunnerOpen = false;
+        resolve(false);
+      }, 300);
+      const onMessage = (event: MessageEvent) => {
+        if (event.data?.state !== "open" || event.data?.requestId !== requestId)
+          return;
+        window.clearTimeout(timeout);
+        runnerStateChannel.removeEventListener("message", onMessage);
+        isRunnerOpen = true;
+        resolve(true);
+      };
+
+      runnerStateChannel.addEventListener("message", onMessage);
+      runnerStateChannel.postMessage({ type: "ping", requestId });
+    });
+  };
 
   // Format date nicely
   const formatDate = (dateString: string) => {
@@ -3161,6 +3187,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // User must use standard close/cancel/save buttons
 
   saveModalBtn.addEventListener("click", async () => {
+    saveModalBtn.disabled = true;
+    if (await checkRunnerOpen()) {
+      showErrorDialog(
+        "Runner is open",
+        "Please close the runner before changing preferences.",
+        { closeLabel: "Close" },
+      );
+      saveModalBtn.disabled = false;
+      return;
+    }
+
     const currentPath = currentPathInput.value.trim();
     const archivePath = archivePathInput.value.trim();
     const projectPath = projectPathInput.value.trim();
@@ -3170,7 +3207,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const copilotToken = copilotTokenInput.value.trim();
 
     modalError.classList.add("hidden");
-    saveModalBtn.disabled = true;
     saveModalBtn.textContent = "Saving...";
 
     try {
@@ -3194,16 +3230,13 @@ document.addEventListener("DOMContentLoaded", () => {
         throw new Error(data.error || "Failed to update paths");
       }
 
-      closeModal();
-      updateRunTestsBtnForProjectPath(projectPath);
-      await reloadVisibleReports();
-      document.getElementById("copilot-status-chip")?.click();
+      window.location.reload();
     } catch (err: any) {
       modalError.textContent = err.message;
       modalError.classList.remove("hidden");
     } finally {
       saveModalBtn.disabled = false;
-      saveModalBtn.textContent = "Save Changes";
+      saveModalBtn.textContent = "Save changes and reload";
     }
   });
 

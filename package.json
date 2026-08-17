@@ -17,7 +17,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@andrii_kremlovskyi/playwright-traces-reader": "^4.1.1",
+    "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.1",
     "@github/copilot-sdk": "^1.0.3",
     "@types/better-sqlite3": "^7.6.13",
     "@xterm/addon-fit": "^0.11.0",
@@ -31,6 +31,11 @@
     "markdown-it": "^14.1.1",
     "pm2": "^7.0.3",
     "tree-kill": "^1.2.2"
+  },
+  "overrides": {
+    "pm2": {
+      "js-yaml": "4.3.1"
+    }
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",

@@ -2125,6 +2125,7 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   let openAriaPreviewModal = (failure: any) => {
+    ariaDeepEqualCheckbox.checked = true;
     ariaPreviewSubtitle.textContent = failure.testTitle;
     ariaPreviewBody.innerHTML = "";
 

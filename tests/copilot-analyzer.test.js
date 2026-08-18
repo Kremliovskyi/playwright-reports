@@ -33,7 +33,7 @@ expect.soft(value).toBe(expected);
 `;
 
 const modelRecord = (issues) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   issues,
 });
 
@@ -45,13 +45,14 @@ const modelIssue = (overrides = {}) => ({
     expected: ["expected value"],
     received: ["actual value"],
     network: [],
-    transientVsFinalContradiction: null,
   },
   interpretation: {
     expectedStateLabel: null,
     observedStateLabel: "Done",
-    causalRole: "unclassified",
+    role: "independent",
     causedByBlockIndex: null,
+    resolution: "unknown",
+    resolutionEvidence: null,
     transitionBoundary: "Example step",
     explanation: "The authoritative assertion failed.",
     rootCauseHypothesis: null,
@@ -61,7 +62,11 @@ const modelIssue = (overrides = {}) => ({
   ...overrides,
 });
 
-const runAnalysis = async (response, errorMd = errorMarkdown) => {
+const runAnalysis = async (
+  response,
+  errorMd = errorMarkdown,
+  failureOverrides = {},
+) => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-analyzer-"));
   const folder = "attempt__retry0";
   fs.mkdirSync(path.join(runDir, folder));
@@ -87,6 +92,7 @@ const runAnalysis = async (response, errorMd = errorMarkdown) => {
         },
       ],
       files: { errorMarkdown: "error.md" },
+      ...failureOverrides,
     }),
   );
 
@@ -169,7 +175,7 @@ test("uses error.md as the exclusive issue source", async () => {
     'getByRole("heading", { name: "Done" })',
   );
   assert.deepEqual(result.records[0].issues[0].facts.sourceRefs, ["B1-L1"]);
-  assert.equal(JSON.parse(evidenceJson).schemaVersion, 2);
+  assert.equal(JSON.parse(evidenceJson).schemaVersion, 3);
   assert.match(analysisMarkdown, /Issue 1 \(terminal\)/);
   assert.match(analysisMarkdown, /Operation key.*tobevisible/);
 });
@@ -232,7 +238,145 @@ test("repairs a non-scalar semantic state label in the same session", async () =
   assert.match(sentPrompts[1], /deterministic-source-projection-json/);
 });
 
-test("records primary and downstream causal roles from generated evidence", async () => {
+test("rejects recovery without same-attempt outcome evidence", async () => {
+  const errorWithoutFinalPage = `# Error details
+
+\`\`\`
+Error: expect(locator).toBeVisible() failed
+Locator: getByRole("heading", { name: "Done" })
+Expected: visible
+Received: hidden
+\`\`\`
+`;
+  const invalidIssue = modelIssue();
+  invalidIssue.interpretation.resolution = "recovered-in-attempt";
+  invalidIssue.interpretation.resolutionEvidence =
+    "A separate retry passed later.";
+  const { result, sentPrompts } = await runAnalysis(
+    [modelRecord([invalidIssue]), modelRecord([modelIssue()])],
+    errorWithoutFinalPage,
+  );
+
+  assert.equal(result.analyzed, 1);
+  assert.equal(sentPrompts.length, 2);
+  assert.match(
+    sentPrompts[1],
+    /recovered-in-attempt requires an exact application-provided resolution evidence candidate/,
+  );
+  assert.equal(
+    result.records[0].issues[0].interpretation.resolution,
+    "unknown",
+  );
+});
+
+test("accepts non-terminal API recovery proven by a later passed step", async () => {
+  const firstError = `Error: expect(received).toBe(expected)
+Expected HTTP status: 200
+Received HTTP status: 503`;
+  const secondError = `Error: expect(received).toBe(expected)
+Expected HTTP status: 201
+Received HTTP status: 400`;
+  const apiErrorMarkdown = `# Error details
+
+\`\`\`
+${firstError}
+\`\`\`
+
+\`\`\`
+${secondError}
+\`\`\`
+`;
+  const apiIssue = modelIssue();
+  apiIssue.interpretation = {
+    ...apiIssue.interpretation,
+    observedStateLabel: null,
+    resolution: "recovered-in-attempt",
+    resolutionEvidence:
+      "passed-step:test.step@2: Verify API status recovered to 200 (test.step)",
+    transitionBoundary: "Exercise API recovery",
+  };
+  const terminalApiIssue = modelIssue({ blockIndex: 2 });
+  terminalApiIssue.interpretation = {
+    ...terminalApiIssue.interpretation,
+    observedStateLabel: null,
+    transitionBoundary: "Exercise API recovery",
+  };
+  const topLevelSteps = [
+    {
+      callId: "test.step@1",
+      parentId: null,
+      title: "Exercise API recovery",
+      method: "test.step",
+      startTime: 0,
+      endTime: 40,
+      durationMs: 40,
+      error: { message: secondError },
+      children: [
+        {
+          callId: "expect@1",
+          parentId: "test.step@1",
+          title: "Check initial API status",
+          method: "expect.toBe",
+          startTime: 5,
+          endTime: 10,
+          durationMs: 5,
+          error: { message: firstError },
+          children: [],
+        },
+        {
+          callId: "test.step@2",
+          parentId: "test.step@1",
+          title: "Verify API status recovered to 200",
+          method: "test.step",
+          startTime: 20,
+          endTime: 30,
+          durationMs: 10,
+          error: null,
+          children: [],
+        },
+        {
+          callId: "expect@2",
+          parentId: "test.step@1",
+          title: "Check created-resource API status",
+          method: "expect.toBe",
+          startTime: 35,
+          endTime: 40,
+          durationMs: 5,
+          error: { message: secondError },
+          children: [],
+        },
+      ],
+    },
+  ];
+
+  const { result, sentPrompts } = await runAnalysis(
+    modelRecord([apiIssue, terminalApiIssue]),
+    apiErrorMarkdown,
+    { title: "Exercise API recovery", topLevelSteps },
+  );
+
+  const evidence = result.records[0].issues[0];
+  assert.equal(result.analyzed, 1);
+  assert.equal(sentPrompts.length, 1);
+  assert.match(
+    sentPrompts[0],
+    /passed-step:test\.step@2: Verify API status recovered to 200 \(test\.step\)/,
+  );
+  assert.match(sentPrompts[0], /"result": "passed"/);
+  assert.equal(evidence.facts.finalPageState, null);
+  assert.equal(evidence.normalization.failureFamily, "http-status-mismatch");
+  assert.equal(evidence.interpretation.resolution, "recovered-in-attempt");
+  assert.equal(
+    evidence.interpretation.resolutionEvidence,
+    "passed-step:test.step@2: Verify API status recovered to 200 (test.step)",
+  );
+  assert.equal(
+    result.records[0].issues[1].interpretation.resolution,
+    "unknown",
+  );
+});
+
+test("records primary and downstream relationships separately from resolution", async () => {
   const multiBlockErrorMarkdown = `# Error details
 
 \`\`\`
@@ -263,7 +407,7 @@ Locator: getByRole("button", { name: "Download Statement" })
     ...firstIssue.interpretation,
     expectedStateLabel: "Account Overview",
     observedStateLabel: "Consent Review",
-    causalRole: "primary-state-mismatch",
+    role: "primary",
     transitionBoundary: "Example step",
   };
   const secondIssue = modelIssue({ blockIndex: 2 });
@@ -271,8 +415,10 @@ Locator: getByRole("button", { name: "Download Statement" })
     ...secondIssue.interpretation,
     expectedStateLabel: null,
     observedStateLabel: "Consent Review",
-    causalRole: "downstream-symptom",
+    role: "downstream",
     causedByBlockIndex: 1,
+    resolution: "persisted",
+    resolutionEvidence: "final-page: heading: Consent Review",
     transitionBoundary: "Example step",
   };
 
@@ -287,10 +433,7 @@ Locator: getByRole("button", { name: "Download Statement" })
     result.records[0].issues[0].normalization.observedStateKey,
     "consent-review",
   );
-  assert.equal(
-    result.records[0].issues[1].interpretation.causalRole,
-    "downstream-symptom",
-  );
+  assert.equal(result.records[0].issues[1].interpretation.role, "downstream");
   assert.equal(
     result.records[0].issues[1].interpretation.causedByBlockIndex,
     1,
@@ -298,6 +441,10 @@ Locator: getByRole("button", { name: "Download Statement" })
   assert.equal(
     result.records[0].issues[1].normalization.transitionBoundaryKey,
     "example-step",
+  );
+  assert.equal(
+    result.records[0].issues[1].interpretation.resolution,
+    "persisted",
   );
 });
 
@@ -327,7 +474,9 @@ Error: expect(locator).toMatchAriaSnapshot(expected) failed
   issue.interpretation = {
     ...issue.interpretation,
     observedStateLabel: "Submission complete",
-    causalRole: "content-mismatch",
+    role: "independent",
+    resolution: "recovered-in-attempt",
+    resolutionEvidence: "final-page: heading: Submission complete",
   };
   const { result } = await runAnalysis(
     modelRecord([issue]),
@@ -348,6 +497,9 @@ Error: expect(locator).toMatchAriaSnapshot(expected) failed
     'paragraph "Note: Bring the original document"',
   ]);
   assert.match(evidence.normalization.differenceKeys[0], /^missing:/);
+  assert.equal(evidence.normalization.failureFamily, "aria-snapshot-mismatch");
+  assert.equal(evidence.interpretation.role, "independent");
+  assert.equal(evidence.interpretation.resolution, "recovered-in-attempt");
 });
 
 test("keeps canonical keys invariant across semantic wording", async () => {
@@ -380,6 +532,11 @@ test("retains deterministic evidence after two invalid model responses", async (
     /deterministic source evidence retained/,
   );
   assert.equal(result.records[0].issues[0].facts.operation, "toBeVisible");
+  assert.equal(result.records[0].issues[0].interpretation.role, "independent");
+  assert.equal(
+    result.records[0].issues[0].interpretation.resolution,
+    "unknown",
+  );
   assert.match(analysisMarkdown, /Small-model interpretation unavailable/);
 });
 

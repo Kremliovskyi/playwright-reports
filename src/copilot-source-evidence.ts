@@ -1,5 +1,4 @@
 import type {
-  EvidenceCausalRole,
   FailureEvidenceAriaDiff,
   FailureEvidenceIssue,
   FailureEvidenceSourceLine,
@@ -18,6 +17,7 @@ export interface DeterministicIssueSource {
   ariaDiff: FailureEvidenceAriaDiff | null;
   expectedStateLabel: string | null;
   observedStateLabel: string | null;
+  resolutionEvidenceCandidates: string[];
 }
 
 export interface DeterministicAttemptSource {
@@ -29,6 +29,111 @@ export interface DeterministicAttemptSource {
 }
 
 const unique = <T>(values: T[]): T[] => [...new Set(values)];
+
+interface DeterministicStepSource {
+  callId: string;
+  title: string;
+  method: string;
+  startTime: number;
+  endTime: number | null;
+  errorMessage: string | null;
+  depth: number;
+}
+
+const parseAttemptSteps = (
+  failureJsonText?: string,
+): DeterministicStepSource[] => {
+  if (!failureJsonText) return [];
+  try {
+    const failure = JSON.parse(failureJsonText) as Record<string, unknown>;
+    const steps: DeterministicStepSource[] = [];
+    const visit = (value: unknown, depth: number): void => {
+      if (typeof value !== "object" || value === null) return;
+      const step = value as Record<string, unknown>;
+      const error =
+        typeof step.error === "object" && step.error !== null
+          ? (step.error as Record<string, unknown>)
+          : null;
+      if (
+        typeof step.callId === "string" &&
+        typeof step.title === "string" &&
+        typeof step.method === "string" &&
+        typeof step.startTime === "number"
+      ) {
+        steps.push({
+          callId: step.callId,
+          title: step.title,
+          method: step.method,
+          startTime: step.startTime,
+          endTime: typeof step.endTime === "number" ? step.endTime : null,
+          errorMessage:
+            error && typeof error.message === "string" ? error.message : null,
+          depth,
+        });
+      }
+      if (Array.isArray(step.children))
+        step.children.forEach((child) => visit(child, depth + 1));
+    };
+    if (Array.isArray(failure.topLevelSteps))
+      failure.topLevelSteps.forEach((step) => visit(step, 0));
+    return steps;
+  } catch {
+    return [];
+  }
+};
+
+const comparableEvidenceText = (value: string): string =>
+  value.toLowerCase().replace(/\s+/g, " ").trim();
+
+const evidenceLines = (value: string): string[] =>
+  unique(
+    value
+      .split(/\r?\n/)
+      .map(comparableEvidenceText)
+      .filter((line) => line.length >= 4),
+  );
+
+const stepIssueMatchScore = (
+  issue: Omit<DeterministicIssueSource, "resolutionEvidenceCandidates">,
+  step: DeterministicStepSource,
+): number => {
+  if (!step.errorMessage) return 0;
+  const stepLines = new Set(evidenceLines(step.errorMessage));
+  return evidenceLines(issue.sourceText).reduce(
+    (score, line) => score + (stepLines.has(line) ? line.length : 0),
+    0,
+  );
+};
+
+const laterPassedStepCandidates = (
+  issue: Omit<DeterministicIssueSource, "resolutionEvidenceCandidates">,
+  steps: DeterministicStepSource[],
+): string[] => {
+  const anchor = steps
+    .map((step) => ({ step, score: stepIssueMatchScore(issue, step) }))
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (right.step.depth !== left.step.depth)
+        return right.step.depth - left.step.depth;
+      return right.step.startTime - left.step.startTime;
+    })[0]?.step;
+  if (!anchor) return [];
+  const anchorTime = anchor.endTime ?? anchor.startTime;
+  return unique(
+    steps
+      .filter(
+        (step) =>
+          step.errorMessage === null &&
+          step.endTime !== null &&
+          step.startTime >= anchorTime,
+      )
+      .sort((left, right) => left.startTime - right.startTime)
+      .map(
+        (step) => `passed-step:${step.callId}: ${step.title} (${step.method})`,
+      ),
+  ).slice(0, 20);
+};
 
 const sourceLine = (
   blockIndex: number,
@@ -181,7 +286,7 @@ export const buildDeterministicAttemptSource = (
   failureJsonText?: string,
 ): DeterministicAttemptSource => {
   const finalPage = parseFinalPage(errorMd);
-  const issues = errorBlocks.map((block, index) => {
+  const parsedIssues = errorBlocks.map((block, index) => {
     const blockIndex = index + 1;
     const sourceLines = block
       .split(/\r?\n/)
@@ -206,6 +311,16 @@ export const buildDeterministicAttemptSource = (
         (blockIndex === errorBlocks.length ? finalPage.primaryLabel : null),
     };
   });
+  const steps = parseAttemptSteps(failureJsonText);
+  const issues = parsedIssues.map((issue, index) => ({
+    ...issue,
+    resolutionEvidenceCandidates: unique([
+      ...(index === parsedIssues.length - 1 && finalPage.summary
+        ? [`final-page: ${finalPage.summary}`]
+        : []),
+      ...laterPassedStepCandidates(issue, steps),
+    ]),
+  }));
   return {
     issues,
     finalPageState: finalPage.summary,
@@ -350,21 +465,39 @@ const validateCausalInterpretation = (
     );
   }
   if (
-    interpretation.causalRole === "downstream-symptom" &&
+    interpretation.role === "downstream" &&
     interpretation.causedByBlockIndex === null
   ) {
     throw new Error(
-      `Evidence issue ${issue.blockIndex} downstream-symptom requires causedByBlockIndex`,
+      `Evidence issue ${issue.blockIndex} downstream role requires causedByBlockIndex`,
     );
   }
   if (
-    interpretation.causalRole === "content-mismatch" &&
-    !source.issues[issue.blockIndex - 1].ariaDiff
+    interpretation.role !== "downstream" &&
+    interpretation.causedByBlockIndex !== null
   ) {
     throw new Error(
-      `Evidence issue ${issue.blockIndex} content-mismatch requires an ARIA diff`,
+      `Evidence issue ${issue.blockIndex} only a downstream role may reference causedByBlockIndex`,
     );
   }
+  if (interpretation.resolution !== "unknown") {
+    if (
+      !interpretation.resolutionEvidence ||
+      !source.issues[
+        issue.blockIndex - 1
+      ].resolutionEvidenceCandidates.includes(interpretation.resolutionEvidence)
+    )
+      throw new Error(
+        `Evidence issue ${issue.blockIndex} ${interpretation.resolution} requires an exact application-provided resolution evidence candidate`,
+      );
+  }
+  if (
+    interpretation.resolution === "unknown" &&
+    interpretation.resolutionEvidence !== null
+  )
+    throw new Error(
+      `Evidence issue ${issue.blockIndex} unknown resolution must not include resolutionEvidence`,
+    );
 };
 
 export const applyDeterministicEvidence = (
@@ -406,9 +539,6 @@ export const applyDeterministicEvidence = (
         expected,
         received,
         finalPageState: terminal ? source.finalPageState : null,
-        transientVsFinalContradiction: terminal
-          ? issue.facts.transientVsFinalContradiction
-          : null,
         blockQuotes,
         sourceRefs,
         ariaDiff: issueSource.ariaDiff,
@@ -446,13 +576,6 @@ export const applyDeterministicEvidence = (
   return issues;
 };
 
-const fallbackRole = (source: DeterministicIssueSource): EvidenceCausalRole => {
-  if (source.expectedStateLabel && source.observedStateLabel)
-    return "primary-state-mismatch";
-  if (source.ariaDiff) return "content-mismatch";
-  return "unclassified";
-};
-
 export const buildDeterministicFallbackIssues = (
   source: DeterministicAttemptSource,
 ): FailureEvidenceIssue[] => {
@@ -472,7 +595,6 @@ export const buildDeterministicFallbackIssues = (
         received: [],
         network: [],
         finalPageState: null,
-        transientVsFinalContradiction: null,
         blockQuotes: [],
         sourceRefs: [],
         ariaDiff: null,
@@ -491,8 +613,10 @@ export const buildDeterministicFallbackIssues = (
       interpretation: {
         expectedStateLabel: issueSource.expectedStateLabel,
         observedStateLabel: issueSource.observedStateLabel,
-        causalRole: fallbackRole(issueSource),
+        role: "independent",
         causedByBlockIndex: null,
+        resolution: "unknown",
+        resolutionEvidence: null,
         transitionBoundary: null,
         explanation:
           "Deterministic source evidence retained after model extraction failed.",
@@ -518,6 +642,7 @@ export const sourcePromptProjection = (
     ariaDiff: issue.ariaDiff,
     expectedStateLabelCandidate: issue.expectedStateLabel,
     observedStateLabelCandidate: issue.observedStateLabel,
+    resolutionEvidenceCandidates: issue.resolutionEvidenceCandidates,
   })),
   finalPageState: source.finalPageState,
   finalPagePrimaryLabel: source.finalPagePrimaryLabel,

@@ -22,7 +22,7 @@ const entry = (folder, retryIndex, outcome, testName = "e2eFlowTC01") => ({
 });
 
 const record = (folder, issues, overrides = {}) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   model: "small-model",
   attempt: {
     folder,
@@ -40,11 +40,15 @@ const record = (folder, issues, overrides = {}) => ({
       ...issue.facts,
       finalPageState:
         index === issues.length - 1 ? issue.facts.finalPageState : null,
-      transientVsFinalContradiction:
-        index === issues.length - 1
-          ? issue.facts.transientVsFinalContradiction
-          : null,
     },
+    interpretation:
+      index === issues.length - 1
+        ? issue.interpretation
+        : {
+            ...issue.interpretation,
+            resolution: "unknown",
+            resolutionEvidence: null,
+          },
   })),
   ...overrides,
 });
@@ -62,7 +66,6 @@ const softIssue = {
     received: ["Back button present"],
     network: [],
     finalPageState: null,
-    transientVsFinalContradiction: null,
     blockQuotes: ["Unexpected Back button"],
     sourceRefs: ["B1-L1"],
     ariaDiff: null,
@@ -81,8 +84,10 @@ const softIssue = {
   interpretation: {
     expectedStateLabel: "Loading screen",
     observedStateLabel: "Loading screen with Back button",
-    causalRole: "primary-state-mismatch",
+    role: "independent",
     causedByBlockIndex: null,
+    resolution: "unknown",
+    resolutionEvidence: null,
     transitionBoundary: "Open flow",
     explanation: "The loading screen contains an extra Back button.",
     rootCauseHypothesis: "The loading snapshot changed.",
@@ -104,7 +109,6 @@ const terminalIssue = {
     received: ["Result visible after 10 seconds"],
     network: [],
     finalPageState: "The result screen is visible.",
-    transientVsFinalContradiction: "The result eventually appeared.",
     blockQuotes: ["Timeout 10000ms exceeded"],
     sourceRefs: ["B1-L1"],
     ariaDiff: null,
@@ -123,8 +127,10 @@ const terminalIssue = {
   interpretation: {
     expectedStateLabel: "Result screen",
     observedStateLabel: "Result screen",
-    causalRole: "transient-readiness-failure",
+    role: "independent",
     causedByBlockIndex: null,
+    resolution: "recovered-in-attempt",
+    resolutionEvidence: "The result eventually appeared.",
     transitionBoundary: "Complete the flow",
     explanation: "The result appeared after the assertion window.",
     rootCauseHypothesis: "The result exceeded the assertion window.",
@@ -521,7 +527,7 @@ test("emits causal incident hints before operation and target symptoms", async (
       interpretation: {
         expectedStateLabel: null,
         observedStateLabel: null,
-        causalRole: "content-mismatch",
+        role: "independent",
         transitionBoundary: null,
       },
     }),
@@ -599,7 +605,7 @@ test("emits causal incident hints before operation and target symptoms", async (
   }
 });
 
-test("repairs a downstream symptom split from its causal anchor", async () => {
+test("repairs a downstream issue split from its causal anchor", async () => {
   const runDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "copilot-group-causal-repair-"),
   );
@@ -609,6 +615,9 @@ test("repairs a downstream symptom split from its causal anchor", async () => {
       expectedStateKey: "account-overview",
       observedStateKey: "consent-review",
       transitionBoundaryKey: "identity-handoff",
+    },
+    interpretation: {
+      role: "primary",
     },
   });
   const downstream = issueVariant(terminalIssue, {
@@ -625,8 +634,10 @@ test("repairs a downstream symptom split from its causal anchor", async () => {
     },
     interpretation: {
       observedStateLabel: "Consent Review",
-      causalRole: "downstream-symptom",
+      role: "downstream",
       causedByBlockIndex: 1,
+      resolution: "persisted",
+      resolutionEvidence: "The terminal page still shows Consent Review.",
       transitionBoundary: "Identity handoff",
     },
   });
@@ -676,6 +687,80 @@ test("repairs a downstream symptom split from its causal anchor", async () => {
     assert.equal(result.diagnostics.repairAttempted, true);
     assert.equal(result.diagnostics.causalSplitIssueCountBeforeRepair, 1);
     assert.equal(result.diagnostics.causalSplitIssueCountAfterRepair, 0);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("repairs matching incidents split only by resolution", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-resolution-repair-"),
+  );
+  const recovered = issueVariant(terminalIssue, {
+    interpretation: {
+      resolution: "recovered-in-attempt",
+      resolutionEvidence: "The terminal page shows the result screen.",
+    },
+  });
+  const persisted = issueVariant(terminalIssue, {
+    facts: {
+      finalPageState: "The result screen is still loading.",
+    },
+    interpretation: {
+      resolution: "persisted",
+      resolutionEvidence: "The terminal page still shows the loading state.",
+    },
+  });
+  const folders = ["recovered__retry0", "persisted__retry0"];
+  const manifest = {
+    count: 2,
+    runDir,
+    failures: folders.map((folder) => entry(folder, 0, "unexpected")),
+  };
+  const responses = [
+    {
+      summary: "The model split matching incidents by outcome.",
+      problems: [modelProblem(["I1"]), modelProblem(["I2"])],
+      evidenceRequests: [],
+    },
+    {
+      summary: "The matching incidents differ only in resolution.",
+      problems: [modelProblem(["I1", "I2"])],
+      evidenceRequests: [],
+    },
+  ];
+  const prompts = [];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: { content: JSON.stringify(responses[prompts.length - 1]) },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      [record(folders[0], [recovered]), record(folders[1], [persisted])],
+      "small-model",
+      "big-model",
+    );
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /"incidentSplitIssueIds":\["I2"\]/);
+    assert.equal(result.problemCount, 1);
+    assert.equal(result.diagnostics.incidentSplitIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.incidentSplitIssueCountAfterRepair, 0);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

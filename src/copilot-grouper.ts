@@ -70,6 +70,7 @@ interface ModelGroupingReferenceValidation {
   unknownIssueIds: string[];
   duplicateIssueIds: string[];
   causalSplitIssueIds: string[];
+  incidentSplitIssueIds: string[];
 }
 
 export interface GroupRunResult {
@@ -119,6 +120,8 @@ export interface GroupingDiagnostics {
   duplicateIssueCountAfterRepair: number;
   causalSplitIssueCountBeforeRepair: number;
   causalSplitIssueCountAfterRepair: number;
+  incidentSplitIssueCountBeforeRepair: number;
+  incidentSplitIssueCountAfterRepair: number;
   repairErrorMessage?: string;
   inputTokens?: number;
   outputTokens?: number;
@@ -171,6 +174,36 @@ const buildIssueCatalog = (
   return catalog;
 };
 
+const deterministicIncidentHints = (
+  issue: UnderstandingRecord["issues"][number],
+): {
+  stateIncidentKey: string | null;
+  contentIncidentKey: string | null;
+  strongIncidentKey: string | null;
+} => {
+  const stateIncidentKey = issue.normalization.observedStateKey
+    ? [
+        issue.normalization.transitionBoundaryKey || "unknown-boundary",
+        issue.normalization.observedStateKey,
+      ].join("=>")
+    : null;
+  const contentIncidentKey = issue.normalization.differenceKeys.length
+    ? [
+        issue.normalization.failureFamily,
+        ...[...issue.normalization.differenceKeys].sort(),
+      ].join("|")
+    : null;
+  return {
+    stateIncidentKey,
+    contentIncidentKey,
+    strongIncidentKey: stateIncidentKey
+      ? `state:${stateIncidentKey}`
+      : contentIncidentKey
+        ? `content:${contentIncidentKey}`
+        : null,
+  };
+};
+
 const buildGroupingInput = (
   manifest: FailureManifest,
   records: UnderstandingRecord[],
@@ -194,18 +227,8 @@ const buildGroupingInput = (
             `${ref.folder}:${issue.interpretation.causedByBlockIndex}`,
           ) || null
         : null;
-      const stateIncidentKey = issue.normalization.observedStateKey
-        ? [
-            issue.normalization.transitionBoundaryKey || "unknown-boundary",
-            issue.normalization.observedStateKey,
-          ].join("=>")
-        : null;
-      const contentIncidentKey = issue.normalization.differenceKeys.length
-        ? [
-            issue.normalization.failureFamily,
-            ...[...issue.normalization.differenceKeys].sort(),
-          ].join("|")
-        : null;
+      const { stateIncidentKey, contentIncidentKey } =
+        deterministicIncidentHints(issue);
       return {
         issueId,
         folder: ref.folder,
@@ -239,16 +262,16 @@ The complete grouping input is embedded at the end of this prompt as JSON. It is
 Every input item is one issue extracted from one error.md block. It has a globally unique issueId, application-owned facts and normalization, constrained interpretation, and deterministic incidentHints. terminal is true only for the issue that ended its attempt. Keep every earlier issue visible as a real issue. Source-backed deterministic fallback issues remain present even when semantic interpretation was unavailable.
 
 Group incidents, not failing operations. Use signals in this priority order:
-1. causalAnchorIssueId: a downstream symptom belongs with the primary issue it references. Do not create a separate problem for it merely because its locator, operation, or error differs.
+1. causalAnchorIssueId: a downstream issue belongs with the primary issue it references. Do not create a separate problem for it merely because its locator, operation, or error differs.
 2. stateIncidentKey and the underlying observedStateKey + transitionBoundaryKey: the same unexpected state at the same handoff is positive evidence for one incident across scenarios. Different downstream controls missing from that state are symptom details.
 3. contentIncidentKey and deterministic ARIA differenceKeys: the same concrete missing/unexpected content is positive evidence for one content incident, even when scenario labels differ.
 4. Response-contract signature, issue-local network correlation, and normalized error.
 5. operationKey, targetKey, stepPath, and previousPassedBoundary as symptom context after evaluating the stronger causal signals above.
-6. Terminal-only final page state and transient-vs-final result.
+6. Terminal final page state and resolution as descriptive outcome context, not an incident signature.
 
 Test titles and manifest steps are scenario context, not standalone signatures. Differences only in labels, locators, operations, or prose must not split issues when the observed state, transition boundary, causal anchor, or content fingerprint agrees. Do not use a missing optional field alone as positive evidence to split. When two issues are plausible matches but a critical comparison field is missing, ambiguous, or conflicting, request bounded source evidence instead of guessing.
 
-Merge across scenarios only with positive matching evidence. Do not merge solely because issues share a product, broad timeout category, missing-element category, or root-cause wording. Split when observed states or transition boundaries materially conflict, or when concrete content fingerprints conflict. Uncertainty is a reason to request evidence, not a reason to split by operation. Honor terminal transient-vs-final evidence: completion after an earlier timeout is latency, not a permanent stall.
+Merge across scenarios only with positive matching evidence. Do not merge solely because issues share a product, broad timeout category, missing-element category, or root-cause wording. Split when observed states or transition boundaries materially conflict, or when concrete content fingerprints conflict. Uncertainty is a reason to request evidence, not a reason to split by operation. Do not split otherwise matching issues merely because one recovered later in its attempt and another did not; resolution describes impact, not incident identity.
 
 Return EXACTLY one JSON object and no prose or markdown fences:
 {
@@ -275,7 +298,7 @@ Rules:
 - Reference every issue from every valid evidence record exactly once using only its exact issueId.
 - Copy issueIds exactly as supplied. Never invent, renumber, or modify an issueId.
 - A problem must have at least one issueIds entry.
-- Multiple distinct issues from one attempt may belong to different problems, but a downstream-symptom and its causal anchor must stay in one problem.
+- Multiple distinct issues from one attempt may belong to different problems, but a downstream issue and its causal anchor must stay in one problem.
 - Return a complete provisional grouping even when requesting evidence.
 - Request evidence only for a plausible merge that cannot be decided from the structured fields. Use only: error-block, final-page, test-source, network.
 - If no evidence is needed, return an empty evidenceRequests array.
@@ -328,7 +351,10 @@ const buildGroupingRepairPrompt = (
       facts: issue.facts,
       normalization: issue.normalization,
       interpretation: issue.interpretation,
-      incidentHints: { causalAnchorIssueId },
+      incidentHints: {
+        causalAnchorIssueId,
+        ...deterministicIncidentHints(issue),
+      },
     };
   });
 
@@ -344,7 +370,7 @@ Rules:
 - Set evidenceRequests to an empty array; reference repair cannot request more evidence.
 - When an affected issue has positive matching evidence for an existing problem, append its issueId to that problem's issueIds.
 - Otherwise create a new fully described problem for it.
-- Keep materially different observed states, transition boundaries, content fingerprints, response contracts, network correlations, or transient-vs-final results separate.
+- Keep materially different observed states, transition boundaries, content fingerprints, response contracts, or network correlations separate. Resolution alone must not split an incident.
 - Do not split an affected issue from its causalAnchorIssueId because its failing operation, target, or locator differs.
 - Do not return only a patch or only the omitted issues; return the complete corrected summary and problems array.
 
@@ -785,6 +811,21 @@ const validateModelGroupingReferences = (
       ? [issueId]
       : [];
   });
+  const problemIndexByIncidentKey = new Map<string, number>();
+  const incidentSplitIssueIds: string[] = [];
+  for (const { issueId, ref, record } of catalog) {
+    const problemIndex = problemIndexByIssueId.get(issueId);
+    const { strongIncidentKey } = deterministicIncidentHints(
+      record.issues[ref.issueIndex - 1],
+    );
+    if (problemIndex === undefined || !strongIncidentKey) continue;
+    const firstProblemIndex = problemIndexByIncidentKey.get(strongIncidentKey);
+    if (firstProblemIndex === undefined) {
+      problemIndexByIncidentKey.set(strongIncidentKey, problemIndex);
+    } else if (firstProblemIndex !== problemIndex) {
+      incidentSplitIssueIds.push(issueId);
+    }
+  }
 
   return {
     missingIssueIds: catalog
@@ -793,6 +834,7 @@ const validateModelGroupingReferences = (
     unknownIssueIds,
     duplicateIssueIds,
     causalSplitIssueIds,
+    incidentSplitIssueIds,
   };
 };
 
@@ -802,7 +844,8 @@ const referenceViolationCount = (
   validation.missingIssueIds.length +
   validation.unknownIssueIds.length +
   validation.duplicateIssueIds.length +
-  validation.causalSplitIssueIds.length;
+  validation.causalSplitIssueIds.length +
+  validation.incidentSplitIssueIds.length;
 
 const toGroupingResponse = (
   response: ModelGroupingResponse,
@@ -869,11 +912,34 @@ const sanitizeModelGroupingResponse = (
   const causallySanitizedProblems = sanitizedProblems.filter(
     (problem) => problem.issueIds.length,
   );
+  const problemByIncidentKey = new Map<string, ModelGroupingProblem>();
+  for (const { issueId, ref, record } of catalog) {
+    const { strongIncidentKey } = deterministicIncidentHints(
+      record.issues[ref.issueIndex - 1],
+    );
+    if (!strongIncidentKey) continue;
+    const issueProblem = causallySanitizedProblems.find((problem) =>
+      problem.issueIds.includes(issueId),
+    );
+    if (!issueProblem) continue;
+    const anchorProblem = problemByIncidentKey.get(strongIncidentKey);
+    if (!anchorProblem) {
+      problemByIncidentKey.set(strongIncidentKey, issueProblem);
+    } else if (anchorProblem !== issueProblem) {
+      issueProblem.issueIds = issueProblem.issueIds.filter(
+        (candidate) => candidate !== issueId,
+      );
+      anchorProblem.issueIds.push(issueId);
+    }
+  }
+  const incidentSanitizedProblems = causallySanitizedProblems.filter(
+    (problem) => problem.issueIds.length,
+  );
 
   const groupingResponse = toGroupingResponse(
     {
       summary: response.summary,
-      problems: causallySanitizedProblems,
+      problems: incidentSanitizedProblems,
       evidenceRequests: [],
     },
     catalog,
@@ -1209,6 +1275,8 @@ export const groupRun = async (
     duplicateIssueCountAfterRepair: 0,
     causalSplitIssueCountBeforeRepair: 0,
     causalSplitIssueCountAfterRepair: 0,
+    incidentSplitIssueCountBeforeRepair: 0,
+    incidentSplitIssueCountAfterRepair: 0,
     truncationCount: 0,
     compactionCount: 0,
   };
@@ -1323,6 +1391,8 @@ export const groupRun = async (
       validation.duplicateIssueIds.length;
     diagnostics.causalSplitIssueCountBeforeRepair =
       validation.causalSplitIssueIds.length;
+    diagnostics.incidentSplitIssueCountBeforeRepair =
+      validation.incidentSplitIssueIds.length;
     let response: GroupingResponse;
     if (referenceViolationCount(validation)) {
       diagnostics.repairAttempted = true;
@@ -1336,6 +1406,7 @@ export const groupRun = async (
             ...validation.missingIssueIds,
             ...validation.duplicateIssueIds,
             ...validation.causalSplitIssueIds,
+            ...validation.incidentSplitIssueIds,
           ]),
         ],
         validation,
@@ -1363,11 +1434,14 @@ export const groupRun = async (
             `Repair response still had ${repairedValidation.missingIssueIds.length} missing, ` +
             `${repairedValidation.unknownIssueIds.length} unknown, and ` +
             `${repairedValidation.duplicateIssueIds.length} duplicate, and ` +
-            `${repairedValidation.causalSplitIssueIds.length} causally split issueId reference${referenceViolationCount(repairedValidation) === 1 ? "" : "s"}.`;
+            `${repairedValidation.causalSplitIssueIds.length} causally split, and ` +
+            `${repairedValidation.incidentSplitIssueIds.length} incident-split issueId reference${referenceViolationCount(repairedValidation) === 1 ? "" : "s"}.`;
           diagnostics.omittedIssueCountAfterRepair =
             validation.missingIssueIds.length;
           diagnostics.causalSplitIssueCountAfterRepair =
             repairedValidation.causalSplitIssueIds.length;
+          diagnostics.incidentSplitIssueCountAfterRepair =
+            repairedValidation.incidentSplitIssueIds.length;
           response = sanitizeModelGroupingResponse(
             parsedResponse,
             issueCatalog,
@@ -1375,6 +1449,7 @@ export const groupRun = async (
         } else {
           diagnostics.omittedIssueCountAfterRepair = 0;
           diagnostics.causalSplitIssueCountAfterRepair = 0;
+          diagnostics.incidentSplitIssueCountAfterRepair = 0;
           response = toGroupingResponse(repairedResponse, issueCatalog);
         }
       } catch (repairError) {
@@ -1390,6 +1465,8 @@ export const groupRun = async (
           validation.missingIssueIds.length;
         diagnostics.causalSplitIssueCountAfterRepair =
           validation.causalSplitIssueIds.length;
+        diagnostics.incidentSplitIssueCountAfterRepair =
+          validation.incidentSplitIssueIds.length;
         response = sanitizeModelGroupingResponse(parsedResponse, issueCatalog);
       }
     } else {

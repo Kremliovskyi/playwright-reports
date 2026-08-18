@@ -1,15 +1,13 @@
-export const EVIDENCE_SCHEMA_VERSION = 2;
+export const EVIDENCE_SCHEMA_VERSION = 3;
 export const EVIDENCE_FILENAME = "evidence.json";
 export const AI_ANALYSIS_FILENAME = "ai-analysis.md";
 
 export type EvidenceConfidence = "high" | "medium" | "low";
-export type EvidenceCausalRole =
-  | "primary-state-mismatch"
-  | "downstream-symptom"
-  | "content-mismatch"
-  | "response-contract-mismatch"
-  | "transient-readiness-failure"
-  | "unclassified";
+export type EvidenceIssueRole = "primary" | "downstream" | "independent";
+export type EvidenceIssueResolution =
+  | "persisted"
+  | "recovered-in-attempt"
+  | "unknown";
 
 export interface FailureEvidenceSourceLine {
   id: string;
@@ -40,7 +38,6 @@ export interface FailureEvidenceFacts {
   received: string[];
   network: FailureEvidenceNetworkItem[];
   finalPageState: string | null;
-  transientVsFinalContradiction: string | null;
   blockQuotes: string[];
   sourceRefs: string[];
   ariaDiff: FailureEvidenceAriaDiff | null;
@@ -61,8 +58,10 @@ export interface FailureEvidenceNormalization {
 export interface FailureEvidenceInterpretation {
   expectedStateLabel: string | null;
   observedStateLabel: string | null;
-  causalRole: EvidenceCausalRole;
+  role: EvidenceIssueRole;
   causedByBlockIndex: number | null;
+  resolution: EvidenceIssueResolution;
+  resolutionEvidence: string | null;
   transitionBoundary: string | null;
   explanation: string;
   rootCauseHypothesis: string | null;
@@ -133,13 +132,16 @@ const isAriaDiff = (value: unknown): value is FailureEvidenceAriaDiff => {
   );
 };
 
-const causalRoles = new Set<EvidenceCausalRole>([
-  "primary-state-mismatch",
-  "downstream-symptom",
-  "content-mismatch",
-  "response-contract-mismatch",
-  "transient-readiness-failure",
-  "unclassified",
+const issueRoles = new Set<EvidenceIssueRole>([
+  "primary",
+  "downstream",
+  "independent",
+]);
+
+const issueResolutions = new Set<EvidenceIssueResolution>([
+  "persisted",
+  "recovered-in-attempt",
+  "unknown",
 ]);
 
 const valueType = (value: unknown): string =>
@@ -216,12 +218,6 @@ const issueSchemaError = (value: unknown): string | null => {
       "facts.finalPageState",
       facts.finalPageState,
       isNullableString(facts.finalPageState),
-      "a string or null",
-    ],
-    [
-      "facts.transientVsFinalContradiction",
-      facts.transientVsFinalContradiction,
-      isNullableString(facts.transientVsFinalContradiction),
       "a string or null",
     ],
     [
@@ -316,6 +312,12 @@ const issueSchemaError = (value: unknown): string | null => {
       "an integer or null",
     ],
     [
+      "interpretation.resolutionEvidence",
+      interpretation.resolutionEvidence,
+      isNullableString(interpretation.resolutionEvidence),
+      "a string or null",
+    ],
+    [
       "interpretation.transitionBoundary",
       interpretation.transitionBoundary,
       isNullableString(interpretation.transitionBoundary),
@@ -345,8 +347,13 @@ const issueSchemaError = (value: unknown): string | null => {
     return `${invalid[0]} must be ${invalid[3]}; received ${valueType(invalid[1])}`;
   if (!(facts.network as unknown[]).every(isNetworkItem))
     return "facts.network entries must contain string call/gist/relToIssue and numeric-or-null status";
-  if (!causalRoles.has(interpretation.causalRole as EvidenceCausalRole)) {
-    return "interpretation.causalRole is not an allowed value";
+  if (!issueRoles.has(interpretation.role as EvidenceIssueRole)) {
+    return "interpretation.role is not an allowed value";
+  }
+  if (
+    !issueResolutions.has(interpretation.resolution as EvidenceIssueResolution)
+  ) {
+    return "interpretation.resolution is not an allowed value";
   }
   if (
     interpretation.confidence !== "high" &&
@@ -397,10 +404,7 @@ export const validateModelEvidenceIssues = (
         `Evidence issue ${expectedBlockIndex} has wrong terminal marker`,
       );
     if (!expectedTerminal) {
-      if (
-        issue.facts.finalPageState !== null ||
-        issue.facts.transientVsFinalContradiction !== null
-      ) {
+      if (issue.facts.finalPageState !== null) {
         throw new Error(
           `Non-terminal evidence issue ${expectedBlockIndex} contains terminal page state`,
         );
@@ -510,9 +514,13 @@ export const renderEvidenceMarkdown = (
       "",
       display(facts.finalPageState),
       "",
-      "## Transient vs final check",
+      "## Resolution",
       "",
-      display(facts.transientVsFinalContradiction),
+      interpretation.resolution,
+      "",
+      "## Resolution evidence",
+      "",
+      display(interpretation.resolutionEvidence),
       "",
       "## Root cause hypothesis",
       "",
@@ -544,7 +552,9 @@ export const renderEvidenceMarkdown = (
       `- **Operation key:** ${display(normalization.operationKey)}`,
       `- **Target key:** ${display(normalization.targetKey)}`,
       `- **Confidence:** ${interpretation.confidence}`,
-      `- **Causal role:** ${interpretation.causalRole}`,
+      `- **Role:** ${interpretation.role}`,
+      `- **Resolution:** ${interpretation.resolution}`,
+      `- **Resolution evidence:** ${display(interpretation.resolutionEvidence)}`,
       `- **Expected state:** ${display(interpretation.expectedStateLabel)}`,
       `- **Observed state:** ${display(interpretation.observedStateLabel)}`,
       `- **Transition boundary:** ${display(interpretation.transitionBoundary)}`,

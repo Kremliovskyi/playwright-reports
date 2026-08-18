@@ -291,10 +291,14 @@ const failureMetadata = (failureJsonText: string): string => {
   const sanitizeStep = (value: unknown): unknown => {
     if (typeof value !== "object" || value === null) return value;
     const step = value as Record<string, unknown>;
-    const { error: _error, children, ...metadata } = step;
-    void _error;
+    const { error, children, ...metadata } = step;
     return {
       ...metadata,
+      result: error
+        ? "failed"
+        : typeof step.endTime === "number"
+          ? "passed"
+          : "incomplete",
       children: Array.isArray(children) ? children.map(sanitizeStep) : [],
     };
   };
@@ -337,23 +341,29 @@ error.md is the EXCLUSIVE source of issues. It contains exactly ${expectedIssueC
 
 The failure metadata is SUPPORTING CONTEXT ONLY. Use it for issue-local step ancestry and operation context. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from metadata, parent steps, source code, network, or console entries. A parent test.step can repeat a child's error and is not another issue.
 
-The application has already parsed source-owned facts into the deterministic source projection below. Treat its error line, operation, target, ARIA removed/added lines, state-label candidates, and final-page summary as authoritative. Do not reinterpret an unchanged ARIA context line as removed content. You return only contextual facts that require semantic reading and a constrained interpretation; the application derives source references and all canonical keys.
+The application has already parsed source-owned facts into the deterministic source projection below. Treat its error line, operation, target, ARIA removed/added lines, state-label candidates, resolution-evidence candidates, and final-page summary as authoritative. Do not reinterpret an unchanged ARIA context line as removed content. You return only contextual facts that require semantic reading and a constrained interpretation; the application derives source references and all canonical keys.
 
-The '# Page snapshot' YAML section is the LAST-SEEN rendered UI and belongs to the TERMINAL issue only. finalPageState MUST be one JSON string or null, never an object or array. Set finalPageState and transientVsFinalContradiction to null for every non-terminal issue. Never explain an intermediate issue using the final page snapshot.
+The '# Page snapshot' YAML section is the LAST-SEEN rendered UI and belongs to the TERMINAL issue only. Never explain a non-terminal issue using the final page snapshot.
 
 previousPassedBoundary is the nearest factually supported successful boundary before THIS issue, or null. transitionBoundary must be one exact value from boundaryCandidates in the deterministic source projection, or null. expectedStateLabel and observedStateLabel must be exact labels present in this issue's block (or the terminal page for the terminal issue), or null. rootCauseHypothesis must be null unless the supplied evidence directly supports a cause.
 
-Causal roles:
-- primary-state-mismatch: the issue directly observes an unexpected application state.
-- downstream-symptom: an earlier issue in this same attempt already established the unexpected state and this operation fails because of it; causedByBlockIndex is required.
-- content-mismatch: an ARIA diff contains missing or unexpected content without a different application state.
-- response-contract-mismatch: a response body/status differs from its asserted contract.
-- transient-readiness-failure: the expected UI appears later or the attempt passes on retry after an intermediate readiness state.
-- unclassified: the evidence cannot support a more specific role.
+Issue role describes ONLY the relationship between issues in this same attempt:
+- primary: this issue establishes a state or condition that causes a later issue.
+- downstream: an earlier issue already established the condition that causes this issue; causedByBlockIndex is required.
+- independent: no causal relationship to another issue is proven. A single-issue attempt is normally independent.
+
+Failure type is not a role. ARIA content, locator timeout, and response-contract categories are derived by the application as failureFamily.
+
+Resolution describes ONLY what source-backed evidence from this same attempt proves after the issue:
+- recovered-in-attempt: a provided final-page or later-passed-step candidate clearly verifies that this issue's failed condition later met the expected state.
+- persisted: a provided final-page or later-passed-step candidate clearly verifies that this issue's failed condition remained.
+- unknown: no candidate proves either outcome. Use resolutionEvidence null.
+For recovered-in-attempt or persisted, copy one exact value from this issue's resolutionEvidenceCandidates into resolutionEvidence. A passed step is evidence only when its title specifically verifies the same failed condition; merely continuing after expect.soft is not recovery. For an immutable API response mismatch, use unknown unless a later request/assertion candidate explicitly rechecks that contract. Never infer recovery from another retry or attempt.
 
 Examples using fictional data:
-1. Block 1 expects "Account Overview" but observes "Consent Review". Mark it primary-state-mismatch. If block 2 then times out waiting for "Download Statement" while still on Consent Review, mark block 2 downstream-symptom with causedByBlockIndex 1. Different locator operations are consequences of one incident.
-2. An ARIA removed list contains "Note: Bring the original document" and the final page later says "Submission complete". Mark content-mismatch, not a permanent stall. Only removed/added arrays describe changes; surrounding raw diff context is unchanged.
+1. Block 1 expects "Account Overview" but observes "Consent Review", then block 2 times out waiting for "Download Statement" on that same page. Mark block 1 primary and block 2 downstream with causedByBlockIndex 1. Resolution is persisted only on terminal block 2 when the final page still shows Consent Review.
+2. A single ARIA issue misses "Note: Bring the original document" and the final page later says "Submission complete". Mark the issue independent with resolution recovered-in-attempt. Its failure type remains application-owned aria-snapshot-mismatch.
+3. An API soft assertion receives status 503 instead of 200. A later candidate named "Verify API status recovered to 200" can support recovered-in-attempt when it clearly rechecks that response contract. An unrelated passed cleanup step cannot. With no proving candidate, use unknown.
 
 ## Folder name
 ${folderName}
@@ -386,14 +396,15 @@ ${JSON.stringify(sourcePromptProjection(source), null, 2)}
         "received": ["<non-ARIA received fact not already parsed by the application>"],
         "network": [
           { "call": "<METHOD path>", "status": null, "gist": "<one line>", "relToIssue": "<relationship to THIS issue>" }
-        ],
-        "transientVsFinalContradiction": ${expectedIssueCount === 1 ? '"<factual contradiction when applicable>"' : "null"}
+        ]
       },
       "interpretation": {
         "expectedStateLabel": "<exact expected state label from source, or null>",
         "observedStateLabel": "<exact observed state label from source, or null>",
-        "causalRole": "<'primary-state-mismatch' | 'downstream-symptom' | 'content-mismatch' | 'response-contract-mismatch' | 'transient-readiness-failure' | 'unclassified'>",
+        "role": "<'primary' | 'downstream' | 'independent'>",
         "causedByBlockIndex": null,
+        "resolution": "<'persisted' | 'recovered-in-attempt' | 'unknown'>",
+        "resolutionEvidence": "<exact value from this issue's resolutionEvidenceCandidates, or null>",
         "transitionBoundary": "<nearest action or handoff where expected and observed states diverged, or null>",
         "explanation": "<1-2 factual sentences about THIS block>",
         "rootCauseHypothesis": "<issue-local hypothesis, or null>",
@@ -408,8 +419,8 @@ Rules:
 - "issues" MUST contain exactly ${expectedIssueCount} entries in block order. blockIndex is 1-based, and terminal is true ONLY for the final entry.
 - Do not return terminal, source references, source quotes, ARIA diffs, finalPageState, or normalization keys; the application owns them.
 - Keep context and interpretation issue-local. Never attach a terminal page state or cause to an earlier issue.
-- For the terminal issue, ALWAYS inspect '# Page snapshot'. Use null when the comparison is inapplicable; otherwise describe a contradiction factually, especially latency versus a permanent stall.
-- downstream-symptom must reference an earlier issue through causedByBlockIndex. All other roles normally use null.
+- Assign non-unknown resolution only when one exact resolutionEvidenceCandidate clearly proves the same failed condition. A non-terminal soft assertion may use a later-passed-step candidate; only the terminal issue may use final-page evidence.
+- downstream must reference an earlier issue through causedByBlockIndex. primary and independent must use null.
 - ARIA expected/received facts come only from deterministic removed/added arrays. Do not repeat or reinterpret them in context.expected/context.received.
 - Do not fabricate network entries. Use an empty array when no failed request is relevant to THIS issue.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
@@ -474,10 +485,6 @@ const hydrateModelEvidence = (
           network: context.network,
           finalPageState:
             index === source.issues.length - 1 ? source.finalPageState : null,
-          transientVsFinalContradiction:
-            index === source.issues.length - 1
-              ? context.transientVsFinalContradiction
-              : null,
           blockQuotes: [],
           sourceRefs: [],
           ariaDiff: null,
@@ -512,7 +519,8 @@ Correction rules:
 - Do not return application-owned structural facts or canonical keys.
 - State labels must appear exactly in the deterministic source projection.
 - transitionBoundary must exactly match one application-provided boundary candidate or be null.
-- downstream-symptom requires causedByBlockIndex pointing to an earlier block.
+- downstream requires causedByBlockIndex pointing to an earlier block; primary and independent require null.
+- recovered-in-attempt and persisted require one exact application-provided resolutionEvidenceCandidate that proves the same condition; otherwise use unknown and null.
 - Do not change evidence merely to satisfy validation; use null, [], and ambiguities when the source does not support a claim.
 
 <deterministic-source-projection-json>

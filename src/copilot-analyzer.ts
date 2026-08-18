@@ -8,17 +8,11 @@ import {
   FailureEvidenceAttempt,
   FailureEvidenceIssue,
   FailureEvidenceRecord,
+  buildFallbackEvidenceIssues,
   renderEvidenceJson,
   renderEvidenceMarkdown,
   validateModelEvidenceIssues,
 } from "./copilot-evidence";
-import {
-  applyDeterministicEvidence,
-  buildDeterministicAttemptSource,
-  buildDeterministicFallbackIssues,
-  DeterministicAttemptSource,
-  sourcePromptProjection,
-} from "./copilot-source-evidence";
 
 export {
   AI_ANALYSIS_FILENAME,
@@ -328,101 +322,67 @@ const buildPrompt = (
   errorMd: string,
   failureJsonText: string,
   networkErrorsText: string | null,
-  source: DeterministicAttemptSource,
 ): string => {
-  const expectedIssueCount = errorDetailBlocks(errorMd).length;
+  const errorBlocks = errorDetailBlocks(errorMd);
+  const expectedIssueCount = errorBlocks.length;
   const networkSection = networkErrorsText
     ? `\n## network-errors.json (failed/relevant requests)\n\`\`\`json\n${networkErrorsText}\n\`\`\`\n`
-    : "\n## network-errors.json\n(none — there were no network errors for this attempt)\n";
+    : "\n## network-errors.json\n(none)\n";
 
-  return `You are extracting canonical evidence from ONE failed Playwright test attempt. Work only from the text materials provided below. Do NOT invent facts.
+  return `Explain the issues from ONE failed Playwright test attempt. Work only from the supplied evidence and do not invent facts.
 
-error.md is the EXCLUSIVE source of issues. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? "" : "s"} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? "y" : "ies"}, one per block and in the same order. The final block is the terminal failure that ended the attempt.
+The numbered error blocks are the exclusive issue list. Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? "y" : "ies"}, one per block and in the same order. Treat every block as an issue in its own right. Do not decide whether an issue is transient, terminal, primary, downstream, or related to another issue.
 
-The failure metadata is SUPPORTING CONTEXT ONLY. Use it for issue-local step ancestry and operation context. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from metadata, parent steps, source code, network, or console entries. A parent test.step can repeat a child's error and is not another issue.
+Failure metadata and network errors are supporting context only. They may help explain an issue, but they must not create additional issues. Keep each explanation specific to its numbered block.
 
-The application has already parsed source-owned facts into the deterministic source projection below. Treat its error line, operation, target, ARIA removed/added lines, state-label candidates, resolution-evidence candidates, and final-page summary as authoritative. Do not reinterpret an unchanged ARIA context line as removed content. You return only contextual facts that require semantic reading and a constrained interpretation; the application derives source references and all canonical keys.
-
-The '# Page snapshot' YAML section is the LAST-SEEN rendered UI and belongs to the TERMINAL issue only. Never explain a non-terminal issue using the final page snapshot.
-
-previousPassedBoundary is the nearest factually supported successful boundary before THIS issue, or null. transitionBoundary must be one exact value from boundaryCandidates in the deterministic source projection, or null. expectedStateLabel and observedStateLabel must be exact labels present in this issue's block (or the terminal page for the terminal issue), or null. rootCauseHypothesis must be null unless the supplied evidence directly supports a cause.
-
-Issue role describes ONLY the relationship between issues in this same attempt:
-- primary: this issue establishes a state or condition that causes a later issue.
-- downstream: an earlier issue already established the condition that causes this issue; causedByBlockIndex is required.
-- independent: no causal relationship to another issue is proven. A single-issue attempt is normally independent.
-
-Failure type is not a role. ARIA content, locator timeout, and response-contract categories are derived by the application as failureFamily.
-
-Resolution describes ONLY what source-backed evidence from this same attempt proves after the issue:
-- recovered-in-attempt: a provided final-page or later-passed-step candidate clearly verifies that this issue's failed condition later met the expected state.
-- persisted: a provided final-page or later-passed-step candidate clearly verifies that this issue's failed condition remained.
-- unknown: no candidate proves either outcome. Use resolutionEvidence null.
-For recovered-in-attempt or persisted, copy one exact value from this issue's resolutionEvidenceCandidates into resolutionEvidence. A passed step is evidence only when its title specifically verifies the same failed condition; merely continuing after expect.soft is not recovery. For an immutable API response mismatch, use unknown unless a later request/assertion candidate explicitly rechecks that contract. Never infer recovery from another retry or attempt.
-
-Examples using fictional data:
-1. Block 1 expects "Account Overview" but observes "Consent Review", then block 2 times out waiting for "Download Statement" on that same page. Mark block 1 primary and block 2 downstream with causedByBlockIndex 1. Resolution is persisted only on terminal block 2 when the final page still shows Consent Review.
-2. A single ARIA issue misses "Note: Bring the original document" and the final page later says "Submission complete". Mark the issue independent with resolution recovered-in-attempt. Its failure type remains application-owned aria-snapshot-mismatch.
-3. An API soft assertion receives status 503 instead of 200. A later candidate named "Verify API status recovered to 200" can support recovered-in-attempt when it clearly rechecks that response contract. An unrelated passed cleanup step cannot. With no proving candidate, use unknown.
+For each issue:
+- summary: briefly state what failed.
+- operation: state the attempted action or assertion, or null.
+- expected and observed: concise issue-local descriptions, or null when unsupported.
+- likelyCause: include only a cause directly supported by the supplied evidence; otherwise null.
+- relevantSignals: concise concrete facts useful for comparing this issue with issues from other tests. Do not create synthetic categories or keys.
+- unknowns: important missing information that prevents a stronger explanation.
 
 ## Folder name
 ${folderName}
 
-## error.md (primary surface: error diff, YAML page snapshot, test codeframe)
+## error.md
+The issue blocks are the fenced blocks under "# Error details", in source order.
 \`\`\`md
-${errorMd || "(error.md not present)"}
+${errorMd}
 \`\`\`
 
-## failure metadata (supporting step tree and identifiers; NOT an issue source)
+## Failure metadata
 \`\`\`json
 ${failureMetadata(failureJsonText)}
 \`\`\`
 ${networkSection}
-## deterministic source projection (application-owned facts)
-\`\`\`json
-${JSON.stringify(sourcePromptProjection(source), null, 2)}
-\`\`\`
-
-## Output — return EXACTLY this JSON object and NOTHING else (no prose, no markdown fences)
+## Output
+Return exactly this JSON object and nothing else:
 {
   "schemaVersion": ${EVIDENCE_SCHEMA_VERSION},
   "issues": [
     {
       "blockIndex": 1,
-      "context": {
-        "stepPath": ["<ordered named test.step ancestry for THIS issue>"],
-        "previousPassedBoundary": "<nearest known successful boundary before THIS issue, or null>",
-        "expected": ["<non-ARIA expected fact not already parsed by the application>"],
-        "received": ["<non-ARIA received fact not already parsed by the application>"],
-        "network": [
-          { "call": "<METHOD path>", "status": null, "gist": "<one line>", "relToIssue": "<relationship to THIS issue>" }
-        ]
-      },
-      "interpretation": {
-        "expectedStateLabel": "<exact expected state label from source, or null>",
-        "observedStateLabel": "<exact observed state label from source, or null>",
-        "role": "<'primary' | 'downstream' | 'independent'>",
-        "causedByBlockIndex": null,
-        "resolution": "<'persisted' | 'recovered-in-attempt' | 'unknown'>",
-        "resolutionEvidence": "<exact value from this issue's resolutionEvidenceCandidates, or null>",
-        "transitionBoundary": "<nearest action or handoff where expected and observed states diverged, or null>",
-        "explanation": "<1-2 factual sentences about THIS block>",
-        "rootCauseHypothesis": "<issue-local hypothesis, or null>",
+      "analysis": {
+        "summary": "<what failed>",
+        "operation": "<attempted action or assertion, or null>",
+        "expected": "<expected behavior or value, or null>",
+        "observed": "<observed behavior or value, or null>",
+        "likelyCause": "<directly supported cause, or null>",
+        "relevantSignals": ["<concise concrete fact>"],
         "confidence": "<'high' | 'medium' | 'low'>",
-        "ambiguities": ["<missing or conflicting evidence>"]
+        "unknowns": ["<missing information>"]
       }
     }
   ]
 }
 
 Rules:
-- "issues" MUST contain exactly ${expectedIssueCount} entries in block order. blockIndex is 1-based, and terminal is true ONLY for the final entry.
-- Do not return terminal, source references, source quotes, ARIA diffs, finalPageState, or normalization keys; the application owns them.
-- Keep context and interpretation issue-local. Never attach a terminal page state or cause to an earlier issue.
-- Assign non-unknown resolution only when one exact resolutionEvidenceCandidate clearly proves the same failed condition. A non-terminal soft assertion may use a later-passed-step candidate; only the terminal issue may use final-page evidence.
-- downstream must reference an earlier issue through causedByBlockIndex. primary and independent must use null.
-- ARIA expected/received facts come only from deterministic removed/added arrays. Do not repeat or reinterpret them in context.expected/context.received.
-- Do not fabricate network entries. Use an empty array when no failed request is relevant to THIS issue.
+- Keep exactly ${expectedIssueCount} issues in block order; blockIndex is 1-based.
+- Do not return source blocks; the application attaches the exact originals.
+- Do not classify issue relationships, lifecycle, workflow state, product, or failure family.
+- Do not infer a cause from a later page merely because the test continued.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
 };
 
@@ -450,82 +410,19 @@ const extractJson = (text: string): unknown => {
   return JSON.parse(candidate);
 };
 
-const hydrateModelEvidence = (
-  value: unknown,
-  source: DeterministicAttemptSource,
-): unknown => {
-  if (typeof value !== "object" || value === null) return value;
-  const response = value as Record<string, unknown>;
-  if (!Array.isArray(response.issues)) return value;
-  return {
-    schemaVersion: response.schemaVersion,
-    issues: response.issues.map((rawIssue, index) => {
-      const issue =
-        typeof rawIssue === "object" && rawIssue !== null
-          ? (rawIssue as Record<string, unknown>)
-          : {};
-      const context =
-        typeof issue.context === "object" && issue.context !== null
-          ? (issue.context as Record<string, unknown>)
-          : {};
-      const issueSource = source.issues[index];
-      return {
-        blockIndex: issue.blockIndex,
-        terminal: index === source.issues.length - 1,
-        facts: {
-          kind: issueSource?.kind || "failure",
-          assertion: issueSource?.assertion || null,
-          operation: issueSource?.operation || null,
-          target: issueSource?.target || null,
-          stepPath: context.stepPath,
-          previousPassedBoundary: context.previousPassedBoundary,
-          errorVerbatim: issueSource?.errorLine || "",
-          expected: context.expected,
-          received: context.received,
-          network: context.network,
-          finalPageState:
-            index === source.issues.length - 1 ? source.finalPageState : null,
-          blockQuotes: [],
-          sourceRefs: [],
-          ariaDiff: null,
-        },
-        normalization: {
-          failureFamily: "application-owned",
-          operationKey: null,
-          targetKey: null,
-          normalizedError: issueSource?.errorLine || "",
-          differenceKeys: [],
-          volatileValuesRemoved: [],
-          expectedStateKey: null,
-          observedStateKey: null,
-          transitionBoundaryKey: null,
-        },
-        interpretation: issue.interpretation,
-      };
-    }),
-  };
-};
-
 const buildCorrectionPrompt = (
   error: unknown,
-  source: DeterministicAttemptSource,
+  expectedIssueCount: number,
 ): string => `Your previous evidence JSON was rejected by deterministic validation:
 ${error instanceof Error ? error.message : String(error)}
 
-Return the COMPLETE corrected JSON object using the original schema, not a patch. Return JSON only.
+Return the complete corrected schema ${EVIDENCE_SCHEMA_VERSION} JSON object, not a patch. Return JSON only.
 
 Correction rules:
-- Keep exactly ${source.issues.length} issues in source-block order and return only context plus interpretation using the original response schema.
-- Do not return application-owned structural facts or canonical keys.
-- State labels must appear exactly in the deterministic source projection.
-- transitionBoundary must exactly match one application-provided boundary candidate or be null.
-- downstream requires causedByBlockIndex pointing to an earlier block; primary and independent require null.
-- recovered-in-attempt and persisted require one exact application-provided resolutionEvidenceCandidate that proves the same condition; otherwise use unknown and null.
-- Do not change evidence merely to satisfy validation; use null, [], and ambiguities when the source does not support a claim.
-
-<deterministic-source-projection-json>
-${JSON.stringify(sourcePromptProjection(source))}
-</deterministic-source-projection-json>`;
+- Keep exactly ${expectedIssueCount} issues in source-block order.
+- Each issue contains only blockIndex and analysis.
+- analysis contains summary, operation, expected, observed, likelyCause, relevantSignals, confidence, and unknowns.
+- Use null and empty arrays when evidence does not support a value.`;
 
 // --- Per-folder analysis -------------------------------------------------
 
@@ -597,17 +494,11 @@ const analyzeFolder = async (
     : null;
 
   const errorBlocks = errorDetailBlocks(errorMd);
-  const source = buildDeterministicAttemptSource(
-    errorMd,
-    errorBlocks,
-    failureJsonText,
-  );
   const prompt = buildPrompt(
     entry.folder,
     errorMd,
     failureJsonText,
     networkErrorsText,
-    source,
   );
   const failureTitle = failureJson.testTitle;
   const attempt: FailureEvidenceAttempt = {
@@ -641,30 +532,22 @@ const analyzeFolder = async (
     let content = result?.data?.content ?? "";
     let issues: FailureEvidenceIssue[];
     try {
-      const hydrated = hydrateModelEvidence(extractJson(content), source);
-      issues = applyDeterministicEvidence(
-        validateModelEvidenceIssues(hydrated, errorBlocks),
-        source,
-      );
+      issues = validateModelEvidenceIssues(extractJson(content), errorBlocks);
     } catch (initialError) {
       result = await session.sendAndWait(
-        { prompt: buildCorrectionPrompt(initialError, source) },
+        { prompt: buildCorrectionPrompt(initialError, errorBlocks.length) },
         PER_TRACE_TIMEOUT_MS,
       );
       content = result?.data?.content ?? "";
       try {
-        const hydrated = hydrateModelEvidence(extractJson(content), source);
-        issues = applyDeterministicEvidence(
-          validateModelEvidenceIssues(hydrated, errorBlocks),
-          source,
-        );
+        issues = validateModelEvidenceIssues(extractJson(content), errorBlocks);
       } catch (correctionError) {
         return {
           schemaVersion: EVIDENCE_SCHEMA_VERSION,
           model,
           attempt,
-          issues: buildDeterministicFallbackIssues(source),
-          warning: `Small-model interpretation unavailable after correction; deterministic source evidence retained. ${correctionError instanceof Error ? correctionError.message : String(correctionError)}`,
+          issues: buildFallbackEvidenceIssues(errorBlocks),
+          warning: `Small-model explanation unavailable after correction; source blocks retained. ${correctionError instanceof Error ? correctionError.message : String(correctionError)}`,
           rawResponse: content.slice(0, 4000),
         };
       }

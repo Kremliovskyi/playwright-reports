@@ -79,28 +79,20 @@ flowchart TD
 
 	subgraph SMALL_FLOW["Per-attempt evidence flow"]
 		POOL --> BLOCKS["errorDetailBlocks<br/>One fenced error block = one issue"]
-		RAW --> PARSER["copilot-source-evidence.ts<br/>Deterministic parser"]
-		BLOCKS --> PARSER
-
-		PARSER --> SOURCE["Application-owned source projection<br/>line IDs<br/>error and assertion<br/>operation and target<br/>ARIA removed/added lines<br/>final page labels<br/>allowed step boundaries<br/>later passed-step evidence"]
-
-		SOURCE --> SMALL["Configured small model<br/>One attempt per session"]
+		BLOCKS --> SMALL["Configured small model<br/>One attempt per session"]
 		RAW --> SMALL_INPUT["Model input<br/>full error.md<br/>sanitized failure metadata<br/>optional network errors"]
 		SMALL_INPUT --> SMALL
-		SOURCE --> SMALL
 
-		SMALL --> SEMANTICS["Model returns semantics only<br/>step path<br/>previous passed boundary<br/>non-ARIA expected/received<br/>network relationship<br/>state labels<br/>issue role and causal anchor<br/>same-attempt resolution<br/>explanation and confidence"]
-		SEMANTICS --> VALIDATE{"Schema and grounding valid?"}
+		SMALL --> EXPLANATION["Model returns one explanation per block<br/>summary and operation<br/>expected and observed<br/>supported likely cause<br/>relevant signals<br/>confidence and unknowns"]
+		EXPLANATION --> VALIDATE{"Schema, count, and order valid?"}
 
-		VALIDATE -->|No| CORRECT["One correction turn<br/>validation error + deterministic projection"]
+		VALIDATE -->|No| CORRECT["One correction turn<br/>precise validation error"]
 		CORRECT --> VALIDATE2{"Corrected response valid?"}
-		VALIDATE2 -->|No| FALLBACK["Deterministic low-confidence fallback<br/>Source-backed issues are retained"]
-		VALIDATE -->|Yes| HYDRATE["Hydrate canonical evidence"]
-		VALIDATE2 -->|Yes| HYDRATE
+		VALIDATE2 -->|No| FALLBACK["Low-confidence fallback<br/>Exact source blocks are retained"]
+		VALIDATE -->|Yes| ATTACH["Application attaches exact source blocks"]
+		VALIDATE2 -->|Yes| ATTACH
 		FALLBACK --> EVIDENCE
-
-		HYDRATE --> CANON["Application overwrites model-owned guesses<br/>source refs and exact quotes<br/>ARIA expected/received<br/>failure family<br/>normalized error<br/>operation/target keys<br/>state/boundary keys<br/>difference fingerprints"]
-		CANON --> EVIDENCE["evidence.json<br/>Canonical schema v3"]
+		ATTACH --> EVIDENCE["evidence.json<br/>Canonical schema v4"]
 		EVIDENCE --> MARKDOWN["Deterministic renderer<br/>No model call"]
 		MARKDOWN --> AI_MD["ai-analysis.md"]
 	end
@@ -110,9 +102,8 @@ flowchart TD
 	COUNT -->|Yes| CATALOG["Build flat issue catalog<br/>I1, I2, I3..."]
 
 	subgraph BIG_FLOW["Run-level grouping flow"]
-		CATALOG --> HINTS["Application derives incident hints<br/>causalAnchorIssueId<br/>stateIncidentKey<br/>contentIncidentKey"]
-		HINTS --> BIG["Configured big model<br/>Tool-free grouping session"]
-		BIG_INPUT["Big-model input<br/>test/spec/retry metadata<br/>canonical facts<br/>normalization keys<br/>semantic interpretation<br/>incident hints"] --> BIG
+		CATALOG --> BIG["Configured big model<br/>Tool-free grouping session"]
+		BIG_INPUT["Big-model input<br/>test/spec/retry metadata<br/>exact primary error line<br/>small-model explanation"] --> BIG
 
 		BIG --> PROVISIONAL["Complete provisional grouping<br/>summary + problems<br/>every issue ID exactly once<br/>optional evidenceRequests"]
 		PROVISIONAL --> REQUEST{"Source evidence requested?"}
@@ -123,65 +114,65 @@ flowchart TD
 		BIG2 --> FINAL_GROUPS["Final grouping response"]
 		REQUEST -->|No| FINAL_GROUPS
 
-		FINAL_GROUPS --> CONTRACT{"Grouping contract valid?<br/>all IDs exactly once<br/>causal anchor co-located<br/>exact incident keys co-located"}
-		CONTRACT -->|No| REPAIR["One repair turn<br/>missing / unknown / duplicate IDs<br/>causal or exact-incident splits"]
+		FINAL_GROUPS --> CONTRACT{"Reference contract valid?<br/>all IDs exactly once"}
+		CONTRACT -->|No| REPAIR["One repair turn<br/>missing / unknown / duplicate IDs"]
 		REPAIR --> RECHECK{"Repair valid?"}
-		RECHECK -->|No| SANITIZE["Deterministic sanitization<br/>remove invalid references<br/>co-locate causal and exact-incident matches<br/>retain unassigned as Unclassified"]
+		RECHECK -->|No| SANITIZE["Structural sanitization<br/>remove invalid references<br/>retain unassigned as Unclassified"]
 		RECHECK -->|Yes| RENDER
 		CONTRACT -->|Yes| RENDER["Application renders report"]
 		SANITIZE --> RENDER
 
-		RENDER --> RECONCILE["Reconcile grouped terminal attempts<br/>against manifest"]
+		RENDER --> RECONCILE["Reconcile grouped issue count<br/>against extracted issues"]
 		RECONCILE --> GROUPED["grouped-analysis.md"]
 	end
 ```
 
-The ownership boundary is intentional: scripts establish and normalize facts, the small model explains their issue-local meaning, and the big model groups the resulting records into incidents.
+The ownership boundary is intentional: application code owns source preservation, schema checks, path containment, evidence budgets, and rendering. The small model explains each source block, and the big model owns semantic grouping.
 
-| Stage                   | Model receives                                                                                                       | Model does not control                                                                                    |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Small model             | Full `error.md`, sanitized step metadata, optional network errors, and the deterministic source projection.          | Error text, issue count, ARIA diff lines, final page state, source references, or canonical keys.         |
-| Big model               | Compact schema-v3 grouping projections, manifest context, semantic interpretation, and deterministic incident hints. | Raw ARIA/source duplication, raw traces, screenshots, previous runs, knowledge bases, or ADO/defect data. |
-| Big-model evidence turn | Only specifically requested, bounded current-run error-block, final-page, test-source, or network sections.          | Arbitrary file access or additional retrieval rounds.                                                     |
+| Stage                   | Model receives                                                                                              | Application retains control of                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Small model             | Full `error.md`, sanitized step metadata, and optional network errors.                                      | Exact source blocks, issue count and order, validation, fallback, and artifact rendering.         |
+| Big model               | Manifest context plus each issue's exact primary error line and compact small-model explanation.            | ID/reference validation, evidence limits, path containment, report rendering, and reconciliation. |
+| Big-model evidence turn | Only specifically requested, bounded current-run error-block, final-page, test-source, or network sections. | Arbitrary file access or additional retrieval rounds.                                             |
 
 ## What `evidence.json` and `ai-analysis.md` contain
 
-After trace extraction, application code parses every fenced block under `# Error details` and writes schema-v3 `evidence.json` beside `error.md`. The selected small Copilot model supplies only bounded semantic context and interpretation. Each issue record contains:
+After trace extraction, application code parses every fenced block under `# Error details` and writes schema-v4 `evidence.json` beside `error.md`. Each issue contains:
 
-- Application-owned source block index, terminal marker, error, assertion, operation, target, source-line references, parsed ARIA removed/added lines, and terminal page state.
-- Stable application-derived comparison fields: failure family, operation key, target key, normalized error, expected/observed state keys, transition-boundary key, and concrete difference keys.
-- Model-supplied step context, relevant network correlation, expected/observed state labels, issue role (`primary`, `downstream`, or `independent`), optional earlier causal block for downstream issues, explanation, evidence-based hypothesis, confidence, and ambiguities.
-- A transition boundary selected verbatim from application-extracted test-step titles. State labels must occur in that issue's source block, except that the terminal issue may reference its final page.
-- Resolution (`persisted`, `recovered-in-attempt`, or `unknown`) is separate from role and failure family. A non-unknown resolution must copy one exact application-derived evidence candidate: either the terminal final page or a completed trace step after the matched failed step. The candidate must specifically verify the same condition; merely continuing after `expect.soft`, completing an unrelated API step, or passing on another retry is not recovery evidence. A pure API response mismatch remains `unknown` unless a later request/assertion in the same attempt explicitly rechecks that contract.
+- `blockIndex`, preserving the 1-based source order.
+- `source.error`, the first error line, and `source.block`, the exact fenced source block. Both are attached by the application rather than copied from model output.
+- `analysis.summary`, nullable `operation`, `expected`, `observed`, and `likelyCause`, arrays of `relevantSignals` and `unknowns`, and `confidence` (`high`, `medium`, or `low`).
 
-The dashboard then renders `ai-analysis.md` deterministically from the same JSON; there is no second model call. Its top-level terminal summary includes Step path, Error, Network, Final page state, Resolution, Resolution evidence, Root cause hypothesis, and Discriminators, followed by the complete per-issue evidence.
+The schema intentionally has no application-derived failure family, state key, lifecycle, issue relationship, causal anchor, resolution, or incident key. Supporting metadata can help the small model explain a block, but it cannot create or remove issues.
 
-If the first semantic response is not valid JSON or violates the evidence contract, the dashboard makes one focused correction request in the same small-model session. The correction includes the exact validation error and the deterministic source projection, including allowed boundary candidates. The complete corrected response is revalidated against the same strict contract.
+The dashboard renders `ai-analysis.md` deterministically from the same JSON; there is no Markdown-generation model call. The report shows attempt metadata and every issue's explanation beside its exact source block.
+
+If the first response is not valid JSON, has the wrong issue count or order, or violates the field types, the dashboard makes one focused correction request in the same small-model session. The correction includes the exact validation error and the required schema shape.
 
 `error.md` remains ground truth. `evidence.json` is the canonical model-to-model contract, while `ai-analysis.md` is its human-readable view. `failure.json`, screenshots, and conditional console or network files provide deeper raw evidence when needed.
 
-If the corrected semantic response is still invalid, the dashboard retains low-confidence deterministic issues with a warning instead of dropping the attempt into an extraction-only Unclassified bucket. A folder is unavailable only when its source files cannot be read or processed. One failed record does not stop analysis of the other failure folders.
+If the corrected response is still invalid, the dashboard creates one low-confidence fallback issue per source block and keeps each exact block with a warning. A folder is unavailable only when its source files cannot be read or processed. One failed record does not stop analysis of the other failure folders.
 
 ## Grouped problem analysis
 
 After every per-attempt record finishes, the dashboard makes an initial Copilot grouping request using the configured big model. The request embeds only:
 
 - The manifest metadata needed for retries, outcomes, and test identity.
-- The issue-local factual, normalized, interpretation, and deterministic incident-hint fields from source-backed `evidence.json` records.
+- Each issue's exact primary error line and compact small-model explanation from `evidence.json`.
 
 The initial request never sends raw `error.md`, `failure.json`, screenshots, console/network files, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
 
-The grouping projection omits canonical-only duplication such as ARIA source lines, block quotes, source references, repeated expected/received text, and resolution evidence already represented by resolution/final-state context. Long narrative fields are bounded to 1,200 characters. Full records remain unchanged in `evidence.json` and selected raw sections remain available through the bounded evidence turn. High-reasoning grouping, evidence, and repair requests each have a 10-minute timeout; diagnostics report the actual prompt size, elapsed time, and configured timeout.
+The grouping projection omits the full source block. Long explanatory fields are bounded to 1,200 characters. Full records remain unchanged in `evidence.json`, and selected source sections remain available through the bounded evidence turn. High-reasoning grouping, evidence, and repair requests each have a 10-minute timeout; diagnostics report the actual prompt size, elapsed time, and configured timeout.
 
-Grouping prioritizes direct causal anchors, then shared observed-state plus transition-boundary keys, then exact content-difference fingerprints. Response contracts, network correlation, and normalized errors follow. Operations, locators, targets, and step paths are symptom context and do not split issues when a stronger current-run incident signal agrees. Materially different observed states, transition boundaries, or content fingerprints remain separate. Resolution describes impact and never splits an otherwise exact incident match. Every issue, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once.
+The big model decides which issues represent the same underlying problem by considering their errors, expected and observed behavior, operations, concrete signals, and directly supported causes together. Application code does not force semantic merges or splits. Test titles, retries, manifest steps, broad categories, and generic wording are context rather than proof of identity. Every issue receives a compact ID such as `I1` or `I2` and must be assigned exactly once.
 
 When a plausible merge cannot be decided because critical evidence is missing, ambiguous, or conflicting, a complete provisional response may request one bounded source-evidence round. The application first verifies that the provisional response references every issue exactly once, then accepts only current-run issue IDs and the `error-block`, `final-page`, `test-source`, or `network` sections. It allows at most 10 requests, 4 issue IDs per request, 30 issue references overall, 6,000 characters per section, 48,000 characters of extracted source text overall, and 4 MiB per source file read. Every resolved file must remain inside its assigned failure folder. The selected snippets are sent in a second turn in the same session; no arbitrary file access or second evidence round is allowed. If retrieval or the final response fails, the complete provisional grouping is retained and validated.
 
 After the final response, the dashboard maps issue IDs back to folders and block positions before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
 
-If the initial response has missing, unknown, or duplicate IDs, separates a downstream issue from its declared causal anchor, or separates issues with an exact deterministic state/content incident key, the dashboard sends one focused repair turn in the same session. It supplies the previous complete response, the exact allowed ID set, contract diagnostics, and evidence for affected valid issues. The corrected response must assign every allowed ID exactly once and co-locate those strong incident links. A failed repair does not discard the initial result: the dashboard removes invalid references, deterministically co-locates causal and exact-incident matches, drops problems left empty, and retains unassigned valid issues under `Unclassified - invalid grouping references`.
+If the response has missing, unknown, or duplicate IDs, the dashboard sends one focused reference-repair turn in the same session. It supplies the previous complete response, the exact allowed ID set, structural diagnostics, and compact evidence for affected valid issues. The corrected response must assign every allowed ID exactly once without changing valid assignments unnecessarily. A failed repair does not discard the initial result: the dashboard removes unknown and duplicate references, drops problems left empty, and retains unassigned valid issues under `Unclassified - invalid grouping references`. This fallback repairs structure only; it does not reinterpret or regroup valid model assignments.
 
-`grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and a failed-attempt reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
+`grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and an extracted-issue reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
 
 When source-backed evidence cannot be created for a folder, its attempt is retained in an Unclassified problem without reading raw evidence during grouping. If the final grouping request or its validation fails, the digest and all completed evidence files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
 

@@ -6,88 +6,74 @@ const test = require("node:test");
 
 const { analyzeRun } = require("../dist/copilot-analyzer");
 
-const errorMarkdown = `# Test info
+const firstBlock = `Error: expect(locator).toBeVisible() failed
+Locator: getByRole("heading", { name: "Generated result" })
+Expected: visible
+Received: hidden`;
 
-- Name: tests/example.spec.ts >> example
+const secondBlock = `Error: expect(received).toEqual(expected)
+Expected HTTP status: 201
+Received HTTP status: 503`;
+
+const errorMarkdown = (blocks = [firstBlock]) => `# Test info
+
+- Name: tests/generated.spec.ts >> generated case
 
 # Error details
 
-\`\`\`
-Error: expect(locator).toBeVisible() failed
-Locator: getByRole("heading", { name: "Done" })
-Expected: visible
-Received: hidden
-\`\`\`
+${blocks.map((block) => `\`\`\`\n${block}\n\`\`\``).join("\n\n")}
 
 # Page snapshot
 
 \`\`\`yaml
-- heading "Done"
+- heading "Generated completion page"
 \`\`\`
 
 # Test source
 
 \`\`\`ts
-expect.soft(value).toBe(expected);
+await runGeneratedCase();
 \`\`\`
 `;
 
-const modelRecord = (issues) => ({
-  schemaVersion: 3,
-  issues,
-});
-
-const modelIssue = (overrides = {}) => ({
-  blockIndex: 1,
-  context: {
-    stepPath: ["Example step"],
-    previousPassedBoundary: "Example step",
-    expected: ["expected value"],
-    received: ["actual value"],
-    network: [],
-  },
-  interpretation: {
-    expectedStateLabel: null,
-    observedStateLabel: "Done",
-    role: "independent",
-    causedByBlockIndex: null,
-    resolution: "unknown",
-    resolutionEvidence: null,
-    transitionBoundary: "Example step",
-    explanation: "The authoritative assertion failed.",
-    rootCauseHypothesis: null,
+const modelIssue = (blockIndex, overrides = {}) => ({
+  blockIndex,
+  analysis: {
+    summary: `Generated issue ${blockIndex} failed.`,
+    operation: blockIndex === 1 ? "Check generated result" : "Check API status",
+    expected: blockIndex === 1 ? "The result is visible" : "HTTP 201",
+    observed: blockIndex === 1 ? "The result is hidden" : "HTTP 503",
+    likelyCause: null,
+    relevantSignals: [`generated-signal-${blockIndex}`],
     confidence: "high",
-    ambiguities: [],
+    unknowns: [],
+    ...overrides,
   },
-  ...overrides,
 });
 
-const runAnalysis = async (
-  response,
-  errorMd = errorMarkdown,
-  failureOverrides = {},
-) => {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-analyzer-"));
-  const folder = "attempt__retry0";
+const modelRecord = (issues) => ({ schemaVersion: 4, issues });
+
+const runAnalysis = async ({ responses, markdown, failureOverrides = {} }) => {
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), "copilot-analyzer-v4-"));
+  const folder = "generated-attempt__retry0";
   fs.mkdirSync(path.join(runDir, folder));
-  fs.writeFileSync(path.join(runDir, folder, "error.md"), errorMd);
+  fs.writeFileSync(path.join(runDir, folder, "error.md"), markdown);
   fs.writeFileSync(
     path.join(runDir, folder, "failure.json"),
     JSON.stringify({
-      testTitle: "tests/example.spec.ts:1 › example",
-      title: "Example step",
+      testTitle: "tests/generated.spec.ts:10 › generated case",
+      title: "Run generated case",
       status: "failed",
       outcome: "unexpected",
       retryIndex: 0,
-      issues: [{ message: "Error: must not reach the model" }],
-      actionDiagnostics: [{ message: "Error: must not reach the model" }],
       topLevelSteps: [
         {
           callId: "test.step@1",
-          parentId: null,
-          title: "Example step",
+          title: "Run generated case",
           method: "test.step",
-          error: { message: "Error: must not reach the model" },
+          startTime: 1,
+          endTime: 2,
+          error: { message: "metadata error must not reach the model" },
           children: [],
         },
       ],
@@ -96,27 +82,23 @@ const runAnalysis = async (
     }),
   );
 
-  const responses = Array.isArray(response) ? response : [response];
-  const sentPrompts = [];
+  const queue = Array.isArray(responses) ? responses : [responses];
+  const prompts = [];
   let sessionCount = 0;
   const client = {
     async createSession() {
       sessionCount++;
       return {
         async sendAndWait(options) {
-          sentPrompts.push(options.prompt);
-          const responseIndex = Math.min(
-            sentPrompts.length - 1,
-            responses.length - 1,
-          );
-          return {
-            data: { content: JSON.stringify(responses[responseIndex]) },
-          };
+          prompts.push(options.prompt);
+          const index = Math.min(prompts.length - 1, queue.length - 1);
+          return { data: { content: JSON.stringify(queue[index]) } };
         },
         async disconnect() {},
       };
     },
   };
+
   try {
     const result = await analyzeRun(
       client,
@@ -127,8 +109,8 @@ const runAnalysis = async (
         failures: [
           {
             folder,
-            testTitle: "tests/example.spec.ts:1 › example",
-            title: "Example step",
+            testTitle: "tests/generated.spec.ts:10 › generated case",
+            title: "Run generated case",
             retryIndex: 0,
             status: "failed",
             outcome: "unexpected",
@@ -137,434 +119,140 @@ const runAnalysis = async (
       },
       "small-model",
     );
-    const evidenceJson = fs.readFileSync(
-      path.join(runDir, folder, "evidence.json"),
-      "utf8",
-    );
-    const analysisMarkdown = fs.readFileSync(
-      path.join(runDir, folder, "ai-analysis.md"),
-      "utf8",
-    );
     return {
       result,
-      sentPrompt: sentPrompts[0],
-      sentPrompts,
+      prompts,
       sessionCount,
-      evidenceJson,
-      analysisMarkdown,
+      evidence: JSON.parse(
+        fs.readFileSync(path.join(runDir, folder, "evidence.json"), "utf8"),
+      ),
+      markdown: fs.readFileSync(
+        path.join(runDir, folder, "ai-analysis.md"),
+        "utf8",
+      ),
     };
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
 };
 
-test("uses error.md as the exclusive issue source", async () => {
-  const { result, sentPrompt, evidenceJson, analysisMarkdown } =
-    await runAnalysis(modelRecord([modelIssue()]));
+test("preserves error.md blocks and stores only minimal analysis", async () => {
+  const result = await runAnalysis({
+    responses: modelRecord([modelIssue(1)]),
+    markdown: errorMarkdown(),
+  });
 
-  assert.equal(result.analyzed, 1);
-  assert.equal(result.failed, 0);
-  assert.match(sentPrompt, /contains exactly 1 fenced error block/);
-  assert.doesNotMatch(sentPrompt, /must not reach the model/);
-  assert.match(sentPrompt, /"title": "Example step"/);
-  assert.match(sentPrompt, /deterministic source projection/);
-  assert.match(sentPrompt, /Do not return terminal, source references/);
-  assert.equal(result.records[0].issues[0].facts.operation, "toBeVisible");
+  assert.equal(result.result.analyzed, 1);
+  assert.equal(result.evidence.schemaVersion, 4);
   assert.equal(
-    result.records[0].issues[0].facts.target,
-    'getByRole("heading", { name: "Done" })',
+    result.evidence.issues[0].source.error,
+    firstBlock.split("\n")[0],
   );
-  assert.deepEqual(result.records[0].issues[0].facts.sourceRefs, ["B1-L1"]);
-  assert.equal(JSON.parse(evidenceJson).schemaVersion, 3);
-  assert.match(analysisMarkdown, /Issue 1 \(terminal\)/);
-  assert.match(analysisMarkdown, /Operation key.*tobevisible/);
-});
-
-test("repairs a semantic response whose issue count differs from error.md", async () => {
-  const { result, sentPrompts } = await runAnalysis([
-    modelRecord([modelIssue(), modelIssue({ blockIndex: 2 })]),
-    modelRecord([modelIssue()]),
-  ]);
-
-  assert.equal(result.analyzed, 1);
-  assert.equal(result.failed, 0);
-  assert.equal(sentPrompts.length, 2);
-  assert.match(sentPrompts[1], /2 issues for 1 error\.md blocks/);
-});
-
-test("ignores model-authored source facts and normalization", async () => {
-  const issue = modelIssue();
-  issue.facts = {
-    operation: "invented operation",
-    errorVerbatim: "invented error",
-    blockQuotes: ["invented quote"],
-  };
-  issue.normalization = {
-    failureFamily: "invented-family",
-    operationKey: "invented-operation",
-  };
-  const { result } = await runAnalysis(modelRecord([issue]));
-
-  const evidence = result.records[0].issues[0];
-  assert.equal(result.analyzed, 1);
-  assert.equal(evidence.facts.operation, "toBeVisible");
-  assert.equal(
-    evidence.facts.errorVerbatim,
-    "Error: expect(locator).toBeVisible() failed",
-  );
-  assert.equal(evidence.normalization.failureFamily, "assertion-mismatch");
-  assert.equal(evidence.normalization.operationKey, "tobevisible");
-  assert.doesNotMatch(JSON.stringify(evidence), /invented/);
-});
-
-test("repairs a non-scalar semantic state label in the same session", async () => {
-  const invalidIssue = modelIssue();
-  invalidIssue.interpretation.observedStateLabel = {
-    heading: "Done",
-    message: "The attempt completed.",
-  };
-  const { result, sentPrompts } = await runAnalysis([
-    modelRecord([invalidIssue]),
-    modelRecord([modelIssue()]),
-  ]);
-
-  assert.equal(result.analyzed, 1);
-  assert.equal(result.failed, 0);
-  assert.equal(sentPrompts.length, 2);
+  assert.equal(result.evidence.issues[0].source.block, firstBlock);
+  assert.deepEqual(result.evidence.issues[0].analysis, modelIssue(1).analysis);
+  assert.equal(result.evidence.issues[0].terminal, undefined);
+  assert.equal(result.evidence.issues[0].normalization, undefined);
+  assert.equal(result.evidence.issues[0].interpretation, undefined);
   assert.match(
-    sentPrompts[1],
-    /interpretation\.observedStateLabel must be a string or null; received object/,
+    result.prompts[0],
+    /contains exactly 1 issue entry|exactly 1 issue entry/,
   );
-  assert.match(sentPrompts[1], /deterministic-source-projection-json/);
-});
-
-test("rejects recovery without same-attempt outcome evidence", async () => {
-  const errorWithoutFinalPage = `# Error details
-
-\`\`\`
-Error: expect(locator).toBeVisible() failed
-Locator: getByRole("heading", { name: "Done" })
-Expected: visible
-Received: hidden
-\`\`\`
-`;
-  const invalidIssue = modelIssue();
-  invalidIssue.interpretation.resolution = "recovered-in-attempt";
-  invalidIssue.interpretation.resolutionEvidence =
-    "A separate retry passed later.";
-  const { result, sentPrompts } = await runAnalysis(
-    [modelRecord([invalidIssue]), modelRecord([modelIssue()])],
-    errorWithoutFinalPage,
-  );
-
-  assert.equal(result.analyzed, 1);
-  assert.equal(sentPrompts.length, 2);
-  assert.match(
-    sentPrompts[1],
-    /recovered-in-attempt requires an exact application-provided resolution evidence candidate/,
-  );
-  assert.equal(
-    result.records[0].issues[0].interpretation.resolution,
-    "unknown",
-  );
-});
-
-test("accepts non-terminal API recovery proven by a later passed step", async () => {
-  const firstError = `Error: expect(received).toBe(expected)
-Expected HTTP status: 200
-Received HTTP status: 503`;
-  const secondError = `Error: expect(received).toBe(expected)
-Expected HTTP status: 201
-Received HTTP status: 400`;
-  const apiErrorMarkdown = `# Error details
-
-\`\`\`
-${firstError}
-\`\`\`
-
-\`\`\`
-${secondError}
-\`\`\`
-`;
-  const apiIssue = modelIssue();
-  apiIssue.interpretation = {
-    ...apiIssue.interpretation,
-    observedStateLabel: null,
-    resolution: "recovered-in-attempt",
-    resolutionEvidence:
-      "passed-step:test.step@2: Verify API status recovered to 200 (test.step)",
-    transitionBoundary: "Exercise API recovery",
-  };
-  const terminalApiIssue = modelIssue({ blockIndex: 2 });
-  terminalApiIssue.interpretation = {
-    ...terminalApiIssue.interpretation,
-    observedStateLabel: null,
-    transitionBoundary: "Exercise API recovery",
-  };
-  const topLevelSteps = [
-    {
-      callId: "test.step@1",
-      parentId: null,
-      title: "Exercise API recovery",
-      method: "test.step",
-      startTime: 0,
-      endTime: 40,
-      durationMs: 40,
-      error: { message: secondError },
-      children: [
-        {
-          callId: "expect@1",
-          parentId: "test.step@1",
-          title: "Check initial API status",
-          method: "expect.toBe",
-          startTime: 5,
-          endTime: 10,
-          durationMs: 5,
-          error: { message: firstError },
-          children: [],
-        },
-        {
-          callId: "test.step@2",
-          parentId: "test.step@1",
-          title: "Verify API status recovered to 200",
-          method: "test.step",
-          startTime: 20,
-          endTime: 30,
-          durationMs: 10,
-          error: null,
-          children: [],
-        },
-        {
-          callId: "expect@2",
-          parentId: "test.step@1",
-          title: "Check created-resource API status",
-          method: "expect.toBe",
-          startTime: 35,
-          endTime: 40,
-          durationMs: 5,
-          error: { message: secondError },
-          children: [],
-        },
-      ],
-    },
-  ];
-
-  const { result, sentPrompts } = await runAnalysis(
-    modelRecord([apiIssue, terminalApiIssue]),
-    apiErrorMarkdown,
-    { title: "Exercise API recovery", topLevelSteps },
-  );
-
-  const evidence = result.records[0].issues[0];
-  assert.equal(result.analyzed, 1);
-  assert.equal(sentPrompts.length, 1);
-  assert.match(
-    sentPrompts[0],
-    /passed-step:test\.step@2: Verify API status recovered to 200 \(test\.step\)/,
-  );
-  assert.match(sentPrompts[0], /"result": "passed"/);
-  assert.equal(evidence.facts.finalPageState, null);
-  assert.equal(evidence.normalization.failureFamily, "http-status-mismatch");
-  assert.equal(evidence.interpretation.resolution, "recovered-in-attempt");
-  assert.equal(
-    evidence.interpretation.resolutionEvidence,
-    "passed-step:test.step@2: Verify API status recovered to 200 (test.step)",
-  );
-  assert.equal(
-    result.records[0].issues[1].interpretation.resolution,
-    "unknown",
-  );
-});
-
-test("records primary and downstream relationships separately from resolution", async () => {
-  const multiBlockErrorMarkdown = `# Error details
-
-\`\`\`
-Error: expect(locator).toMatchAriaSnapshot(expected) failed
-
-- Expected  - 1
-+ Received  + 1
-
-- - heading "Account Overview"
-+ - heading "Consent Review"
-\`\`\`
-
-\`\`\`
-TimeoutError: locator.click: Timeout 10000ms exceeded
-Locator: getByRole("button", { name: "Download Statement" })
-\`\`\`
-
-# Page snapshot
-
-\`\`\`yaml
-- heading "Consent Review"
-\`\`\`
-`;
-  const firstIssue = modelIssue({ blockIndex: 1 });
-  firstIssue.context.expected = [];
-  firstIssue.context.received = [];
-  firstIssue.interpretation = {
-    ...firstIssue.interpretation,
-    expectedStateLabel: "Account Overview",
-    observedStateLabel: "Consent Review",
-    role: "primary",
-    transitionBoundary: "Example step",
-  };
-  const secondIssue = modelIssue({ blockIndex: 2 });
-  secondIssue.interpretation = {
-    ...secondIssue.interpretation,
-    expectedStateLabel: null,
-    observedStateLabel: "Consent Review",
-    role: "downstream",
-    causedByBlockIndex: 1,
-    resolution: "persisted",
-    resolutionEvidence: "final-page: heading: Consent Review",
-    transitionBoundary: "Example step",
-  };
-
-  const { result } = await runAnalysis(
-    modelRecord([firstIssue, secondIssue]),
-    multiBlockErrorMarkdown,
-  );
-
-  assert.equal(result.analyzed, 1);
-  assert.equal(result.records[0].issues.length, 2);
-  assert.equal(
-    result.records[0].issues[0].normalization.observedStateKey,
-    "consent-review",
-  );
-  assert.equal(result.records[0].issues[1].interpretation.role, "downstream");
-  assert.equal(
-    result.records[0].issues[1].interpretation.causedByBlockIndex,
-    1,
-  );
-  assert.equal(
-    result.records[0].issues[1].normalization.transitionBoundaryKey,
-    "example-step",
-  );
-  assert.equal(
-    result.records[0].issues[1].interpretation.resolution,
-    "persisted",
-  );
-});
-
-test("parses only changed ARIA lines and generates source references", async () => {
-  const ariaDiffErrorMarkdown = `# Error details
-
-\`\`\`
-Error: expect(locator).toMatchAriaSnapshot(expected) failed
-
-- Expected  - 3
-+ Received  + 1
-
-  - heading "Document review"
-- - paragraph "Note: Bring the original document"
-+ - paragraph "Hint: Digital copies are accepted"
-\`\`\`
-
-# Page snapshot
-
-\`\`\`yaml
-- heading "Submission complete"
-\`\`\`
-`;
-  const issue = modelIssue();
-  issue.context.expected = ["model must not classify unchanged context"];
-  issue.context.received = [];
-  issue.interpretation = {
-    ...issue.interpretation,
-    observedStateLabel: "Submission complete",
-    role: "independent",
-    resolution: "recovered-in-attempt",
-    resolutionEvidence: "final-page: heading: Submission complete",
-  };
-  const { result } = await runAnalysis(
-    modelRecord([issue]),
-    ariaDiffErrorMarkdown,
-  );
-
-  const evidence = result.records[0].issues[0];
-  assert.equal(result.analyzed, 1);
-  assert.equal(evidence.facts.ariaDiff.removed.length, 1);
-  assert.equal(evidence.facts.ariaDiff.added.length, 1);
-  assert.match(evidence.facts.ariaDiff.removed[0].text, /Note:/);
+  assert.match(result.prompts[0], /# Page snapshot/);
   assert.doesNotMatch(
-    JSON.stringify(evidence.facts.ariaDiff),
-    /Document review/,
+    result.prompts[0],
+    /metadata error must not reach the model/,
   );
-  assert.deepEqual(evidence.facts.sourceRefs, ["B1-L1", "B1-L7", "B1-L8"]);
-  assert.deepEqual(evidence.facts.expected, [
-    'paragraph "Note: Bring the original document"',
-  ]);
-  assert.match(evidence.normalization.differenceKeys[0], /^missing:/);
-  assert.equal(evidence.normalization.failureFamily, "aria-snapshot-mismatch");
-  assert.equal(evidence.interpretation.role, "independent");
-  assert.equal(evidence.interpretation.resolution, "recovered-in-attempt");
+  assert.doesNotMatch(
+    result.prompts[0],
+    /resolution|causedByBlockIndex|failureFamily/,
+  );
+  assert.match(result.markdown, /### Issue 1/);
+  assert.match(result.markdown, /Generated issue 1 failed/);
 });
 
-test("keeps canonical keys invariant across semantic wording", async () => {
-  const first = modelIssue();
-  first.interpretation.explanation = "The heading is not visible.";
-  const second = modelIssue();
-  second.interpretation.explanation = "The expected heading could not be seen.";
+test("keeps multiple UI and API error blocks as separate issues", async () => {
+  const result = await runAnalysis({
+    responses: modelRecord([modelIssue(1), modelIssue(2)]),
+    markdown: errorMarkdown([firstBlock, secondBlock]),
+  });
 
-  const firstRun = await runAnalysis(modelRecord([first]));
-  const secondRun = await runAnalysis(modelRecord([second]));
-  assert.deepEqual(
-    firstRun.result.records[0].issues[0].normalization,
-    secondRun.result.records[0].issues[0].normalization,
-  );
+  assert.equal(result.result.records[0].issues.length, 2);
+  assert.equal(result.evidence.issues[0].source.block, firstBlock);
+  assert.equal(result.evidence.issues[1].source.block, secondBlock);
+  assert.equal(result.evidence.issues[1].analysis.observed, "HTTP 503");
 });
 
-test("retains deterministic evidence after two invalid model responses", async () => {
-  const invalid = modelRecord([]);
-  const { result, sentPrompts, analysisMarkdown } = await runAnalysis([
-    invalid,
-    invalid,
-  ]);
+test("repairs an incorrect issue count in the same session", async () => {
+  const result = await runAnalysis({
+    responses: [
+      modelRecord([modelIssue(1), modelIssue(2)]),
+      modelRecord([modelIssue(1)]),
+    ],
+    markdown: errorMarkdown(),
+  });
 
-  assert.equal(sentPrompts.length, 2);
-  assert.equal(result.analyzed, 1);
-  assert.equal(result.failed, 0);
-  assert.equal(result.records[0].issues.length, 1);
+  assert.equal(result.result.analyzed, 1);
+  assert.equal(result.prompts.length, 2);
+  assert.match(result.prompts[1], /2 issues for 1 error\.md blocks/);
   assert.match(
-    result.records[0].warning,
-    /deterministic source evidence retained/,
+    result.prompts[1],
+    /Each issue contains only blockIndex and analysis/,
   );
-  assert.equal(result.records[0].issues[0].facts.operation, "toBeVisible");
-  assert.equal(result.records[0].issues[0].interpretation.role, "independent");
-  assert.equal(
-    result.records[0].issues[0].interpretation.resolution,
-    "unknown",
-  );
-  assert.match(analysisMarkdown, /Small-model interpretation unavailable/);
 });
 
-test("rejects error.md without authoritative blocks before model invocation", async () => {
-  const { result, sessionCount, analysisMarkdown } = await runAnalysis(
-    modelRecord([]),
-    "# Error details\n\n# Page snapshot\n",
-  );
+test("repairs an invalid analysis field without changing source", async () => {
+  const invalid = modelIssue(1, { observed: { text: "hidden" } });
+  const result = await runAnalysis({
+    responses: [modelRecord([invalid]), modelRecord([modelIssue(1)])],
+    markdown: errorMarkdown(),
+  });
 
-  assert.equal(sessionCount, 0);
-  assert.equal(result.analyzed, 0);
-  assert.equal(result.failed, 1);
-  assert.match(result.records[0].error, /no fenced error blocks/);
-  assert.match(analysisMarkdown, /AI evidence extraction failed/);
+  assert.equal(result.prompts.length, 2);
+  assert.match(
+    result.prompts[1],
+    /analysis\.observed must be a string or null; received object/,
+  );
+  assert.equal(result.evidence.issues[0].source.block, firstBlock);
 });
 
-test("does not write error artifacts outside the run directory", async () => {
+test("retains every exact source block after two invalid responses", async () => {
+  const result = await runAnalysis({
+    responses: [modelRecord([]), modelRecord([])],
+    markdown: errorMarkdown([firstBlock, secondBlock]),
+  });
+
+  assert.equal(result.result.analyzed, 1);
+  assert.equal(result.result.records[0].issues.length, 2);
+  assert.equal(result.evidence.issues[0].source.block, firstBlock);
+  assert.equal(result.evidence.issues[1].source.block, secondBlock);
+  assert.equal(result.evidence.issues[0].analysis.confidence, "low");
+  assert.match(result.evidence.warning, /source blocks retained/);
+});
+
+test("rejects error.md without issue blocks before model invocation", async () => {
+  const result = await runAnalysis({
+    responses: modelRecord([]),
+    markdown: "# Error details\n\n# Page snapshot\n",
+  });
+
+  assert.equal(result.sessionCount, 0);
+  assert.equal(result.result.failed, 1);
+  assert.match(result.result.records[0].error, /no fenced error blocks/);
+  assert.match(result.markdown, /## Error/);
+});
+
+test("does not write analysis artifacts outside the run directory", async () => {
   const runDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "copilot-analyzer-run-"),
   );
-  const escapedFolder = `copilot-analyzer-escaped-${path.basename(runDir)}`;
+  const escapedFolder = `escaped-${path.basename(runDir)}`;
   const escapedPath = path.join(path.dirname(runDir), escapedFolder);
   fs.mkdirSync(escapedPath);
   let sessionCount = 0;
   const client = {
     async createSession() {
       sessionCount++;
-      throw new Error("Model session must not be created");
+      throw new Error("session must not be created");
     },
   };
 
@@ -578,8 +266,8 @@ test("does not write error artifacts outside the run directory", async () => {
         failures: [
           {
             folder: `../${escapedFolder}`,
-            testTitle: "tests/example.spec.ts:1 › example",
-            title: "Example step",
+            testTitle: "tests/generated.spec.ts:10 › generated case",
+            title: "Run generated case",
             retryIndex: 0,
             status: "failed",
             outcome: "unexpected",

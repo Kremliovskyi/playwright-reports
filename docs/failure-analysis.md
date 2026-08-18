@@ -61,6 +61,89 @@ run-<timestamp>/
 
 The console and network error files are created only when the trace contains that type of evidence. Before Hooks and skipped entries can appear in the manifest, but they are not treated as analyzable test failures and do not receive an AI analysis record.
 
+## End-to-end data flow
+
+```mermaid
+flowchart TD
+	USER["User clicks Analyze Failures"] --> API["POST /api/failures<br/>server.ts"]
+
+	API --> CLI["Trace reader CLI<br/>node cli.js failures REPORT OUTPUT --format json"]
+	CLI --> RUN["Generated run directory"]
+	RUN --> MANIFEST["index.json<br/>attempt manifest"]
+	RUN --> FOLDERS["One folder per attempt/retry"]
+	FOLDERS --> RAW["Raw extracted evidence<br/>error.md<br/>failure.json<br/>network errors<br/>console errors<br/>screenshots"]
+
+	MANIFEST --> FILTER{"Analyzable?<br/>Not skipped or Before Hooks"}
+	FILTER -->|No| SKIP["Excluded from model analysis"]
+	FILTER -->|Yes| POOL["analyzeRun<br/>3 attempts concurrently"]
+
+	subgraph SMALL_FLOW["Per-attempt evidence flow"]
+		POOL --> BLOCKS["errorDetailBlocks<br/>One fenced error block = one issue"]
+		RAW --> PARSER["copilot-source-evidence.ts<br/>Deterministic parser"]
+		BLOCKS --> PARSER
+
+		PARSER --> SOURCE["Application-owned source projection<br/>line IDs<br/>error and assertion<br/>operation and target<br/>ARIA removed/added lines<br/>final page labels<br/>allowed step boundaries"]
+
+		SOURCE --> SMALL["Configured small model<br/>One attempt per session"]
+		RAW --> SMALL_INPUT["Model input<br/>full error.md<br/>sanitized failure metadata<br/>optional network errors"]
+		SMALL_INPUT --> SMALL
+		SOURCE --> SMALL
+
+		SMALL --> SEMANTICS["Model returns semantics only<br/>step path<br/>previous passed boundary<br/>non-ARIA expected/received<br/>network relationship<br/>state labels<br/>causal role and anchor<br/>explanation and confidence"]
+		SEMANTICS --> VALIDATE{"Schema and grounding valid?"}
+
+		VALIDATE -->|No| CORRECT["One correction turn<br/>validation error + deterministic projection"]
+		CORRECT --> VALIDATE2{"Corrected response valid?"}
+		VALIDATE2 -->|No| FALLBACK["Deterministic low-confidence fallback<br/>Source-backed issues are retained"]
+		VALIDATE -->|Yes| HYDRATE["Hydrate canonical evidence"]
+		VALIDATE2 -->|Yes| HYDRATE
+		FALLBACK --> EVIDENCE
+
+		HYDRATE --> CANON["Application overwrites model-owned guesses<br/>source refs and exact quotes<br/>ARIA expected/received<br/>failure family<br/>normalized error<br/>operation/target keys<br/>state/boundary keys<br/>difference fingerprints"]
+		CANON --> EVIDENCE["evidence.json<br/>Canonical schema v2"]
+		EVIDENCE --> MARKDOWN["Deterministic renderer<br/>No model call"]
+		MARKDOWN --> AI_MD["ai-analysis.md"]
+	end
+
+	EVIDENCE --> COUNT{"More than one<br/>analyzable attempt?"}
+	COUNT -->|No| DONE_SINGLE["Per-attempt analysis complete"]
+	COUNT -->|Yes| CATALOG["Build flat issue catalog<br/>I1, I2, I3..."]
+
+	subgraph BIG_FLOW["Run-level grouping flow"]
+		CATALOG --> HINTS["Application derives incident hints<br/>causalAnchorIssueId<br/>stateIncidentKey<br/>contentIncidentKey"]
+		HINTS --> BIG["Configured big model<br/>Tool-free grouping session"]
+		BIG_INPUT["Big-model input<br/>test/spec/retry metadata<br/>canonical facts<br/>normalization keys<br/>semantic interpretation<br/>incident hints"] --> BIG
+
+		BIG --> PROVISIONAL["Complete provisional grouping<br/>summary + problems<br/>every issue ID exactly once<br/>optional evidenceRequests"]
+		PROVISIONAL --> REQUEST{"Source evidence requested?"}
+
+		REQUEST -->|Yes| BOUNDED["Application loads selected current-run snippets<br/>error block / final page<br/>test source / network"]
+		BOUNDED --> LIMITS["Enforced limits<br/>10 requests maximum<br/>4 issues per request<br/>30 issue references<br/>6,000 chars per section<br/>48,000 chars total<br/>4 MiB per source file"]
+		LIMITS --> BIG2["One final evidence turn<br/>No second retrieval round"]
+		BIG2 --> FINAL_GROUPS["Final grouping response"]
+		REQUEST -->|No| FINAL_GROUPS
+
+		FINAL_GROUPS --> CONTRACT{"Grouping contract valid?<br/>all IDs exactly once<br/>causal anchor co-located"}
+		CONTRACT -->|No| REPAIR["One repair turn<br/>missing / unknown / duplicate IDs<br/>or causally split symptoms"]
+		REPAIR --> RECHECK{"Repair valid?"}
+		RECHECK -->|No| SANITIZE["Deterministic sanitization<br/>remove invalid references<br/>move symptoms to causal anchor<br/>retain unassigned as Unclassified"]
+		RECHECK -->|Yes| RENDER
+		CONTRACT -->|Yes| RENDER["Application renders report"]
+		SANITIZE --> RENDER
+
+		RENDER --> RECONCILE["Reconcile grouped terminal attempts<br/>against manifest"]
+		RECONCILE --> GROUPED["grouped-analysis.md"]
+	end
+```
+
+The ownership boundary is intentional: scripts establish and normalize facts, the small model explains their issue-local meaning, and the big model groups the resulting records into incidents.
+
+| Stage                   | Model receives                                                                                              | Model does not control                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Small model             | Full `error.md`, sanitized step metadata, optional network errors, and the deterministic source projection. | Error text, issue count, ARIA diff lines, final page state, source references, or canonical keys. |
+| Big model               | Flat schema-v2 issues, manifest context, semantic interpretation, and deterministic incident hints.         | Raw traces, screenshots, previous runs, knowledge bases, or ADO/defect data.                      |
+| Big-model evidence turn | Only specifically requested, bounded current-run error-block, final-page, test-source, or network sections. | Arbitrary file access or additional retrieval rounds.                                             |
+
 ## What `evidence.json` and `ai-analysis.md` contain
 
 After trace extraction, application code parses every fenced block under `# Error details` and writes schema-v2 `evidence.json` beside `error.md`. The selected small Copilot model supplies only bounded semantic context and causal interpretation. Each issue record contains:

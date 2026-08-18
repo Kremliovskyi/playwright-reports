@@ -33,10 +33,10 @@ The optional **GitHub Token** authenticates the Copilot SDK used for AI failure 
 
 Select two model roles in the same tab:
 
-| Setting     | Purpose                                                                          |
-| ----------- | -------------------------------------------------------------------------------- |
-| Small model | Creates one distilled `ai-analysis.md` record for each analyzable failed attempt |
-| Big model   | Groups all completed per-attempt records into `grouped-analysis.md`              |
+| Setting     | Purpose                                                                                  |
+| ----------- | ---------------------------------------------------------------------------------------- |
+| Small model | Extracts per-issue `evidence.json`; the dashboard renders `ai-analysis.md` from the JSON |
+| Big model   | Groups completed issue records into `grouped-analysis.md`                                |
 
 Click either model field to open the shared model picker. Selecting a model saves that field immediately; the two roles are independent and may use the same model. Missing or unavailable selections are not replaced automatically.
 

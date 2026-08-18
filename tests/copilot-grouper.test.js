@@ -22,34 +22,95 @@ const entry = (folder, retryIndex, outcome, testName = "e2eFlowTC01") => ({
 });
 
 const record = (folder, issues, overrides = {}) => ({
-  folder,
-  testTitle: `tests/e2e/example.spec.ts:42 › flow › e2eFlowTC01`,
-  spec: "tests/e2e/example.spec.ts:42",
-  stepPath: ["Open flow", "Complete the flow"],
-  failingOperation: "Click result button",
-  errorVerbatim: "Timeout 10000ms exceeded",
-  errorNormalized: "timeout waiting for result",
-  network: [],
-  issues,
-  finalPageState: "The result screen is visible.",
-  transientVsFinalContradiction: "none",
-  rootCauseHypothesis: "The result exceeded the assertion window.",
-  discriminators: "Open flow passed; completion timed out.",
+  schemaVersion: 1,
+  model: "small-model",
+  attempt: {
+    folder,
+    testTitle: `tests/e2e/example.spec.ts:42 › flow › e2eFlowTC01`,
+    spec: "tests/e2e/example.spec.ts:42",
+    retryIndex: 0,
+    status: "failed",
+    outcome: "unexpected",
+  },
+  issues: issues.map((issue, index) => ({
+    ...issue,
+    blockIndex: index + 1,
+    terminal: index === issues.length - 1,
+    facts: {
+      ...issue.facts,
+      finalPageState:
+        index === issues.length - 1 ? issue.facts.finalPageState : null,
+      transientVsFinalContradiction:
+        index === issues.length - 1
+          ? issue.facts.transientVsFinalContradiction
+          : null,
+    },
+  })),
   ...overrides,
 });
 
 const softIssue = {
-  kind: "soft assertion",
-  step: "Check loading screen",
-  errorVerbatim: "Unexpected Back button",
-  explanation: "The loading screen contains an extra Back button.",
+  facts: {
+    kind: "soft assertion",
+    assertion: "toMatchAriaSnapshot",
+    operation: "Assert loading screen",
+    target: "loading screen body",
+    stepPath: ["Open flow", "Check loading screen"],
+    previousPassedBoundary: "Open flow completed",
+    errorVerbatim: "Unexpected Back button",
+    expected: ["Back button absent"],
+    received: ["Back button present"],
+    network: [],
+    finalPageState: null,
+    transientVsFinalContradiction: null,
+    blockQuotes: ["Unexpected Back button"],
+  },
+  normalization: {
+    failureFamily: "aria-snapshot-mismatch",
+    operationKey: "assert-aria-snapshot",
+    targetKey: "loading-screen-body",
+    normalizedError: "unexpected back button",
+    differenceKeys: ["unexpected:button:back"],
+    volatileValuesRemoved: [],
+  },
+  interpretation: {
+    explanation: "The loading screen contains an extra Back button.",
+    rootCauseHypothesis: "The loading snapshot changed.",
+    confidence: "high",
+    ambiguities: [],
+  },
 };
 
 const terminalIssue = {
-  kind: "timeout",
-  step: "Complete the flow",
-  errorVerbatim: "Timeout 10000ms exceeded",
-  explanation: "The result appeared after the assertion window.",
+  facts: {
+    kind: "timeout",
+    assertion: "toBeVisible",
+    operation: "Click result button",
+    target: "result button",
+    stepPath: ["Open flow", "Complete the flow"],
+    previousPassedBoundary: "Open flow completed",
+    errorVerbatim: "Timeout 10000ms exceeded",
+    expected: ["Result visible within 10 seconds"],
+    received: ["Result visible after 10 seconds"],
+    network: [],
+    finalPageState: "The result screen is visible.",
+    transientVsFinalContradiction: "The result eventually appeared.",
+    blockQuotes: ["Timeout 10000ms exceeded"],
+  },
+  normalization: {
+    failureFamily: "visibility-timeout",
+    operationKey: "click-result-button",
+    targetKey: "result-button",
+    normalizedError: "timeout waiting for result",
+    differenceKeys: ["result-visible-after-timeout"],
+    volatileValuesRemoved: [],
+  },
+  interpretation: {
+    explanation: "The result appeared after the assertion window.",
+    rootCauseHypothesis: "The result exceeded the assertion window.",
+    confidence: "high",
+    ambiguities: [],
+  },
 };
 
 const modelProblem = (issueIds, overrides = {}) => ({
@@ -220,7 +281,7 @@ test("places failed per-trace records in an unclassified terminal problem", () =
     failures: [entry("failed-ai__retry0", 0, "unexpected")],
   };
   const records = [
-    record("failed-ai__retry0", [], { _error: "Model response was invalid" }),
+    record("failed-ai__retry0", [], { error: "Model response was invalid" }),
   ];
   const response = validateGroupingResponse(
     parseGroupingResponse(
@@ -334,29 +395,23 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.match(sentOptions.prompt, /"folder":"attempt__retry0"/);
     assert.match(sentOptions.prompt, /"issueId":"I1"/);
     assert.match(sentOptions.prompt, /"issueIds": \["I1", "I2"\]/);
+    assert.match(sentOptions.prompt, /"operation":"Click result button"/);
     assert.match(
       sentOptions.prompt,
-      /"failingOperation":"Click result button"/,
+      /"previousPassedBoundary":"Open flow completed"/,
+    );
+    assert.match(sentOptions.prompt, /"failureFamily":"visibility-timeout"/);
+    assert.match(
+      sentOptions.prompt,
+      /Test titles and manifest steps are scenario context, not standalone signatures/,
     );
     assert.match(
       sentOptions.prompt,
-      /"discriminators":"Open flow passed; completion timed out\."/,
+      /Do not use a missing optional field alone as positive evidence to split/,
     );
     assert.match(
       sentOptions.prompt,
-      /ancestor step names are scenario context, not standalone failure signatures/,
-    );
-    assert.match(
-      sentOptions.prompt,
-      /Differences only in those labels must not split issues/,
-    );
-    assert.match(
-      sentOptions.prompt,
-      /Do not merge solely because issues share a product, broad timeout category, missing-element category, or similar root-cause wording/,
-    );
-    assert.match(
-      sentOptions.prompt,
-      /Bias toward splitting when a material field conflicts or the evidence needed to compare the break points is missing/,
+      /A material factual conflict is evidence to split; uncertainty is a reason to request evidence/,
     );
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
@@ -364,11 +419,367 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.equal(result.diagnostics.reasoningEffort, "high");
     assert.equal(result.diagnostics.requestCount, 1);
     assert.equal(result.diagnostics.repairAttempted, false);
+    assert.equal(result.diagnostics.evidenceRoundAttempted, false);
+    assert.equal(result.diagnostics.evidenceRequestCount, 0);
     assert.equal(result.diagnostics.contextTokenLimit, 272000);
     assert.equal(result.diagnostics.inputTokens, 2200);
     assert.equal(result.diagnostics.outputTokens, 300);
     assert.equal(result.diagnostics.finishReason, "stop");
     assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("loads bounded raw evidence for one grouping follow-up turn", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-evidence-"),
+  );
+  const folder = "attempt__retry0";
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry(folder, 0, "unexpected")],
+  };
+  const records = [record(folder, [softIssue, terminalIssue])];
+  fs.mkdirSync(path.join(runDir, folder));
+  fs.writeFileSync(
+    path.join(runDir, folder, "error.md"),
+    `# Error details
+
+\`\`\`
+Unexpected Back button
+\`\`\`
+
+\`\`\`
+Timeout 10000ms exceeded
+\`\`\`
+
+# Page snapshot
+
+\`\`\`yaml
+- heading "Result"
+\`\`\`
+
+# Test source
+
+\`\`\`ts
+await expect(result).toBeVisible();
+\`\`\`
+`,
+  );
+
+  const responses = [
+    {
+      summary: "The issues may share one delayed-flow problem.",
+      problems: [modelProblem(["I1", "I2"])],
+      evidenceRequests: [
+        {
+          issueIds: ["I1", "I2"],
+          sections: ["error-block", "final-page"],
+          reason:
+            "Confirm whether the earlier UI mismatch is the timeout state.",
+        },
+      ],
+    },
+    {
+      summary: "The source blocks show two distinct signatures.",
+      problems: [
+        modelProblem(["I1"], { title: "Unexpected loading control" }),
+        modelProblem(["I2"], { title: "Delayed result" }),
+      ],
+      evidenceRequests: [],
+    },
+  ];
+  const prompts = [];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: { content: JSON.stringify(responses[prompts.length - 1]) },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const markdown = fs.readFileSync(result.filePath, "utf8");
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /Unexpected Back button/);
+    assert.match(prompts[1], /Timeout 10000ms exceeded/);
+    assert.match(prompts[1], /heading \\"Result\\"/);
+    assert.match(prompts[1], /not applicable to a non-terminal issue/);
+    assert.equal(result.problemCount, 2);
+    assert.equal(result.diagnostics.requestCount, 2);
+    assert.equal(result.diagnostics.evidenceRoundAttempted, true);
+    assert.equal(result.diagnostics.evidenceRequestCount, 1);
+    assert.equal(result.diagnostics.evidenceIssueCount, 2);
+    assert.ok(result.diagnostics.evidenceBytes > 0);
+    assert.match(markdown, /Unexpected loading control/);
+    assert.match(markdown, /Delayed result/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("retains provisional grouping when an evidence request is invalid", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-invalid-evidence-"),
+  );
+  const folder = "attempt__retry0";
+  const manifest = {
+    count: 1,
+    runDir,
+    failures: [entry(folder, 0, "unexpected")],
+  };
+  const records = [record(folder, [terminalIssue])];
+  const prompts = [];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "The provisional grouping remains complete.",
+                problems: [
+                  modelProblem(["I1"], { title: "Provisional timeout" }),
+                ],
+                evidenceRequests: [
+                  {
+                    issueIds: ["I99"],
+                    sections: ["error-block"],
+                    reason: "Inspect an issue outside the current run.",
+                  },
+                ],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const markdown = fs.readFileSync(result.filePath, "utf8");
+    assert.equal(prompts.length, 1);
+    assert.equal(result.problemCount, 1);
+    assert.equal(result.diagnostics.evidenceRoundAttempted, true);
+    assert.equal(result.diagnostics.evidenceRequestCount, 1);
+    assert.equal(result.diagnostics.requestCount, 1);
+    assert.match(result.diagnostics.evidenceErrorMessage, /unknown issue I99/);
+    assert.match(markdown, /Provisional timeout/);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("does not read requested evidence outside its failure folder", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-contained-evidence-"),
+  );
+  const folder = "attempt__retry0";
+  const folderPath = path.join(runDir, folder);
+  const secret = "must not reach the grouping model";
+  fs.mkdirSync(folderPath);
+  fs.writeFileSync(
+    path.join(folderPath, "error.md"),
+    "# Error details\n\n```\nTimeout 10000ms exceeded\n```\n",
+  );
+  fs.writeFileSync(
+    path.join(folderPath, "failure.json"),
+    JSON.stringify({ files: { networkErrors: "../secret.ndjson" } }),
+  );
+  fs.writeFileSync(path.join(runDir, "secret.ndjson"), secret);
+  const prompts = [];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "Keep the complete provisional grouping.",
+                problems: [modelProblem(["I1"])],
+                evidenceRequests: [
+                  {
+                    issueIds: ["I1"],
+                    sections: ["network"],
+                    reason: "Inspect the relevant failed request.",
+                  },
+                ],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      { count: 1, runDir, failures: [entry(folder, 0, "unexpected")] },
+      [record(folder, [terminalIssue])],
+      "small-model",
+      "big-model",
+    );
+    assert.equal(prompts.length, 1);
+    assert.doesNotMatch(prompts[0], new RegExp(secret));
+    assert.match(
+      result.diagnostics.evidenceErrorMessage,
+      /outside its allowed directory/,
+    );
+    assert.equal(result.problemCount, 1);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("retains provisional grouping when a requested error block is unavailable", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-missing-block-"),
+  );
+  const folder = "attempt__retry0";
+  fs.mkdirSync(path.join(runDir, folder));
+  fs.writeFileSync(path.join(runDir, folder, "error.md"), "# Error details\n");
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait() {
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "Keep the complete provisional grouping.",
+                problems: [modelProblem(["I1"])],
+                evidenceRequests: [
+                  {
+                    issueIds: ["I1"],
+                    sections: ["error-block"],
+                    reason: "Inspect the exact source error.",
+                  },
+                ],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      { count: 1, runDir, failures: [entry(folder, 0, "unexpected")] },
+      [record(folder, [terminalIssue])],
+      "small-model",
+      "big-model",
+    );
+    assert.match(result.diagnostics.evidenceErrorMessage, /is unavailable/);
+    assert.equal(result.problemCount, 1);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("repairs an incomplete provisional grouping without consuming evidence", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-provisional-repair-"),
+  );
+  const folder = "attempt__retry0";
+  const prompts = [];
+  const responses = [
+    {
+      summary: "The provisional response omitted one issue.",
+      problems: [modelProblem(["I1"])],
+      evidenceRequests: [
+        {
+          issueIds: ["I1", "I2"],
+          sections: ["error-block"],
+          reason: "Compare the two issues.",
+        },
+      ],
+    },
+    {
+      summary: "Both issues are now assigned.",
+      problems: [modelProblem(["I1", "I2"])],
+      evidenceRequests: [],
+    },
+  ];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: { content: JSON.stringify(responses[prompts.length - 1]) },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      { count: 1, runDir, failures: [entry(folder, 0, "unexpected")] },
+      [record(folder, [softIssue, terminalIssue])],
+      "small-model",
+      "big-model",
+    );
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[1], /violated the exact issueId reference contract/);
+    assert.doesNotMatch(prompts[1], /requested bounded source evidence/);
+    assert.match(
+      result.diagnostics.evidenceErrorMessage,
+      /provisional grouping does not reference every issue exactly once/,
+    );
+    assert.equal(result.diagnostics.repairAttempted, true);
+    assert.equal(result.diagnostics.requestCount, 2);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

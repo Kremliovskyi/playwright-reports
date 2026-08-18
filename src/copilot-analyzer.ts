@@ -1,12 +1,29 @@
 import fs from "fs";
 import path from "path";
 import { CopilotClient, approveAll } from "@github/copilot-sdk";
+import {
+  AI_ANALYSIS_FILENAME,
+  EVIDENCE_FILENAME,
+  EVIDENCE_SCHEMA_VERSION,
+  FailureEvidenceAttempt,
+  FailureEvidenceIssue,
+  FailureEvidenceRecord,
+  renderEvidenceJson,
+  renderEvidenceMarkdown,
+  validateModelEvidenceIssues,
+} from "./copilot-evidence";
+
+export {
+  AI_ANALYSIS_FILENAME,
+  EVIDENCE_FILENAME,
+  EVIDENCE_SCHEMA_VERSION,
+} from "./copilot-evidence";
 
 // Per-trace timeout for the assistant response (ms).
 const PER_TRACE_TIMEOUT_MS = 180000;
 
 // Number of failure folders analyzed concurrently. Each folder is fully isolated
-// (own input files, own Copilot session, own ai-analysis.md), so they never interfere.
+// (own input files, own Copilot session, own evidence artifacts), so they never interfere.
 const ANALYSIS_CONCURRENCY = 3;
 
 // --- Types ---------------------------------------------------------------
@@ -30,67 +47,7 @@ export interface FailureManifest {
   failures: FailureManifestEntry[];
 }
 
-export interface UnderstandingRecordNetworkItem {
-  call: string;
-  status: number | null;
-  gist: string;
-  relToStep: string;
-}
-
-// One error block from error.md. A single failed attempt can carry SEVERAL
-// blocks: each failed soft assertion produces its own block, and the final
-// (terminal) block is the failure that ended the attempt.
-export interface UnderstandingRecordIssue {
-  // e.g. "soft assertion", "hard failure", "timeout"
-  kind: string;
-  // The step/screen where this block occurred, or "unknown".
-  step: string;
-  // The exact first error line of this block.
-  errorVerbatim: string;
-  // 1-2 lines explaining THIS block from its own diff/call log.
-  explanation: string;
-}
-
-export interface UnderstandingRecord {
-  folder: string;
-  testTitle: string | null;
-  spec: string;
-  // Named test.step ancestry leading to the terminal failure.
-  stepPath: string[];
-  // Deepest Playwright action or assertion that failed inside the final test.step.
-  // It may equal the last stepPath item when no more specific operation is available.
-  failingOperation: string;
-  errorVerbatim: string;
-  errorNormalized: string;
-  network: UnderstandingRecordNetworkItem[];
-  // EVERY error block in error.md, in order (soft assertions first, terminal
-  // failure last). The top-level error/step/finalPageState fields describe the
-  // terminal failure only.
-  issues: UnderstandingRecordIssue[];
-  // Where the page ACTUALLY ended up, per the `# Page snapshot` YAML in error.md.
-  // This is the LAST-SEEN UI and corresponds to the terminal failure only.
-  finalPageState: string;
-  // Explicit cross-check between the TERMINAL error block and the final page
-  // snapshot: "none" when they agree or the comparison is not applicable,
-  // otherwise a one-line description (e.g. latency — flow completed after the
-  // soft-assertion window, not a stall).
-  transientVsFinalContradiction: string;
-  rootCauseHypothesis: string;
-  discriminators: string;
-  _error?: string;
-  _raw?: string;
-}
-
-// The per-failure AI understanding — the record fields from `stepPath` onward
-// (folder/testTitle/spec are dropped: folder/testTitle live on the manifest entry
-// and the spec path is the leading `<file>:<line>` of testTitle).
-export type AiAnalysis = Omit<
-  UnderstandingRecord,
-  "folder" | "testTitle" | "spec"
->;
-
-// File name of the per-failure AI analysis written next to error.md in each folder.
-export const AI_ANALYSIS_FILENAME = "ai-analysis.md";
+export type UnderstandingRecord = FailureEvidenceRecord;
 
 export interface AnalyzeRunSummary {
   total: number;
@@ -101,7 +58,7 @@ export interface AnalyzeRunSummary {
 }
 
 export interface AnalyzeRunResult extends AnalyzeRunSummary {
-  records: UnderstandingRecord[];
+  records: FailureEvidenceRecord[];
 }
 
 export interface AnalyzeProgress {
@@ -151,22 +108,6 @@ export class CopilotAnalysisError extends Error {
   }
 }
 
-const REQUIRED_RECORD_KEYS: (keyof UnderstandingRecord)[] = [
-  "folder",
-  "testTitle",
-  "spec",
-  "stepPath",
-  "failingOperation",
-  "errorVerbatim",
-  "errorNormalized",
-  "network",
-  "issues",
-  "finalPageState",
-  "transientVsFinalContradiction",
-  "rootCauseHypothesis",
-  "discriminators",
-];
-
 // --- Filtering -----------------------------------------------------------
 
 // Before Hooks / skipped attempts are not real failures and must be omitted.
@@ -175,121 +116,7 @@ export const isAnalyzableEntry = (entry: FailureManifestEntry): boolean =>
   entry.outcome !== "skipped" &&
   entry.title !== "Before Hooks";
 
-// Project an understanding record down to the AI-analysis fields (everything from
-// `stepPath` onward; folder/testTitle/spec are dropped — see AiAnalysis).
-export const toAiAnalysis = (record: UnderstandingRecord): AiAnalysis => {
-  const { folder, testTitle, spec, ...aiAnalysis } = record;
-  void folder;
-  void testTitle;
-  void spec;
-  return aiAnalysis;
-};
-
-// Render an understanding record as a human-readable `ai-analysis.md`, written
-// next to error.md in the failure folder. The reduce phase reads this instead of
-// a separate records.json or an index.json embed.
-export const renderAiAnalysisMarkdown = (
-  record: UnderstandingRecord,
-  model: string,
-): string => {
-  const ai = toAiAnalysis(record);
-  const lines: string[] = [];
-
-  lines.push("# AI Analysis");
-  lines.push("");
-  lines.push(`> Model: \`${model}\``);
-  lines.push("");
-
-  if (ai._error) {
-    lines.push(
-      "> ⚠️ AI analysis failed for this folder — fall back to investigating the raw files (error.md, failure.json, screenshots) manually.",
-    );
-    lines.push("");
-    lines.push("## Error");
-    lines.push("");
-    lines.push("```");
-    lines.push(ai._error);
-    lines.push("```");
-    if (ai._raw) {
-      lines.push("");
-      lines.push("## Raw response (truncated)");
-      lines.push("");
-      lines.push("```");
-      lines.push(ai._raw);
-      lines.push("```");
-    }
-    lines.push("");
-    return lines.join("\n");
-  }
-
-  lines.push("## Step path");
-  lines.push("");
-  if (ai.stepPath.length) {
-    for (const step of ai.stepPath) lines.push(`- ${step}`);
-  } else {
-    lines.push("_None_");
-  }
-  lines.push("");
-  lines.push(`**Failing operation:** ${ai.failingOperation || "_unknown_"}`);
-  lines.push("");
-
-  lines.push("## Error");
-  lines.push("");
-  lines.push(`- **Verbatim:** ${ai.errorVerbatim || "_none_"}`);
-  lines.push(`- **Normalized:** ${ai.errorNormalized || "_none_"}`);
-  lines.push("");
-
-  lines.push("## Issues");
-  lines.push("");
-  if (ai.issues.length) {
-    ai.issues.forEach((issue, i) => {
-      lines.push(
-        `${i + 1}. **${issue.kind}** at \`${issue.step || "unknown"}\` — ${issue.errorVerbatim}`,
-      );
-      lines.push(`   - ${issue.explanation}`);
-    });
-  } else {
-    lines.push("_none_");
-  }
-  lines.push("");
-
-  lines.push("## Network");
-  lines.push("");
-  if (ai.network.length) {
-    lines.push("| Call | Status | Gist | Relation to step |");
-    lines.push("| --- | --- | --- | --- |");
-    for (const n of ai.network) {
-      lines.push(
-        `| ${n.call} | ${n.status ?? "—"} | ${n.gist} | ${n.relToStep} |`,
-      );
-    }
-  } else {
-    lines.push("_No network errors._");
-  }
-  lines.push("");
-
-  lines.push("## Final page state");
-  lines.push("");
-  lines.push(ai.finalPageState || "_none_");
-  lines.push("");
-
-  lines.push("## Transient vs final check");
-  lines.push("");
-  lines.push(ai.transientVsFinalContradiction || "_none_");
-  lines.push("");
-
-  lines.push("## Root cause hypothesis");
-  lines.push("");
-  lines.push(ai.rootCauseHypothesis || "_none_");
-  lines.push("");
-
-  lines.push("## Discriminators");
-  lines.push("");
-  lines.push(ai.discriminators || "_none_");
-  lines.push("");
-
-  return lines.join("\n");
-};
+export const renderAiAnalysisMarkdown = renderEvidenceMarkdown;
 
 // --- Preflight -----------------------------------------------------------
 
@@ -439,7 +266,7 @@ export const copilotModels = async (
 
 // --- Prompt --------------------------------------------------------------
 
-const errorDetailBlocks = (errorMd: string): string[] => {
+export const errorDetailBlocks = (errorMd: string): string[] => {
   const heading = errorMd.match(/^# Error details\s*$/m);
   if (!heading?.index && heading?.index !== 0) return [];
   const sectionStart = heading.index + heading[0].length;
@@ -496,13 +323,17 @@ const buildPrompt = (
     ? `\n## network-errors.json (failed/relevant requests)\n\`\`\`json\n${networkErrorsText}\n\`\`\`\n`
     : "\n## network-errors.json\n(none — there were no network errors for this attempt)\n";
 
-  return `You are investigating ONE failed Playwright test attempt and must produce a single structured JSON "understanding record". Work only from the text materials provided below. Do NOT invent facts.
+  return `You are extracting canonical evidence from ONE failed Playwright test attempt. Work only from the text materials provided below. Do NOT invent facts.
 
-error.md is the EXCLUSIVE source of failures for the "issues" array. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? "" : "s"} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? "y" : "ies"}, one per block and in the same order. The final block is the terminal failure that ended the attempt. The top-level failingOperation/error/finalPageState fields describe that terminal block only.
+error.md is the EXCLUSIVE source of issues. It contains exactly ${expectedIssueCount} fenced error block${expectedIssueCount === 1 ? "" : "s"} under "# Error details". Return exactly ${expectedIssueCount} issue entr${expectedIssueCount === 1 ? "y" : "ies"}, one per block and in the same order. The final block is the terminal failure that ended the attempt.
 
-The failure metadata is SUPPORTING CONTEXT ONLY. Use it only for testTitle, spec, retry metadata, and step-title ancestry. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from a manifest/failure-metadata step, parent step, action diagnostic, trace issue, source code, or network/console entry. In particular, a parent test.step can repeat a child's error and is not another issue. If evidence appears outside the fenced blocks under error.md's "# Error details", it MUST NOT appear in "issues".
+The failure metadata is SUPPORTING CONTEXT ONLY. Use it for issue-local step ancestry and operation context. It intentionally excludes diagnostic collections and step error payloads. Never create an issue from metadata, parent steps, source code, network, or console entries. A parent test.step can repeat a child's error and is not another issue.
 
-The '# Page snapshot' YAML section of error.md is the LAST-SEEN rendered UI and corresponds to the terminal failure only. Intermediate blocks (earlier soft assertions) have NO snapshot — their evidence is their own expected-vs-received diff and call log (which records the resolved page states over time). NEVER explain or validate an intermediate block by comparing it against the final page snapshot.
+For EACH issue, extract factual comparison fields before interpretation. Use null or [] when evidence is absent or ambiguous; never guess. blockQuotes must contain one or more short, exact substrings copied from THAT issue's fenced block. Do not quote the page snapshot, metadata, or network file in blockQuotes.
+
+The '# Page snapshot' YAML section is the LAST-SEEN rendered UI and belongs to the TERMINAL issue only. Set finalPageState and transientVsFinalContradiction to null for every non-terminal issue. Never explain an intermediate issue using the final page snapshot.
+
+Normalization is comparison-oriented: remove volatile values such as generated IDs and timestamps only when clearly volatile, preserve semantic targets, and use stable lowercase keys. differenceKeys identify concrete expected/received differences, not broad root-cause prose. previousPassedBoundary is the nearest factually supported successful boundary before THIS issue, or null.
 
 ## Folder name
 ${folderName}
@@ -519,31 +350,52 @@ ${failureMetadata(failureJsonText)}
 ${networkSection}
 ## Output — return EXACTLY this JSON object and NOTHING else (no prose, no markdown fences)
 {
-  "folder": "${folderName}",
-  "testTitle": "<from failure.json>",
-  "spec": "<spec file>:<line>",
-  "stepPath": ["<ordered named test.step ancestry containing the TERMINAL failure>"],
-  "failingOperation": "<the deepest Playwright action or assertion that failed inside the final test.step; use the final stepPath item only when no more specific operation is available>",
-  "errorVerbatim": "<the exact error line of the TERMINAL (last) error block>",
-  "errorNormalized": "<short normalized form of the terminal error, e.g. 'timeout waiting for locator'>",
-  "network": [
-    { "call": "<METHOD path>", "status": <code or null>, "gist": "<one line>", "relToStep": "<how this relates to the failing step, or 'none'>" }
-  ],
+  "schemaVersion": ${EVIDENCE_SCHEMA_VERSION},
   "issues": [
-    { "kind": "<'soft assertion' | 'hard failure' | 'timeout' | ...>", "step": "<step/screen where this block occurred, or 'unknown'>", "errorVerbatim": "<exact first error line of this block>", "explanation": "<1-2 lines explaining THIS block from its own diff/call log — for an aria-snapshot diff, name the concrete UI difference (e.g. 'unexpected Back button on the Get Ready screen')>" }
-  ],
-  "finalPageState": "<where the page ACTUALLY ended up, per the '# Page snapshot' YAML section in error.md — the LAST-SEEN rendered UI, belonging to the terminal failure. It may differ from an assertion diff's 'Received' value, which can be a transient mid-flight state>",
-  "transientVsFinalContradiction": "<compare ONLY the TERMINAL error block against the final page snapshot. 'none' if they agree or the comparison is not applicable (e.g. the terminal failure is a click/wait timeout with no expected-vs-received diff); otherwise ONE line describing the contradiction, e.g. 'diff Received shows Processing spinner but the # Page snapshot shows the success screen — flow completed after the soft-assertion window (latency, not a stall)'>",
-  "rootCauseHypothesis": "<your best one-sentence root cause for the attempt overall — usually the terminal failure; mention an intermediate issue only if it plausibly caused the terminal one>",
-  "discriminators": "<CRITICAL: state precisely WHERE in the flow it broke and what would make this NOT the same as a superficially-similar failure. Name the step that PASSED just before the break, so a look-alike that breaks at a different step is distinguishable.>"
+    {
+      "blockIndex": 1,
+      "terminal": ${expectedIssueCount === 1 ? "true" : "false"},
+      "facts": {
+        "kind": "<'soft assertion' | 'hard failure' | 'timeout' | ...>",
+        "assertion": "<assertion name, or null>",
+        "operation": "<deepest operation for THIS issue, or null>",
+        "target": "<concrete locator, control, endpoint, or state for THIS issue, or null>",
+        "stepPath": ["<ordered named test.step ancestry for THIS issue>"],
+        "previousPassedBoundary": "<nearest known successful boundary before THIS issue, or null>",
+        "errorVerbatim": "<exact first error line of THIS block>",
+        "expected": ["<concrete expected fact>"],
+        "received": ["<concrete received fact>"],
+        "network": [
+          { "call": "<METHOD path>", "status": null, "gist": "<one line>", "relToIssue": "<relationship to THIS issue>" }
+        ],
+        "finalPageState": ${expectedIssueCount === 1 ? '"<last-seen UI state>"' : "null"},
+        "transientVsFinalContradiction": ${expectedIssueCount === 1 ? '"<factual contradiction when applicable>"' : "null"},
+        "blockQuotes": ["<short exact substring from THIS fenced block>"]
+      },
+      "normalization": {
+        "failureFamily": "<stable lowercase family, e.g. aria-snapshot-mismatch>",
+        "operationKey": "<stable lowercase operation, or null>",
+        "targetKey": "<stable lowercase target, or null>",
+        "normalizedError": "<short normalized error>",
+        "differenceKeys": ["<stable concrete difference key>"],
+        "volatileValuesRemoved": ["<removed value category, not the secret value itself>"]
+      },
+      "interpretation": {
+        "explanation": "<1-2 factual sentences about THIS block>",
+        "rootCauseHypothesis": "<issue-local hypothesis, or null>",
+        "confidence": "<'high' | 'medium' | 'low'>",
+        "ambiguities": ["<missing or conflicting evidence>"]
+      }
+    }
+  ]
 }
 
 Rules:
-- "stepPath" contains the named test.step ancestry; "failingOperation" contains the deepest failing action or assertion and may differ from the final stepPath item.
-- The "discriminators" field is the most important. Be specific about the exact step where the flow broke and which earlier step succeeded.
-- "issues" MUST contain exactly ${expectedIssueCount} entries: every fenced error block under error.md's "# Error details", in order, including the terminal one. One block = one entry. Never merge blocks, never duplicate a block through its parent step, and never import an error from failure metadata or any other section.
-- ALWAYS read the '# Page snapshot' YAML section of error.md before writing "finalPageState" and "transientVsFinalContradiction". It reflects only the LAST-SEEN UI (the terminal failure). A failed SOFT assertion captures a transient mid-flight state in its diff's "Received" value; when the terminal block is such an assertion and the snapshot shows the expected/success screen, the flow DID complete — classify it explicitly as latency past the assertion window, not a hard stall. For intermediate blocks, use their own diff and call-log resolved values only.
-- Do not fabricate network entries — only include what network-errors.json or failure.json actually show. If none, use an empty array.
+- "issues" MUST contain exactly ${expectedIssueCount} entries in block order. blockIndex is 1-based, and terminal is true ONLY for the final entry.
+- Every blockQuotes value must be copied exactly from that issue's fenced block.
+- Keep all facts, normalization, and interpretation issue-local. Never attach terminal operation, page state, or root cause to an earlier issue.
+- For the terminal issue, ALWAYS inspect '# Page snapshot'. Use null when the comparison is inapplicable; otherwise describe a contradiction factually, especially latency versus a permanent stall.
+- Do not fabricate network entries. Use an empty array when no failed request is relevant to THIS issue.
 - Return ONLY the JSON object, with no surrounding text or code fences.`;
 };
 
@@ -571,18 +423,6 @@ const extractJson = (text: string): unknown => {
   return JSON.parse(candidate);
 };
 
-const validateRecord = (obj: unknown): obj is UnderstandingRecord => {
-  if (typeof obj !== "object" || obj === null) return false;
-  const rec = obj as Record<string, unknown>;
-  for (const key of REQUIRED_RECORD_KEYS) {
-    if (!(key in rec)) return false;
-  }
-  if (!Array.isArray(rec.stepPath)) return false;
-  if (!Array.isArray(rec.network)) return false;
-  if (!Array.isArray(rec.issues)) return false;
-  return true;
-};
-
 // --- Per-folder analysis -------------------------------------------------
 
 const readIfExists = (filePath: string): string | null => {
@@ -591,6 +431,24 @@ const readIfExists = (filePath: string): string | null => {
   } catch {
     return null;
   }
+};
+
+const resolveWithin = (
+  rootDir: string,
+  relativePath: string,
+  label: string,
+): string => {
+  const root = path.resolve(rootDir);
+  const candidate = path.resolve(root, relativePath);
+  if (candidate === root || !candidate.startsWith(`${root}${path.sep}`))
+    throw new Error(`${label} resolves outside its allowed directory`);
+  if (fs.existsSync(candidate)) {
+    const realRoot = fs.realpathSync(root);
+    const realCandidate = fs.realpathSync(candidate);
+    if (!realCandidate.startsWith(`${realRoot}${path.sep}`))
+      throw new Error(`${label} resolves outside its allowed directory`);
+  }
+  return candidate;
 };
 
 // Minimal shape of a session we rely on (the SDK types these fully).
@@ -614,21 +472,24 @@ const analyzeFolder = async (
   runDir: string,
   entry: FailureManifestEntry,
   model: string,
-): Promise<UnderstandingRecord> => {
-  const folderPath = path.join(runDir, entry.folder);
+): Promise<FailureEvidenceRecord> => {
+  const folderPath = resolveWithin(runDir, entry.folder, "Failure folder");
   const failureJsonText = fs.readFileSync(
-    path.join(folderPath, "failure.json"),
+    resolveWithin(folderPath, "failure.json", "Failure metadata file"),
     "utf8",
   );
   const failureJson = JSON.parse(failureJsonText) as Record<string, unknown>;
 
   const files =
     (failureJson.files as Record<string, string | null> | undefined) || {};
-  const errorMd = files.errorMarkdown
-    ? readIfExists(path.join(folderPath, files.errorMarkdown)) || ""
-    : readIfExists(path.join(folderPath, "error.md")) || "";
+  const errorMd =
+    readIfExists(
+      resolveWithin(folderPath, "error.md", "Error evidence file"),
+    ) || "";
   const networkErrorsText = files.networkErrors
-    ? readIfExists(path.join(folderPath, files.networkErrors))
+    ? readIfExists(
+        resolveWithin(folderPath, files.networkErrors, "Network evidence file"),
+      )
     : null;
 
   const prompt = buildPrompt(
@@ -637,6 +498,29 @@ const analyzeFolder = async (
     failureJsonText,
     networkErrorsText,
   );
+  const errorBlocks = errorDetailBlocks(errorMd);
+  const failureTitle = failureJson.testTitle;
+  const attempt: FailureEvidenceAttempt = {
+    folder: entry.folder,
+    testTitle: entry.testTitle,
+    spec:
+      typeof failureTitle === "string"
+        ? failureTitle.match(/^(.+\.(?:spec|test)\.[cm]?[jt]sx?:\d+)/)?.[1] ||
+          ""
+        : "",
+    retryIndex: entry.retryIndex,
+    status: entry.status,
+    outcome: entry.outcome,
+  };
+  if (!errorBlocks.length) {
+    return {
+      schemaVersion: EVIDENCE_SCHEMA_VERSION,
+      model,
+      attempt,
+      issues: [],
+      error: "error.md contains no fenced error blocks",
+    };
+  }
 
   const session = await client.createSession({
     model,
@@ -662,38 +546,47 @@ const analyzeFolder = async (
       parsed = extractJson(content);
     }
 
-    if (
-      !validateRecord(parsed) ||
-      (parsed as UnderstandingRecord).issues.length !==
-        errorDetailBlocks(errorMd).length
-    ) {
+    let issues: FailureEvidenceIssue[];
+    try {
+      issues = validateModelEvidenceIssues(parsed, errorBlocks);
+    } catch (error) {
       return {
-        folder: entry.folder,
-        testTitle: entry.testTitle,
-        spec: "",
-        stepPath: [],
-        failingOperation: "",
-        errorVerbatim: "",
-        errorNormalized: "",
-        network: [],
+        schemaVersion: EVIDENCE_SCHEMA_VERSION,
+        model,
+        attempt,
         issues: [],
-        finalPageState: "",
-        transientVsFinalContradiction: "",
-        rootCauseHypothesis: "",
-        discriminators: "",
-        _error:
-          "Response did not contain a valid record matching the error.md issue count",
-        _raw: content.slice(0, 4000),
+        error: error instanceof Error ? error.message : String(error),
+        rawResponse: content.slice(0, 4000),
       };
     }
 
-    // Ensure folder is correct regardless of model output.
-    const record = parsed as UnderstandingRecord;
-    record.folder = entry.folder;
-    return record;
+    return {
+      schemaVersion: EVIDENCE_SCHEMA_VERSION,
+      model,
+      attempt,
+      issues,
+    };
   } finally {
     await session.disconnect();
   }
+};
+
+const writeEvidenceArtifacts = (
+  runDir: string,
+  folder: string,
+  record: FailureEvidenceRecord,
+): void => {
+  const folderPath = resolveWithin(runDir, folder, "Failure folder");
+  fs.writeFileSync(
+    resolveWithin(folderPath, EVIDENCE_FILENAME, "Evidence output file"),
+    renderEvidenceJson(record),
+    "utf8",
+  );
+  fs.writeFileSync(
+    resolveWithin(folderPath, AI_ANALYSIS_FILENAME, "Analysis output file"),
+    renderEvidenceMarkdown(record),
+    "utf8",
+  );
 };
 
 // --- Run-level orchestration --------------------------------------------
@@ -711,7 +604,7 @@ export const analyzeRun = async (
 
   let analyzed = 0;
   let failed = 0;
-  const records: UnderstandingRecord[] = new Array(total);
+  const records: FailureEvidenceRecord[] = new Array(total);
 
   // Monotonic count of folders that have finished (done or error). Incremented
   // synchronously when a task completes, so the UI label advances steadily even
@@ -719,7 +612,7 @@ export const analyzeRun = async (
   let completed = 0;
 
   // Process a single failure folder in full isolation: own input files, own
-  // Copilot session, own ai-analysis.md. Never throws — failures are captured
+  // Copilot session and evidence files. Never throws — failures are captured
   // as an error record so one bad trace can't abort the others.
   const processEntry = async (
     entry: FailureManifestEntry,
@@ -740,12 +633,8 @@ export const analyzeRun = async (
         model,
       );
       records[index - 1] = record;
-      fs.writeFileSync(
-        path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME),
-        renderAiAnalysisMarkdown(record, model),
-        "utf8",
-      );
-      if (record._error) {
+      writeEvidenceArtifacts(runDir, entry.folder, record);
+      if (record.error) {
         failed++;
         onProgress?.({
           index,
@@ -754,7 +643,7 @@ export const analyzeRun = async (
           folder: entry.folder,
           testTitle: entry.testTitle,
           status: "error",
-          message: record._error,
+          message: record.error,
         });
       } else {
         analyzed++;
@@ -770,29 +659,23 @@ export const analyzeRun = async (
     } catch (err) {
       failed++;
       const message = err instanceof Error ? err.message : String(err);
-      const errorRecord: UnderstandingRecord = {
-        folder: entry.folder,
-        testTitle: entry.testTitle,
-        spec: "",
-        stepPath: [],
-        failingOperation: "",
-        errorVerbatim: "",
-        errorNormalized: "",
-        network: [],
+      const errorRecord: FailureEvidenceRecord = {
+        schemaVersion: EVIDENCE_SCHEMA_VERSION,
+        model,
+        attempt: {
+          folder: entry.folder,
+          testTitle: entry.testTitle,
+          spec: "",
+          retryIndex: entry.retryIndex,
+          status: entry.status,
+          outcome: entry.outcome,
+        },
         issues: [],
-        finalPageState: "",
-        transientVsFinalContradiction: "",
-        rootCauseHypothesis: "",
-        discriminators: "",
-        _error: message,
+        error: message,
       };
       records[index - 1] = errorRecord;
       try {
-        fs.writeFileSync(
-          path.join(runDir, entry.folder, AI_ANALYSIS_FILENAME),
-          renderAiAnalysisMarkdown(errorRecord, model),
-          "utf8",
-        );
+        writeEvidenceArtifacts(runDir, entry.folder, errorRecord);
       } catch {
         /* ignore write failure */
       }
@@ -820,8 +703,8 @@ export const analyzeRun = async (
   const workerCount = Math.min(ANALYSIS_CONCURRENCY, entries.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
-  // Each analyzable failure folder now holds an `ai-analysis.md` next to error.md.
-  // index.json is left untouched (no embed, no separate records.json).
+  // Each analyzable failure folder now holds canonical evidence.json and its
+  // deterministic ai-analysis.md view next to error.md. index.json is untouched.
   return {
     total,
     analyzed,

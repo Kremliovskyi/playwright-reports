@@ -1964,11 +1964,11 @@ document.addEventListener("DOMContentLoaded", () => {
           : `${count} failure${count === 1 ? "" : "s"}`;
       hideRowProgress(row, "success", label);
 
-      // Populate and open the failures modal, including AI record outcome.
+      // Populate and open the failures modal, including evidence-record outcome.
       let statusText = `Analyzed failures successfully! ${count === 0 ? "No failures" : `${count} failure${count === 1 ? "" : "s"} found.`}`;
       if (data.ai) {
         statusText +=
-          ` AI records: ${data.ai.analyzed} written` +
+          ` Evidence records: ${data.ai.analyzed} written` +
           (data.ai.failed ? `, ${data.ai.failed} failed` : "") +
           (data.ai.skipped ? `, ${data.ai.skipped} skipped` : "") +
           ".";
@@ -1996,6 +1996,17 @@ document.addEventListener("DOMContentLoaded", () => {
           `${formatTokens(diagnostics.inputTokens)} input tokens · ${formatTokens(diagnostics.outputTokens)} output tokens`,
           `Context ${formatTokens(diagnostics.contextTokens)} / ${formatTokens(diagnostics.contextTokenLimit)} tokens · ${(diagnostics.durationMs / 1000).toFixed(1)}s elapsed · ${(diagnostics.timeoutMs / 1000).toFixed(0)}s per-request timeout`,
         ];
+        if (diagnostics.evidenceRoundAttempted) {
+          if (diagnostics.evidenceErrorMessage) {
+            lines.push(
+              `Evidence round failed: ${diagnostics.evidenceErrorMessage} · provisional grouping retained`,
+            );
+          } else {
+            lines.push(
+              `Evidence round: ${diagnostics.evidenceRequestCount} request${diagnostics.evidenceRequestCount === 1 ? "" : "s"} · ${diagnostics.evidenceIssueCount} issue${diagnostics.evidenceIssueCount === 1 ? "" : "s"} · ${formatBytes(diagnostics.evidenceBytes)}`,
+            );
+          }
+        }
         if (diagnostics.repairAttempted) {
           const referenceDefects = [
             `${diagnostics.omittedIssueCountBeforeRepair} missing`,

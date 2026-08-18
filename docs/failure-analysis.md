@@ -2,7 +2,7 @@
 
 [Back to documentation](index.md) | [Previous: Managing Reports](reports.md) | [Next: Trace Digestion](trace-digestion.md)
 
-Failure analysis turns the failed attempts in a current report into compact, agent-ready folders, adds an AI-generated understanding record for each analyzable failure, and groups those records into run-level problems.
+Failure analysis turns the failed attempts in a current report into compact, agent-ready folders, extracts canonical issue evidence for each analyzable failure, and groups those records into run-level problems.
 
 ## Before you begin
 
@@ -42,6 +42,7 @@ run-<timestamp>/
 |-- index.json
 |-- grouped-analysis.md
 |-- <sanitized-test-title>__retry0/
+|   |-- evidence.json
 |   |-- ai-analysis.md
 |   |-- error.md
 |   |-- failure.json
@@ -49,6 +50,7 @@ run-<timestamp>/
 |   |-- console-errors.json
 |   `-- network-errors.json
 `-- <sanitized-test-title>__retry1/
+	|-- evidence.json
 	|-- ai-analysis.md
 	|-- error.md
 	|-- failure.json
@@ -59,40 +61,43 @@ run-<timestamp>/
 
 The console and network error files are created only when the trace contains that type of evidence. Before Hooks and skipped entries can appear in the manifest, but they are not treated as analyzable test failures and do not receive an AI analysis record.
 
-## What `ai-analysis.md` contains
+## What `evidence.json` and `ai-analysis.md` contain
 
-After trace extraction, the dashboard uses the selected Copilot model to read the evidence for each analyzable failure and writes `ai-analysis.md` beside `error.md`. This file is a compact interpretation intended for quick review and downstream analysis. It includes:
+After trace extraction, the dashboard uses the selected small Copilot model to read each analyzable failure and writes versioned `evidence.json` beside `error.md`. Every fenced block under `# Error details` becomes one issue record with its own:
 
-- The model that generated the record.
-- The ordered named `test.step` path and the deepest failing Playwright operation inside it.
-- The terminal error in verbatim and normalized forms.
-- A list of all detected issues, including failed soft assertions that occurred before the terminal failure.
-- Relevant failed network calls and how they relate to the failing step.
-- The final page state observed at the end of the attempt.
-- A check for contradictions between an earlier transient state and the final page state, which helps distinguish slow completion from a flow that remained stuck.
-- A root-cause hypothesis based on the available evidence.
-- Discriminators that identify where the flow broke and distinguish the failure from similar-looking problems.
+- Source block index and terminal marker.
+- Factual assertion, operation, target, step path, previous successful boundary, expected/received values, and relevant network calls.
+- One or more exact quotes validated against that issue's source block.
+- Stable comparison fields: failure family, operation key, target key, normalized error, and concrete difference keys.
+- An issue-local explanation, root-cause hypothesis, confidence, and explicit ambiguities.
+- Final page state and transient-versus-final check only for the terminal issue.
 
-`ai-analysis.md` is interpreted evidence, while `error.md` remains the ground-truth assertion output, final accessibility snapshot, and source code frame. `failure.json`, screenshots, and conditional console or network files provide deeper raw evidence when needed.
+The dashboard then renders `ai-analysis.md` deterministically from the same JSON; there is no second model call. Its top-level terminal summary preserves the existing Step path, Error, Network, Final page state, Transient vs final check, Root cause hypothesis, and Discriminators headings for investigation workflows, followed by the complete per-issue evidence.
 
-If Copilot cannot produce a valid record for one folder, the dashboard still writes an `ai-analysis.md` containing the model error and directs the reader to investigate the raw files. One failed AI record does not stop analysis of the other failure folders.
+`error.md` remains ground truth. `evidence.json` is the canonical model-to-model contract, while `ai-analysis.md` is its human-readable view. `failure.json`, screenshots, and conditional console or network files provide deeper raw evidence when needed.
+
+If Copilot cannot produce valid evidence for one folder, the dashboard still writes both artifacts with the extraction error and directs the reader to investigate the raw files. One failed record does not stop analysis of the other failure folders.
 
 ## Grouped problem analysis
 
 After every per-attempt record finishes, the dashboard makes an initial Copilot grouping request using the configured big model. The request embeds only:
 
 - The manifest metadata needed for retries, outcomes, and test identity.
-- The distilled fields from each valid per-attempt `ai-analysis.md` record.
+- The issue-local factual, normalized, and interpretation fields from valid `evidence.json` records.
 
-It never sends `error.md`, `failure.json`, screenshots, console/network JSON, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
+The initial request never sends raw `error.md`, `failure.json`, screenshots, console/network files, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
 
-Grouping prioritizes each record's discriminators and precise break point, followed by its failing step/path, normalized error and spec family, network correlation, and final page state. Every distinct issue in the records, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once. The model returns only those IDs. After validation, the dashboard maps them back to the owning folder and issue position before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
+Grouping prioritizes canonical failure/operation/target/difference keys, followed by concrete issue-local facts, normalized error and spec family, network correlation, and terminal final state. Every issue, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once.
+
+When a plausible merge cannot be decided because critical evidence is missing, ambiguous, or conflicting, a complete provisional response may request one bounded source-evidence round. The application first verifies that the provisional response references every issue exactly once, then accepts only current-run issue IDs and the `error-block`, `final-page`, `test-source`, or `network` sections. It allows at most 10 requests, 4 issue IDs per request, 30 issue references overall, 6,000 characters per section, 48,000 characters of extracted source text overall, and 4 MiB per source file read. Every resolved file must remain inside its assigned failure folder. The selected snippets are sent in a second turn in the same session; no arbitrary file access or second evidence round is allowed. If retrieval or the final response fails, the complete provisional grouping is retained and validated.
+
+After the final response, the dashboard maps issue IDs back to folders and block positions before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
 
 If the initial response is structurally usable but has missing, unknown, or duplicate IDs, the dashboard sends one focused repair turn in the same session. It supplies the previous complete response, the exact allowed ID set, reference diagnostics, and evidence for affected valid issues. The corrected response must assign every allowed ID exactly once and is fully revalidated. A failed repair does not discard the initial result: the dashboard removes unknown IDs and later duplicate placements, drops problems left empty, and retains unassigned valid issues under `Unclassified - invalid grouping references`.
 
 `grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and a failed-attempt reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
 
-When a per-trace AI record is missing or invalid, its attempt is retained in an Unclassified problem without reading raw evidence. If the final grouping request or its validation fails, the digest and all completed `ai-analysis.md` files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
+When a per-trace evidence record is missing or invalid, its attempt is retained in an Unclassified problem without reading raw evidence. If the final grouping request or its validation fails, the digest and all completed evidence files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
 
 Depending on the available trace data, each failure folder can contain:
 
@@ -100,13 +105,14 @@ Depending on the available trace data, each failure folder can contain:
 - Failure screenshots
 - Network and console errors
 - `error.md`
+- `evidence.json`
 - `ai-analysis.md`
 
 ## Manage analysis runs
 
 Every successful failure-analysis run is stored against the report's stable identity and appears under **Analysis runs** in the report's **Info** dialog. Each run can have two independently managed artifacts:
 
-- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
+- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `evidence.json`, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
 - **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
 
 The artifacts follow this lifecycle:

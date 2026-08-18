@@ -27,8 +27,7 @@ export interface GroupingIssueRef {
 export interface GroupingProblem {
   title: string;
   error: string;
-  whatHappens: string;
-  rootCause: string;
+  failureExplanation: string;
   issueRefs: GroupingIssueRef[];
 }
 
@@ -40,8 +39,7 @@ export interface GroupingResponse {
 interface ModelGroupingProblem {
   title: string;
   error: string;
-  whatHappens: string;
-  rootCause: string;
+  failureExplanation: string;
   issueIds: string[];
 }
 
@@ -143,8 +141,7 @@ export class GroupingRunError extends Error {
 interface RenderProblem {
   title: string;
   error: string;
-  whatHappens: string;
-  rootCause: string;
+  failureExplanation: string;
   issueRefs: GroupingIssueRef[];
   folders: string[];
   unclassified: boolean;
@@ -239,8 +236,7 @@ Return EXACTLY one JSON object and no prose or markdown fences:
     {
       "title": "short problem title",
       "error": "representative exact or normalized error",
-      "whatHappens": "specific factual behavior and final UI state",
-      "rootCause": "directly supported common cause, or Unknown",
+      "failureExplanation": "specific evidence-based explanation of why the assertion or action failed",
       "issueIds": ["I1", "I2"]
     }
   ],
@@ -258,6 +254,7 @@ Rules:
 - Copy issueIds exactly as supplied. Never invent, renumber, or modify an issueId.
 - A problem must have at least one issueIds entry.
 - Multiple issues from one attempt may belong to different problems.
+- Explain the expected and observed behavior and why the assertion or action failed. Include a cause when directly supported by evidence; otherwise do not speculate about one.
 - Return a complete provisional grouping even when requesting evidence.
 - Request evidence only for a plausible merge that cannot be decided from the structured fields. Use only: error-block, final-page, test-source, network.
 - If no evidence is needed, return an empty evidenceRequests array.
@@ -586,8 +583,7 @@ export const parseGroupingResponse = (text: string): GroupingResponse => {
       if (
         !isNonEmptyString(problem.title) ||
         !isNonEmptyString(problem.error) ||
-        !isNonEmptyString(problem.whatHappens) ||
-        !isNonEmptyString(problem.rootCause) ||
+        !isNonEmptyString(problem.failureExplanation) ||
         !Array.isArray(problem.issueRefs) ||
         problem.issueRefs.length === 0
       ) {
@@ -616,8 +612,7 @@ export const parseGroupingResponse = (text: string): GroupingResponse => {
       return {
         title: problem.title.trim(),
         error: problem.error.trim(),
-        whatHappens: problem.whatHappens.trim(),
-        rootCause: problem.rootCause.trim(),
+        failureExplanation: problem.failureExplanation.trim(),
         issueRefs,
       };
     },
@@ -645,8 +640,7 @@ const parseModelGroupingResponse = (text: string): ModelGroupingResponse => {
     if (
       !isNonEmptyString(problem.title) ||
       !isNonEmptyString(problem.error) ||
-      !isNonEmptyString(problem.whatHappens) ||
-      !isNonEmptyString(problem.rootCause) ||
+      !isNonEmptyString(problem.failureExplanation) ||
       !Array.isArray(problem.issueIds) ||
       problem.issueIds.length === 0 ||
       !problem.issueIds.every(isNonEmptyString)
@@ -656,8 +650,7 @@ const parseModelGroupingResponse = (text: string): ModelGroupingResponse => {
     return {
       title: problem.title.trim(),
       error: problem.error.trim(),
-      whatHappens: problem.whatHappens.trim(),
-      rootCause: problem.rootCause.trim(),
+      failureExplanation: problem.failureExplanation.trim(),
       issueIds: problem.issueIds.map((issueId) => issueId.trim()),
     };
   });
@@ -749,8 +742,7 @@ const toGroupingResponse = (
     problems: response.problems.map((problem) => ({
       title: problem.title,
       error: problem.error,
-      whatHappens: problem.whatHappens,
-      rootCause: problem.rootCause,
+      failureExplanation: problem.failureExplanation,
       issueRefs: problem.issueIds.map((issueId) => refById.get(issueId)!),
     })),
   };
@@ -785,10 +777,8 @@ const sanitizeModelGroupingResponse = (
     groupingResponse.problems.push({
       title: "Unclassified - invalid grouping references",
       error: `${missing.length} issue${missing.length === 1 ? "" : "s"} could not be assigned after grouping reference repair.`,
-      whatHappens:
-        "The grouping model returned structurally usable output, but its issueId assignments remained incomplete or invalid after repair.",
-      rootCause:
-        "The grouping response violated the required issueId reference contract.",
+      failureExplanation:
+        "The grouping model returned structurally usable output, but its issueId assignments remained incomplete or invalid after repair because the response violated the required issueId reference contract.",
       issueRefs: missing.map((entry) => entry.ref),
     });
   }
@@ -812,9 +802,8 @@ export const validateGroupingResponse = (
       {
         title: "Unclassified - omitted by grouping model",
         error: `${missing.length} issue${missing.length === 1 ? "" : "s"} were omitted from the grouping response.`,
-        whatHappens:
+        failureExplanation:
           "The grouping model returned a usable partial result but did not assign these per-trace issues to a problem.",
-        rootCause: "The grouping response omitted required issue references.",
         issueRefs: missing,
       },
     ],
@@ -916,9 +905,8 @@ const resolveProblems = (
     problems.push({
       title: "Unclassified - per-trace analysis unavailable",
       error: "The small model did not produce a valid issue record.",
-      whatHappens:
-        "The manifest contains these failed attempts, but their AI analysis is missing or invalid. No raw-evidence fallback was performed.",
-      rootCause: "Insufficient distilled evidence for grouping.",
+      failureExplanation:
+        "The manifest contains these failed attempts, but their AI analysis is missing or invalid, leaving insufficient distilled evidence for grouping. No raw-evidence fallback was performed.",
       issueRefs: [],
       folders: unclassifiedFolders,
       unclassified: true,
@@ -955,10 +943,8 @@ export const renderGroupedAnalysis = (
   lines.push(`**Small model:** ${inlineCode(smallModel)}`);
   lines.push(`**Big model:** ${inlineCode(bigModel)}`, "");
   lines.push("## Summary", "", response.summary, "");
-  lines.push(
-    "| # | Problem | Tests | Attempts | Issues | Outcome | Root cause |",
-  );
-  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+  lines.push("| # | Problem | Tests | Attempts | Issues | Outcome |");
+  lines.push("| --- | --- | --- | --- | --- | --- |");
   problems.forEach((problem, index) => {
     const problemEntries = problem.folders
       .map((folder) => entryByFolder.get(folder))
@@ -967,7 +953,7 @@ export const renderGroupedAnalysis = (
       problemEntries.map((entry) => testMetadata(entry).test),
     ).size;
     lines.push(
-      `| ${index + 1} | ${markdownCell(problem.title)} | ${tests} | ${problem.folders.length} | ${problem.issueRefs.length} | ${markdownCell(summarizeOutcomes(problemEntries))} | ${markdownCell(problem.rootCause)} |`,
+      `| ${index + 1} | ${markdownCell(problem.title)} | ${tests} | ${problem.folders.length} | ${problem.issueRefs.length} | ${markdownCell(summarizeOutcomes(problemEntries))} |`,
     );
   });
   lines.push("");
@@ -984,7 +970,7 @@ export const renderGroupedAnalysis = (
       "",
     );
     lines.push(`**Error:** ${problem.error}`, "");
-    lines.push("**What happens:**", problem.whatHappens, "");
+    lines.push("**Failure explanation:**", problem.failureExplanation, "");
     lines.push("**Affected tests:**", "");
     lines.push("| Test | Spec file | Issue | Retry | Outcome |");
     lines.push("| --- | --- | --- | --- | --- |");
@@ -1011,7 +997,7 @@ export const renderGroupedAnalysis = (
     }
     lines.push("", "**Failure folders:**", "");
     for (const folder of problem.folders) lines.push(`- ${inlineCode(folder)}`);
-    lines.push("", `**Root cause:** ${problem.rootCause}`, "");
+    lines.push("");
   });
 
   lines.push("## Reconciliation Check", "");

@@ -64,8 +64,8 @@ const record = (folder, issues, overrides = {}) => ({
 const modelProblem = (issueIds, overrides = {}) => ({
   title: "Generated grouped problem",
   error: "Generated representative error",
-  whatHappens: "A generated operation does not produce the expected result.",
-  rootCause: "Unknown",
+  failureExplanation:
+    "A generated operation does not produce the expected result.",
   issueIds,
   ...overrides,
 });
@@ -142,8 +142,12 @@ test("renders direct issue and attempt counts without terminal ownership", () =>
   assert.match(markdown, /\*\*Extracted issues:\*\* 3/);
   assert.match(markdown, /\| 1 \| Generated alpha problem \| 1 \| 1 \| 1 \|/);
   assert.match(markdown, /\| 2 \| Generated beta problem \| 2 \| 2 \| 2 \|/);
+  assert.match(markdown, /\*\*Failure explanation:\*\*/);
   assert.match(markdown, /\*\*Total: 3 = 3 extracted issues\*\*/);
-  assert.doesNotMatch(markdown, /terminal|counted under/);
+  assert.doesNotMatch(
+    markdown,
+    /Root cause|What happens|terminal|counted under/,
+  );
 });
 
 test("rejects duplicate and unknown issue references", () => {
@@ -265,10 +269,11 @@ test("keeps grouping semantics entirely model-owned", async () => {
       /"sourceError":"TimeoutError: generated shared timeout"/,
     );
     assert.match(prompts[0], /"analysis":\{"summary":/);
+    assert.match(prompts[0], /"failureExplanation":/);
     assert.doesNotMatch(prompts[0], /raw-detail-must-be-omitted/);
     assert.doesNotMatch(
       prompts[0],
-      /incidentHints|strongIncidentKey|causalAnchor|normalization|terminal|resolution/,
+      /rootCause|incidentHints|strongIncidentKey|causalAnchor|normalization|terminal|resolution/,
     );
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });

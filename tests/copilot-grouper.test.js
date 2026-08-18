@@ -351,7 +351,19 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
       runDir,
       failures: [entry("attempt__retry0", 0, "unexpected")],
     };
-    const records = [record("attempt__retry0", [terminalIssue])];
+    const groupingIssue = issueVariant(terminalIssue, {
+      facts: {
+        finalPageState: "x".repeat(2000),
+        blockQuotes: ["canonical quote must stay out of grouping"],
+        sourceRefs: ["B1-L99"],
+        ariaDiff: { removed: [], added: [] },
+      },
+      interpretation: {
+        resolutionEvidence:
+          "canonical resolution evidence must stay out of grouping",
+      },
+    });
+    const records = [record("attempt__retry0", [groupingIssue])];
     fs.writeFileSync(path.join(runDir, "index.json"), JSON.stringify(manifest));
     fs.mkdirSync(path.join(runDir, "attempt__retry0"));
     fs.writeFileSync(
@@ -456,6 +468,19 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
       sentOptions.prompt,
       /"stateIncidentKey":"complete-flow=>result-screen"/,
     );
+    const inputMatch = sentOptions.prompt.match(
+      /<grouping-input-json>\n([\s\S]+?)\n<\/grouping-input-json>/,
+    );
+    assert.ok(inputMatch);
+    const groupingInput = JSON.parse(inputMatch[1]);
+    const projectedIssue = groupingInput.issues[0];
+    assert.equal(projectedIssue.facts.blockQuotes, undefined);
+    assert.equal(projectedIssue.facts.sourceRefs, undefined);
+    assert.equal(projectedIssue.facts.ariaDiff, undefined);
+    assert.equal(projectedIssue.facts.expected, undefined);
+    assert.equal(projectedIssue.facts.received, undefined);
+    assert.equal(projectedIssue.interpretation.resolutionEvidence, undefined);
+    assert.equal(projectedIssue.facts.finalPageState.length, 1203);
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
     assert.equal(result.diagnostics.stage, "complete");
@@ -468,6 +493,7 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.equal(result.diagnostics.inputTokens, 2200);
     assert.equal(result.diagnostics.outputTokens, 300);
     assert.equal(result.diagnostics.finishReason, "stop");
+    assert.equal(result.diagnostics.timeoutMs, 600000);
     assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });

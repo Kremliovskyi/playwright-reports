@@ -138,11 +138,11 @@ flowchart TD
 
 The ownership boundary is intentional: scripts establish and normalize facts, the small model explains their issue-local meaning, and the big model groups the resulting records into incidents.
 
-| Stage                   | Model receives                                                                                              | Model does not control                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Small model             | Full `error.md`, sanitized step metadata, optional network errors, and the deterministic source projection. | Error text, issue count, ARIA diff lines, final page state, source references, or canonical keys. |
-| Big model               | Flat schema-v3 issues, manifest context, semantic interpretation, and deterministic incident hints.         | Raw traces, screenshots, previous runs, knowledge bases, or ADO/defect data.                      |
-| Big-model evidence turn | Only specifically requested, bounded current-run error-block, final-page, test-source, or network sections. | Arbitrary file access or additional retrieval rounds.                                             |
+| Stage                   | Model receives                                                                                                       | Model does not control                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Small model             | Full `error.md`, sanitized step metadata, optional network errors, and the deterministic source projection.          | Error text, issue count, ARIA diff lines, final page state, source references, or canonical keys.         |
+| Big model               | Compact schema-v3 grouping projections, manifest context, semantic interpretation, and deterministic incident hints. | Raw ARIA/source duplication, raw traces, screenshots, previous runs, knowledge bases, or ADO/defect data. |
+| Big-model evidence turn | Only specifically requested, bounded current-run error-block, final-page, test-source, or network sections.          | Arbitrary file access or additional retrieval rounds.                                                     |
 
 ## What `evidence.json` and `ai-analysis.md` contain
 
@@ -170,6 +170,8 @@ After every per-attempt record finishes, the dashboard makes an initial Copilot 
 - The issue-local factual, normalized, interpretation, and deterministic incident-hint fields from source-backed `evidence.json` records.
 
 The initial request never sends raw `error.md`, `failure.json`, screenshots, console/network files, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
+
+The grouping projection omits canonical-only duplication such as ARIA source lines, block quotes, source references, repeated expected/received text, and resolution evidence already represented by resolution/final-state context. Long narrative fields are bounded to 1,200 characters. Full records remain unchanged in `evidence.json` and selected raw sections remain available through the bounded evidence turn. High-reasoning grouping, evidence, and repair requests each have a 10-minute timeout; diagnostics report the actual prompt size, elapsed time, and configured timeout.
 
 Grouping prioritizes direct causal anchors, then shared observed-state plus transition-boundary keys, then exact content-difference fingerprints. Response contracts, network correlation, and normalized errors follow. Operations, locators, targets, and step paths are symptom context and do not split issues when a stronger current-run incident signal agrees. Materially different observed states, transition boundaries, or content fingerprints remain separate. Resolution describes impact and never splits an otherwise exact incident match. Every issue, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once.
 

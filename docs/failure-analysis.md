@@ -46,14 +46,17 @@ run-<timestamp>/
 |   |-- ai-analysis.md
 |   |-- error.md
 |   |-- failure.json
+|   |-- dom/
 |   |-- screenshots/
-|   |-- console-errors.json
-|   `-- network-errors.json
+|   |-- console-errors.ndjson
+|   |-- network-errors.ndjson
+|   `-- network-error-bodies.ndjson
 `-- <sanitized-test-title>__retry1/
 	|-- evidence.json
 	|-- ai-analysis.md
 	|-- error.md
 	|-- failure.json
+	|-- dom/
 	`-- screenshots/
 ```
 
@@ -71,7 +74,7 @@ flowchart TD
 	CLI --> RUN["Generated run directory"]
 	RUN --> MANIFEST["index.json<br/>attempt manifest"]
 	RUN --> FOLDERS["One folder per attempt/retry"]
-	FOLDERS --> RAW["Raw extracted evidence<br/>error.md<br/>failure.json<br/>network errors<br/>console errors<br/>screenshots"]
+	FOLDERS --> RAW["Raw extracted evidence<br/>error.md and failure.json<br/>DOM and screenshots<br/>network and console NDJSON"]
 
 	MANIFEST --> FILTER{"Analyzable?<br/>Not skipped or Before Hooks"}
 	FILTER -->|No| SKIP["Excluded from model analysis"]
@@ -97,7 +100,10 @@ flowchart TD
 		MARKDOWN --> AI_MD["ai-analysis.md"]
 	end
 
-	EVIDENCE --> COUNT{"More than one<br/>analyzable attempt?"}
+	POOL -->|Folder processing fails| ERROR_RECORD["Per-attempt error record<br/>Other workers continue"]
+	EVIDENCE --> RECORDS["Collect all per-attempt records"]
+	ERROR_RECORD --> RECORDS
+	RECORDS --> COUNT{"More than one<br/>analyzable attempt?"}
 	COUNT -->|No| DONE_SINGLE["Per-attempt analysis complete"]
 	COUNT -->|Yes| CATALOG["Build flat issue catalog<br/>I1, I2, I3..."]
 
@@ -181,9 +187,11 @@ When source-backed evidence cannot be created for a folder, its attempt is retai
 Depending on the available trace data, each failure folder can contain:
 
 - `failure.json`
-- Failure screenshots
-- Network and console errors
 - `error.md`
+- Failure-anchored DOM under `dom/`
+- Failure screenshots under `screenshots/`
+- `network-errors.ndjson` and optional `network-error-bodies.ndjson`
+- `console-errors.ndjson`
 - `evidence.json`
 - `ai-analysis.md`
 

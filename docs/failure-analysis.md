@@ -63,41 +63,42 @@ The console and network error files are created only when the trace contains tha
 
 ## What `evidence.json` and `ai-analysis.md` contain
 
-After trace extraction, the dashboard uses the selected small Copilot model to read each analyzable failure and writes versioned `evidence.json` beside `error.md`. Every fenced block under `# Error details` becomes one issue record with its own:
+After trace extraction, application code parses every fenced block under `# Error details` and writes schema-v2 `evidence.json` beside `error.md`. The selected small Copilot model supplies only bounded semantic context and causal interpretation. Each issue record contains:
 
-- Source block index and terminal marker.
-- Factual assertion, operation, target, step path, previous successful boundary, expected/received values, and relevant network calls.
-- One or more exact quotes validated against that issue's source block.
-- Stable comparison fields: failure family, operation key, target key, normalized error, and concrete difference keys.
-- An issue-local explanation, root-cause hypothesis, confidence, and explicit ambiguities.
+- Application-owned source block index, terminal marker, error, assertion, operation, target, source-line references, parsed ARIA removed/added lines, and terminal page state.
+- Stable application-derived comparison fields: failure family, operation key, target key, normalized error, expected/observed state keys, transition-boundary key, and concrete difference keys.
+- Model-supplied step context, relevant network correlation, expected/observed state labels, causal role, optional earlier causal block, explanation, evidence-based hypothesis, confidence, and ambiguities.
+- A transition boundary selected verbatim from application-extracted test-step titles. State labels must occur in that issue's source block, except that the terminal issue may reference its final page.
 - Final page state and transient-versus-final check only for the terminal issue.
 
 The dashboard then renders `ai-analysis.md` deterministically from the same JSON; there is no second model call. Its top-level terminal summary preserves the existing Step path, Error, Network, Final page state, Transient vs final check, Root cause hypothesis, and Discriminators headings for investigation workflows, followed by the complete per-issue evidence.
 
+If the first semantic response is not valid JSON or violates the evidence contract, the dashboard makes one focused correction request in the same small-model session. The correction includes the exact validation error and the deterministic source projection, including allowed boundary candidates. The complete corrected response is revalidated against the same strict contract.
+
 `error.md` remains ground truth. `evidence.json` is the canonical model-to-model contract, while `ai-analysis.md` is its human-readable view. `failure.json`, screenshots, and conditional console or network files provide deeper raw evidence when needed.
 
-If Copilot cannot produce valid evidence for one folder, the dashboard still writes both artifacts with the extraction error and directs the reader to investigate the raw files. One failed record does not stop analysis of the other failure folders.
+If the corrected semantic response is still invalid, the dashboard retains low-confidence deterministic issues with a warning instead of dropping the attempt into an extraction-only Unclassified bucket. A folder is unavailable only when its source files cannot be read or processed. One failed record does not stop analysis of the other failure folders.
 
 ## Grouped problem analysis
 
 After every per-attempt record finishes, the dashboard makes an initial Copilot grouping request using the configured big model. The request embeds only:
 
 - The manifest metadata needed for retries, outcomes, and test identity.
-- The issue-local factual, normalized, and interpretation fields from valid `evidence.json` records.
+- The issue-local factual, normalized, interpretation, and deterministic incident-hint fields from source-backed `evidence.json` records.
 
 The initial request never sends raw `error.md`, `failure.json`, screenshots, console/network files, previous analyses, vault files, knowledge-base files, or ADO/defect information. The grouping session has no tools enabled.
 
-Grouping prioritizes canonical failure/operation/target/difference keys, followed by concrete issue-local facts, normalized error and spec family, network correlation, and terminal final state. Every issue, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once.
+Grouping prioritizes direct causal anchors, then shared observed-state plus transition-boundary keys, then exact content-difference fingerprints. Response contracts, network correlation, and normalized errors follow. Operations, locators, targets, and step paths are symptom context and do not split issues when a stronger current-run incident signal agrees. Materially different observed states, transition boundaries, content fingerprints, or transient-versus-final outcomes remain separate. Every issue, including earlier soft assertions, receives a deterministic compact ID such as `I1` or `I2` and must be assigned exactly once.
 
 When a plausible merge cannot be decided because critical evidence is missing, ambiguous, or conflicting, a complete provisional response may request one bounded source-evidence round. The application first verifies that the provisional response references every issue exactly once, then accepts only current-run issue IDs and the `error-block`, `final-page`, `test-source`, or `network` sections. It allows at most 10 requests, 4 issue IDs per request, 30 issue references overall, 6,000 characters per section, 48,000 characters of extracted source text overall, and 4 MiB per source file read. Every resolved file must remain inside its assigned failure folder. The selected snippets are sent in a second turn in the same session; no arbitrary file access or second evidence round is allowed. If retrieval or the final response fails, the complete provisional grouping is retained and validated.
 
 After the final response, the dashboard maps issue IDs back to folders and block positions before writing `grouped-analysis.md`, then derives retries, outcomes, test metadata, failure folders, and reconciliation counts from the manifest.
 
-If the initial response is structurally usable but has missing, unknown, or duplicate IDs, the dashboard sends one focused repair turn in the same session. It supplies the previous complete response, the exact allowed ID set, reference diagnostics, and evidence for affected valid issues. The corrected response must assign every allowed ID exactly once and is fully revalidated. A failed repair does not discard the initial result: the dashboard removes unknown IDs and later duplicate placements, drops problems left empty, and retains unassigned valid issues under `Unclassified - invalid grouping references`.
+If the initial response has missing, unknown, or duplicate IDs, or separates a downstream symptom from its declared causal anchor, the dashboard sends one focused repair turn in the same session. It supplies the previous complete response, the exact allowed ID set, contract diagnostics, and evidence for affected valid issues. The corrected response must assign every allowed ID exactly once and co-locate direct causal links. A failed repair does not discard the initial result: the dashboard removes invalid references, deterministically moves downstream symptoms to their anchor problem, drops problems left empty, and retains unassigned valid issues under `Unclassified - invalid grouping references`.
 
 `grouped-analysis.md` contains a summary table, one full section per problem, exact failure-folder pointers, and a failed-attempt reconciliation check. It intentionally contains no previous-run comparison, ADO defects, defect states, products, knowledge-base enrichment, tracked issues, or action-item history. Those remain follow-up work outside the dashboard.
 
-When a per-trace evidence record is missing or invalid, its attempt is retained in an Unclassified problem without reading raw evidence. If the final grouping request or its validation fails, the digest and all completed evidence files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
+When source-backed evidence cannot be created for a folder, its attempt is retained in an Unclassified problem without reading raw evidence during grouping. If the final grouping request or its validation fails, the digest and all completed evidence files remain available; the completion dialog reports a grouping warning and does not link an invalid grouped report.
 
 Depending on the available trace data, each failure folder can contain:
 

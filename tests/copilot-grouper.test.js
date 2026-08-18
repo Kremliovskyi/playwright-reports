@@ -22,7 +22,7 @@ const entry = (folder, retryIndex, outcome, testName = "e2eFlowTC01") => ({
 });
 
 const record = (folder, issues, overrides = {}) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   model: "small-model",
   attempt: {
     folder,
@@ -64,6 +64,8 @@ const softIssue = {
     finalPageState: null,
     transientVsFinalContradiction: null,
     blockQuotes: ["Unexpected Back button"],
+    sourceRefs: ["B1-L1"],
+    ariaDiff: null,
   },
   normalization: {
     failureFamily: "aria-snapshot-mismatch",
@@ -72,8 +74,16 @@ const softIssue = {
     normalizedError: "unexpected back button",
     differenceKeys: ["unexpected:button:back"],
     volatileValuesRemoved: [],
+    expectedStateKey: "loading-screen",
+    observedStateKey: "loading-screen-with-back-button",
+    transitionBoundaryKey: "open-flow",
   },
   interpretation: {
+    expectedStateLabel: "Loading screen",
+    observedStateLabel: "Loading screen with Back button",
+    causalRole: "primary-state-mismatch",
+    causedByBlockIndex: null,
+    transitionBoundary: "Open flow",
     explanation: "The loading screen contains an extra Back button.",
     rootCauseHypothesis: "The loading snapshot changed.",
     confidence: "high",
@@ -96,6 +106,8 @@ const terminalIssue = {
     finalPageState: "The result screen is visible.",
     transientVsFinalContradiction: "The result eventually appeared.",
     blockQuotes: ["Timeout 10000ms exceeded"],
+    sourceRefs: ["B1-L1"],
+    ariaDiff: null,
   },
   normalization: {
     failureFamily: "visibility-timeout",
@@ -104,8 +116,16 @@ const terminalIssue = {
     normalizedError: "timeout waiting for result",
     differenceKeys: ["result-visible-after-timeout"],
     volatileValuesRemoved: [],
+    expectedStateKey: "result-screen",
+    observedStateKey: "result-screen",
+    transitionBoundaryKey: "complete-flow",
   },
   interpretation: {
+    expectedStateLabel: "Result screen",
+    observedStateLabel: "Result screen",
+    causalRole: "transient-readiness-failure",
+    causedByBlockIndex: null,
+    transitionBoundary: "Complete the flow",
     explanation: "The result appeared after the assertion window.",
     rootCauseHypothesis: "The result exceeded the assertion window.",
     confidence: "high",
@@ -121,6 +141,19 @@ const modelProblem = (issueIds, overrides = {}) => ({
   issueIds,
   ...overrides,
 });
+
+const issueVariant = (
+  base,
+  { facts = {}, normalization = {}, interpretation = {} } = {},
+) => {
+  const issue = structuredClone(base);
+  return {
+    ...issue,
+    facts: { ...issue.facts, ...facts },
+    normalization: { ...issue.normalization, ...normalization },
+    interpretation: { ...issue.interpretation, ...interpretation },
+  };
+};
 
 test("renders retries and secondary issues without inflating reconciliation", () => {
   const manifest = {
@@ -411,7 +444,11 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     );
     assert.match(
       sentOptions.prompt,
-      /A material factual conflict is evidence to split; uncertainty is a reason to request evidence/,
+      /Uncertainty is a reason to request evidence, not a reason to split by operation/,
+    );
+    assert.match(
+      sentOptions.prompt,
+      /"stateIncidentKey":"complete-flow=>result-screen"/,
     );
     assert.equal(disconnected, true);
     assert.equal(result.problemCount, 1);
@@ -426,6 +463,219 @@ test("embeds grouping records in one tool-free big-model call and writes only a 
     assert.equal(result.diagnostics.outputTokens, 300);
     assert.equal(result.diagnostics.finishReason, "stop");
     assert.equal(fs.existsSync(path.join(runDir, "grouped-analysis.md")), true);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("emits causal incident hints before operation and target symptoms", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-incident-hints-"),
+  );
+  const stateIssues = ["Open menu", "Click continue", "Find summary"].map(
+    (operation, index) =>
+      issueVariant(softIssue, {
+        facts: {
+          operation,
+          target: `synthetic target ${index + 1}`,
+        },
+        normalization: {
+          operationKey: operation.toLowerCase().replaceAll(" ", "-"),
+          targetKey: `synthetic-target-${index + 1}`,
+          differenceKeys: [],
+          expectedStateKey: "account-overview",
+          observedStateKey: "consent-review",
+          transitionBoundaryKey: "identity-handoff",
+        },
+        interpretation: {
+          expectedStateLabel: "Account Overview",
+          observedStateLabel: "Consent Review",
+          transitionBoundary: "Identity handoff",
+        },
+      }),
+  );
+  const differentStateIssue = issueVariant(softIssue, {
+    normalization: {
+      differenceKeys: [],
+      expectedStateKey: "account-overview",
+      observedStateKey: "service-unavailable",
+      transitionBoundaryKey: "identity-handoff",
+    },
+    interpretation: {
+      expectedStateLabel: "Account Overview",
+      observedStateLabel: "Service unavailable",
+      transitionBoundary: "Identity handoff",
+    },
+  });
+  const contentIssues = ["scenario-a", "scenario-b"].map((target) =>
+    issueVariant(softIssue, {
+      facts: { operation: "Assert instructions", target },
+      normalization: {
+        operationKey: "assert-instructions",
+        targetKey: target,
+        differenceKeys: ["missing:paragraph-note-bring-original-document"],
+        expectedStateKey: null,
+        observedStateKey: null,
+        transitionBoundaryKey: null,
+      },
+      interpretation: {
+        expectedStateLabel: null,
+        observedStateLabel: null,
+        causalRole: "content-mismatch",
+        transitionBoundary: null,
+      },
+    }),
+  );
+  const allIssues = [...stateIssues, differentStateIssue, ...contentIssues];
+  const folders = allIssues.map((_, index) => `attempt-${index + 1}__retry0`);
+  const records = allIssues.map((issue, index) =>
+    record(folders[index], [issue]),
+  );
+  const manifest = {
+    count: allIssues.length,
+    runDir,
+    failures: folders.map((folder) => entry(folder, 0, "unexpected")),
+  };
+  let prompt = "";
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompt = options.prompt;
+          return {
+            data: {
+              content: JSON.stringify({
+                summary: "Three generated incidents.",
+                problems: [
+                  modelProblem(["I1", "I2", "I3"]),
+                  modelProblem(["I4"]),
+                  modelProblem(["I5", "I6"]),
+                ],
+                evidenceRequests: [],
+              }),
+            },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      manifest,
+      records,
+      "small-model",
+      "big-model",
+    );
+    const inputMatch = prompt.match(
+      /<grouping-input-json>\n([\s\S]+?)\n<\/grouping-input-json>/,
+    );
+    assert.ok(inputMatch);
+    const input = JSON.parse(inputMatch[1]);
+    assert.equal(result.problemCount, 3);
+    assert.deepEqual(
+      input.issues
+        .slice(0, 3)
+        .map((issue) => issue.incidentHints.stateIncidentKey),
+      Array(3).fill("identity-handoff=>consent-review"),
+    );
+    assert.equal(
+      input.issues[3].incidentHints.stateIncidentKey,
+      "identity-handoff=>service-unavailable",
+    );
+    assert.equal(
+      input.issues[4].incidentHints.contentIncidentKey,
+      input.issues[5].incidentHints.contentIncidentKey,
+    );
+    assert.doesNotMatch(JSON.stringify(input), /ADO|Azure DevOps|defect/i);
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("repairs a downstream symptom split from its causal anchor", async () => {
+  const runDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "copilot-group-causal-repair-"),
+  );
+  const folder = "attempt__retry0";
+  const primary = issueVariant(softIssue, {
+    normalization: {
+      expectedStateKey: "account-overview",
+      observedStateKey: "consent-review",
+      transitionBoundaryKey: "identity-handoff",
+    },
+  });
+  const downstream = issueVariant(terminalIssue, {
+    facts: {
+      operation: "Click download statement",
+      target: "download statement button",
+    },
+    normalization: {
+      operationKey: "click-download-statement",
+      targetKey: "download-statement-button",
+      expectedStateKey: "account-overview",
+      observedStateKey: "consent-review",
+      transitionBoundaryKey: "identity-handoff",
+    },
+    interpretation: {
+      observedStateLabel: "Consent Review",
+      causalRole: "downstream-symptom",
+      causedByBlockIndex: 1,
+      transitionBoundary: "Identity handoff",
+    },
+  });
+  const responses = [
+    {
+      summary: "The model split a cause and symptom.",
+      problems: [modelProblem(["I1"]), modelProblem(["I2"])],
+      evidenceRequests: [],
+    },
+    {
+      summary: "The cause and symptom are one incident.",
+      problems: [modelProblem(["I1", "I2"])],
+      evidenceRequests: [],
+    },
+  ];
+  const prompts = [];
+  const client = {
+    async createSession() {
+      return {
+        on() {
+          return () => {};
+        },
+        async sendAndWait(options) {
+          prompts.push(options.prompt);
+          return {
+            data: { content: JSON.stringify(responses[prompts.length - 1]) },
+          };
+        },
+        async disconnect() {},
+      };
+    },
+  };
+
+  try {
+    const result = await groupRun(
+      client,
+      runDir,
+      { count: 1, runDir, failures: [entry(folder, 0, "unexpected")] },
+      [record(folder, [primary, downstream])],
+      "small-model",
+      "big-model",
+    );
+    assert.equal(prompts.length, 2);
+    assert.match(prompts[0], /"causalAnchorIssueId":"I1"/);
+    assert.match(prompts[1], /"causalSplitIssueIds":\["I2"\]/);
+    assert.equal(result.problemCount, 1);
+    assert.equal(result.diagnostics.repairAttempted, true);
+    assert.equal(result.diagnostics.causalSplitIssueCountBeforeRepair, 1);
+    assert.equal(result.diagnostics.causalSplitIssueCountAfterRepair, 0);
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }

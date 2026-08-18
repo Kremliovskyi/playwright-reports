@@ -1,8 +1,25 @@
-export const EVIDENCE_SCHEMA_VERSION = 1;
+export const EVIDENCE_SCHEMA_VERSION = 2;
 export const EVIDENCE_FILENAME = "evidence.json";
 export const AI_ANALYSIS_FILENAME = "ai-analysis.md";
 
 export type EvidenceConfidence = "high" | "medium" | "low";
+export type EvidenceCausalRole =
+  | "primary-state-mismatch"
+  | "downstream-symptom"
+  | "content-mismatch"
+  | "response-contract-mismatch"
+  | "transient-readiness-failure"
+  | "unclassified";
+
+export interface FailureEvidenceSourceLine {
+  id: string;
+  text: string;
+}
+
+export interface FailureEvidenceAriaDiff {
+  removed: FailureEvidenceSourceLine[];
+  added: FailureEvidenceSourceLine[];
+}
 
 export interface FailureEvidenceNetworkItem {
   call: string;
@@ -25,6 +42,8 @@ export interface FailureEvidenceFacts {
   finalPageState: string | null;
   transientVsFinalContradiction: string | null;
   blockQuotes: string[];
+  sourceRefs: string[];
+  ariaDiff: FailureEvidenceAriaDiff | null;
 }
 
 export interface FailureEvidenceNormalization {
@@ -34,9 +53,17 @@ export interface FailureEvidenceNormalization {
   normalizedError: string;
   differenceKeys: string[];
   volatileValuesRemoved: string[];
+  expectedStateKey: string | null;
+  observedStateKey: string | null;
+  transitionBoundaryKey: string | null;
 }
 
 export interface FailureEvidenceInterpretation {
+  expectedStateLabel: string | null;
+  observedStateLabel: string | null;
+  causalRole: EvidenceCausalRole;
+  causedByBlockIndex: number | null;
+  transitionBoundary: string | null;
   explanation: string;
   rootCauseHypothesis: string | null;
   confidence: EvidenceConfidence;
@@ -66,6 +93,7 @@ export interface FailureEvidenceRecord {
   attempt: FailureEvidenceAttempt;
   issues: FailureEvidenceIssue[];
   error?: string;
+  warning?: string;
   rawResponse?: string;
 }
 
@@ -88,53 +116,246 @@ const isNetworkItem = (value: unknown): value is FailureEvidenceNetworkItem => {
   );
 };
 
-const isIssue = (value: unknown): value is FailureEvidenceIssue => {
+const isSourceLine = (value: unknown): value is FailureEvidenceSourceLine => {
   if (typeof value !== "object" || value === null) return false;
+  const line = value as Record<string, unknown>;
+  return isString(line.id) && isString(line.text);
+};
+
+const isAriaDiff = (value: unknown): value is FailureEvidenceAriaDiff => {
+  if (typeof value !== "object" || value === null) return false;
+  const diff = value as Record<string, unknown>;
+  return (
+    Array.isArray(diff.removed) &&
+    diff.removed.every(isSourceLine) &&
+    Array.isArray(diff.added) &&
+    diff.added.every(isSourceLine)
+  );
+};
+
+const causalRoles = new Set<EvidenceCausalRole>([
+  "primary-state-mismatch",
+  "downstream-symptom",
+  "content-mismatch",
+  "response-contract-mismatch",
+  "transient-readiness-failure",
+  "unclassified",
+]);
+
+const valueType = (value: unknown): string =>
+  value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+
+const issueSchemaError = (value: unknown): string | null => {
+  if (typeof value !== "object" || value === null) return "must be an object";
   const issue = value as Record<string, unknown>;
-  if (
-    !Number.isInteger(issue.blockIndex) ||
-    typeof issue.terminal !== "boolean" ||
-    typeof issue.facts !== "object" ||
-    issue.facts === null ||
-    typeof issue.normalization !== "object" ||
-    issue.normalization === null ||
-    typeof issue.interpretation !== "object" ||
-    issue.interpretation === null
-  ) {
-    return false;
-  }
+  if (!Number.isInteger(issue.blockIndex))
+    return "blockIndex must be an integer";
+  if (typeof issue.terminal !== "boolean") return "terminal must be a boolean";
+  if (typeof issue.facts !== "object" || issue.facts === null)
+    return "facts must be an object";
+  if (typeof issue.normalization !== "object" || issue.normalization === null)
+    return "normalization must be an object";
+  if (typeof issue.interpretation !== "object" || issue.interpretation === null)
+    return "interpretation must be an object";
 
   const facts = issue.facts as Record<string, unknown>;
   const normalization = issue.normalization as Record<string, unknown>;
   const interpretation = issue.interpretation as Record<string, unknown>;
-  return (
-    isString(facts.kind) &&
-    isNullableString(facts.assertion) &&
-    isNullableString(facts.operation) &&
-    isNullableString(facts.target) &&
-    isStringArray(facts.stepPath) &&
-    isNullableString(facts.previousPassedBoundary) &&
-    isString(facts.errorVerbatim) &&
-    isStringArray(facts.expected) &&
-    isStringArray(facts.received) &&
-    Array.isArray(facts.network) &&
-    facts.network.every(isNetworkItem) &&
-    isNullableString(facts.finalPageState) &&
-    isNullableString(facts.transientVsFinalContradiction) &&
-    isStringArray(facts.blockQuotes) &&
-    isString(normalization.failureFamily) &&
-    isNullableString(normalization.operationKey) &&
-    isNullableString(normalization.targetKey) &&
-    isString(normalization.normalizedError) &&
-    isStringArray(normalization.differenceKeys) &&
-    isStringArray(normalization.volatileValuesRemoved) &&
-    isString(interpretation.explanation) &&
-    isNullableString(interpretation.rootCauseHypothesis) &&
-    (interpretation.confidence === "high" ||
-      interpretation.confidence === "medium" ||
-      interpretation.confidence === "low") &&
-    isStringArray(interpretation.ambiguities)
-  );
+  const checks: Array<[string, unknown, boolean, string]> = [
+    ["facts.kind", facts.kind, isString(facts.kind), "a string"],
+    [
+      "facts.assertion",
+      facts.assertion,
+      isNullableString(facts.assertion),
+      "a string or null",
+    ],
+    [
+      "facts.operation",
+      facts.operation,
+      isNullableString(facts.operation),
+      "a string or null",
+    ],
+    [
+      "facts.target",
+      facts.target,
+      isNullableString(facts.target),
+      "a string or null",
+    ],
+    [
+      "facts.stepPath",
+      facts.stepPath,
+      isStringArray(facts.stepPath),
+      "an array of strings",
+    ],
+    [
+      "facts.previousPassedBoundary",
+      facts.previousPassedBoundary,
+      isNullableString(facts.previousPassedBoundary),
+      "a string or null",
+    ],
+    [
+      "facts.errorVerbatim",
+      facts.errorVerbatim,
+      isString(facts.errorVerbatim),
+      "a string",
+    ],
+    [
+      "facts.expected",
+      facts.expected,
+      isStringArray(facts.expected),
+      "an array of strings",
+    ],
+    [
+      "facts.received",
+      facts.received,
+      isStringArray(facts.received),
+      "an array of strings",
+    ],
+    ["facts.network", facts.network, Array.isArray(facts.network), "an array"],
+    [
+      "facts.finalPageState",
+      facts.finalPageState,
+      isNullableString(facts.finalPageState),
+      "a string or null",
+    ],
+    [
+      "facts.transientVsFinalContradiction",
+      facts.transientVsFinalContradiction,
+      isNullableString(facts.transientVsFinalContradiction),
+      "a string or null",
+    ],
+    [
+      "facts.blockQuotes",
+      facts.blockQuotes,
+      isStringArray(facts.blockQuotes),
+      "an array of strings",
+    ],
+    [
+      "facts.sourceRefs",
+      facts.sourceRefs,
+      isStringArray(facts.sourceRefs),
+      "an array of strings",
+    ],
+    [
+      "facts.ariaDiff",
+      facts.ariaDiff,
+      facts.ariaDiff === null || isAriaDiff(facts.ariaDiff),
+      "an ARIA diff or null",
+    ],
+    [
+      "normalization.failureFamily",
+      normalization.failureFamily,
+      isString(normalization.failureFamily),
+      "a string",
+    ],
+    [
+      "normalization.operationKey",
+      normalization.operationKey,
+      isNullableString(normalization.operationKey),
+      "a string or null",
+    ],
+    [
+      "normalization.targetKey",
+      normalization.targetKey,
+      isNullableString(normalization.targetKey),
+      "a string or null",
+    ],
+    [
+      "normalization.normalizedError",
+      normalization.normalizedError,
+      isString(normalization.normalizedError),
+      "a string",
+    ],
+    [
+      "normalization.differenceKeys",
+      normalization.differenceKeys,
+      isStringArray(normalization.differenceKeys),
+      "an array of strings",
+    ],
+    [
+      "normalization.volatileValuesRemoved",
+      normalization.volatileValuesRemoved,
+      isStringArray(normalization.volatileValuesRemoved),
+      "an array of strings",
+    ],
+    [
+      "normalization.expectedStateKey",
+      normalization.expectedStateKey,
+      isNullableString(normalization.expectedStateKey),
+      "a string or null",
+    ],
+    [
+      "normalization.observedStateKey",
+      normalization.observedStateKey,
+      isNullableString(normalization.observedStateKey),
+      "a string or null",
+    ],
+    [
+      "normalization.transitionBoundaryKey",
+      normalization.transitionBoundaryKey,
+      isNullableString(normalization.transitionBoundaryKey),
+      "a string or null",
+    ],
+    [
+      "interpretation.expectedStateLabel",
+      interpretation.expectedStateLabel,
+      isNullableString(interpretation.expectedStateLabel),
+      "a string or null",
+    ],
+    [
+      "interpretation.observedStateLabel",
+      interpretation.observedStateLabel,
+      isNullableString(interpretation.observedStateLabel),
+      "a string or null",
+    ],
+    [
+      "interpretation.causedByBlockIndex",
+      interpretation.causedByBlockIndex,
+      interpretation.causedByBlockIndex === null ||
+        Number.isInteger(interpretation.causedByBlockIndex),
+      "an integer or null",
+    ],
+    [
+      "interpretation.transitionBoundary",
+      interpretation.transitionBoundary,
+      isNullableString(interpretation.transitionBoundary),
+      "a string or null",
+    ],
+    [
+      "interpretation.explanation",
+      interpretation.explanation,
+      isString(interpretation.explanation),
+      "a string",
+    ],
+    [
+      "interpretation.rootCauseHypothesis",
+      interpretation.rootCauseHypothesis,
+      isNullableString(interpretation.rootCauseHypothesis),
+      "a string or null",
+    ],
+    [
+      "interpretation.ambiguities",
+      interpretation.ambiguities,
+      isStringArray(interpretation.ambiguities),
+      "an array of strings",
+    ],
+  ];
+  const invalid = checks.find(([, , valid]) => !valid);
+  if (invalid)
+    return `${invalid[0]} must be ${invalid[3]}; received ${valueType(invalid[1])}`;
+  if (!(facts.network as unknown[]).every(isNetworkItem))
+    return "facts.network entries must contain string call/gist/relToIssue and numeric-or-null status";
+  if (!causalRoles.has(interpretation.causalRole as EvidenceCausalRole)) {
+    return "interpretation.causalRole is not an allowed value";
+  }
+  if (
+    interpretation.confidence !== "high" &&
+    interpretation.confidence !== "medium" &&
+    interpretation.confidence !== "low"
+  ) {
+    return "interpretation.confidence must be high, medium, or low";
+  }
+  return null;
 };
 
 export const validateModelEvidenceIssues = (
@@ -146,20 +367,25 @@ export const validateModelEvidenceIssues = (
   if (typeof value !== "object" || value === null)
     throw new Error("Evidence response is not an object");
   const response = value as Record<string, unknown>;
-  if (
-    response.schemaVersion !== EVIDENCE_SCHEMA_VERSION ||
-    !Array.isArray(response.issues) ||
-    !response.issues.every(isIssue)
-  ) {
-    throw new Error("Evidence response does not match schema version 1");
-  }
-  if (response.issues.length !== errorBlocks.length) {
+  if (response.schemaVersion !== EVIDENCE_SCHEMA_VERSION)
     throw new Error(
-      `Evidence response has ${response.issues.length} issues for ${errorBlocks.length} error.md blocks`,
+      `Evidence response schemaVersion must be ${EVIDENCE_SCHEMA_VERSION}`,
+    );
+  if (!Array.isArray(response.issues))
+    throw new Error("Evidence response issues must be an array");
+  response.issues.forEach((issue, index) => {
+    const schemaError = issueSchemaError(issue);
+    if (schemaError)
+      throw new Error(`Evidence issue ${index + 1} ${schemaError}`);
+  });
+  const issues = response.issues as FailureEvidenceIssue[];
+  if (issues.length !== errorBlocks.length) {
+    throw new Error(
+      `Evidence response has ${issues.length} issues for ${errorBlocks.length} error.md blocks`,
     );
   }
 
-  response.issues.forEach((issue, index) => {
+  issues.forEach((issue, index) => {
     const expectedBlockIndex = index + 1;
     const expectedTerminal = expectedBlockIndex === errorBlocks.length;
     if (issue.blockIndex !== expectedBlockIndex)
@@ -180,20 +406,9 @@ export const validateModelEvidenceIssues = (
         );
       }
     }
-    if (!issue.facts.blockQuotes.length)
-      throw new Error(
-        `Evidence issue ${expectedBlockIndex} has no source quote`,
-      );
-    for (const quote of issue.facts.blockQuotes) {
-      if (!quote.trim() || !errorBlocks[index].includes(quote)) {
-        throw new Error(
-          `Evidence issue ${expectedBlockIndex} contains a quote not found in its error.md block`,
-        );
-      }
-    }
   });
 
-  return response.issues;
+  return issues;
 };
 
 export const renderEvidenceJson = (record: FailureEvidenceRecord): string =>
@@ -238,6 +453,10 @@ export const renderEvidenceMarkdown = (
     }
     lines.push("");
     return lines.join("\n");
+  }
+
+  if (record.warning) {
+    lines.push(`> ⚠️ ${record.warning}`, "");
   }
 
   lines.push(
@@ -325,6 +544,11 @@ export const renderEvidenceMarkdown = (
       `- **Operation key:** ${display(normalization.operationKey)}`,
       `- **Target key:** ${display(normalization.targetKey)}`,
       `- **Confidence:** ${interpretation.confidence}`,
+      `- **Causal role:** ${interpretation.causalRole}`,
+      `- **Expected state:** ${display(interpretation.expectedStateLabel)}`,
+      `- **Observed state:** ${display(interpretation.observedStateLabel)}`,
+      `- **Transition boundary:** ${display(interpretation.transitionBoundary)}`,
+      `- **Caused by issue:** ${interpretation.causedByBlockIndex ?? "_none_"}`,
       "",
       "**Expected:**",
       renderList(facts.expected),
@@ -345,7 +569,14 @@ export const renderEvidenceMarkdown = (
       renderList(interpretation.ambiguities),
       "",
     );
-    lines.push("**Source quotes:**", renderList(facts.blockQuotes), "");
+    lines.push(
+      "**Source references:**",
+      renderList(facts.sourceRefs),
+      "",
+      "**Source quotes:**",
+      renderList(facts.blockQuotes),
+      "",
+    );
   }
 
   return lines.join("\n");

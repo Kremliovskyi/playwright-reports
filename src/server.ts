@@ -30,7 +30,8 @@ import {
   deleteDigest,
   pruneOrphanDigests,
 } from "./db";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, execFile, ChildProcess } from "child_process";
+import { promisify } from "node:util";
 import treeKill from "tree-kill";
 import MarkdownIt from "markdown-it";
 import { randomUUID } from "node:crypto";
@@ -38,7 +39,13 @@ import {
   discoverRunnerConfigs,
   resolveDiscoveredConfig,
 } from "./runner-configs";
-import { formatRunnerArgs, prepareRunnerArgs } from "./runner-command";
+import {
+  buildPodmanArgs,
+  formatRunnerArgs,
+  prepareRunnerArgs,
+  resolvePodmanImage,
+  resolvePodmanExecutable,
+} from "./runner-command";
 import { loadPlaywrightConfigProjection } from "./playwright-config-loader";
 import {
   analyzeRun,
@@ -753,6 +760,9 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
 
 let activeProcess: ChildProcess | null = null;
 let activeHeadlessConfigPath: string | null = null;
+let activeContainerName: string | null = null;
+const execFileAsync = promisify(execFile);
+const podmanExecutable = resolvePodmanExecutable();
 let sseClients: Response[] = [];
 
 const removeHeadlessConfigOverride = (configPath: string | null): void => {
@@ -821,7 +831,16 @@ app.get("/api/logs", (req: Request, res: Response) => {
   });
 });
 
-const stopTests = (): Promise<void> => {
+const stopTests = async (): Promise<void> => {
+  if (activeContainerName) {
+    const containerName = activeContainerName;
+    try {
+      await execFileAsync(podmanExecutable, ["rm", "--force", "--ignore", containerName], { timeout: 120000 });
+      if (activeContainerName === containerName) activeContainerName = null;
+    } catch (error: any) {
+      throw new Error(`Could not stop Podman container ${containerName}: ${error.message}`);
+    }
+  }
   return new Promise((resolve) => {
     if (activeProcess && activeProcess.pid) {
       const processToStop = activeProcess;
@@ -839,9 +858,13 @@ const stopTests = (): Promise<void> => {
 };
 
 app.post("/api/stop-tests", async (req: Request, res: Response) => {
-  await stopTests();
-  broadcastLog("output", "\nTests stopped by user.\n");
-  res.json({ success: true });
+  try {
+    await stopTests();
+    broadcastLog("output", "\nTests stopped by user.\n");
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post(
@@ -855,12 +878,22 @@ app.post(
       args = [],
       env = {},
       useBrowserstack = false,
+      usePodman = false,
       headless = false,
       playwrightConfig = "",
       browserstackConfig = "",
     } = req.body;
     if (!appConfig.projectPath) {
       return res.status(400).json({ error: "Project path is not configured" });
+    }
+    if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string") ||
+        !env || typeof env !== "object" || Array.isArray(env) ||
+        Object.values(env).some((value) => typeof value !== "string")) {
+      return res.status(400).json({ error: "Invalid runner arguments or environment variables" });
+    }
+    if (usePodman && (useBrowserstack || args.some((arg: string) =>
+      /^(--headed|--debug|--ui(?:-host|-port)?)(=|$)/.test(arg)))) {
+      return res.status(400).json({ error: "Podman runs are headless and cannot use BrowserStack, Headed, UI Mode or Debug" });
     }
     if (headless && useBrowserstack) {
       return res.status(400).json({
@@ -893,28 +926,47 @@ app.post(
       return res.status(400).json({ error: error.message });
     }
 
+    let podmanImage = "";
+    if (usePodman) {
+      try {
+        podmanImage = resolvePodmanImage(appConfig.projectPath);
+        await execFileAsync(podmanExecutable, ["info", "--format", "json"], { timeout: 120000 });
+      } catch (error: any) {
+        return res.status(400).json({ error: podmanImage
+          ? "Podman is unavailable. Install Podman on the reports server and start its machine (podman machine start on Windows/macOS), then retry."
+          : error.message });
+      }
+      try {
+        await execFileAsync(podmanExecutable, ["image", "inspect", podmanImage], { timeout: 120000 });
+      } catch {
+        return res.status(400).json({ error: `Prepare the matching image first: podman pull ${podmanImage}` });
+      }
+    }
+
     const customEnv = { ...process.env, FORCE_COLOR: "1", ...env };
     if (useBrowserstack) {
       customEnv.BROWSERSTACK_USERNAME = appConfig.browserstackUsername;
       customEnv.BROWSERSTACK_ACCESS_KEY = appConfig.browserstackAccessKey;
       customEnv.PLAYWRIGHT_HTML_OPEN = "never";
     }
-    const command = process.platform === "win32" ? "npx.cmd" : "npx";
+    const command = usePodman ? podmanExecutable : process.platform === "win32" ? "npx.cmd" : "npx";
 
-    const finalArgs = prepareRunnerArgs(args);
+    const finalArgs = prepareRunnerArgs(args, usePodman ? "linux" : process.platform);
 
     let headlessConfigPath: string | null = null;
+    const containerName = usePodman ? `pw-reports-${randomUUID()}` : null;
     try {
       let runConfig = playwrightConfig;
-      if (headless) {
+      if (headless || usePodman) {
         headlessConfigPath = createHeadlessConfigOverride(
           selectedPlaywrightConfigPath,
         );
         activeHeadlessConfigPath = headlessConfigPath;
         runConfig = path.relative(appConfig.projectPath, headlessConfigPath);
       }
+      if (usePodman) runConfig = runConfig.replaceAll("\\", "/");
       const shellConfigArgument =
-        process.platform === "win32" ? `"${runConfig}"` : runConfig;
+        !usePodman && process.platform === "win32" ? `"${runConfig}"` : runConfig;
       finalArgs.push("--config", shellConfigArgument);
       if (useBrowserstack)
         finalArgs.push(
@@ -925,20 +977,31 @@ app.post(
           }`,
         );
 
-      const spawnArgs = useBrowserstack
+      const spawnArgs = usePodman
+        ? buildPodmanArgs({
+          projectPath: path.resolve(appConfig.projectPath),
+          image: podmanImage,
+          containerName: containerName!,
+          args: finalArgs,
+          env: { FORCE_COLOR: "1", ...env },
+        })
+        : useBrowserstack
         ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
         : ["playwright", "test", ...finalArgs];
-      const logPrefix = useBrowserstack
+      const logPrefix = usePodman
+        ? `Podman (${podmanImage}): npm ci && npx playwright test`
+        : useBrowserstack
         ? "browserstack-node-sdk playwright test"
         : "npx playwright test";
 
       const child = spawn(command, spawnArgs, {
         cwd: appConfig.projectPath,
         env: customEnv,
-        shell: process.platform === "win32", // On Windows we usually need shell for npx
+        shell: !usePodman && process.platform === "win32", // On Windows we usually need shell for npx
       });
 
       activeProcess = child;
+      activeContainerName = containerName;
       broadcastLog(
         "start",
         `Running ${logPrefix} ${formatRunnerArgs(finalArgs)}\n`,
@@ -955,12 +1018,14 @@ app.post(
         broadcastLog("output", `\nProcess exited with code ${code}\n`);
         broadcastLog("complete", code?.toString() || "0");
         if (activeProcess === child) activeProcess = null;
+        if (activeContainerName === containerName) activeContainerName = null;
         removeHeadlessConfigOverride(headlessConfigPath);
       });
       child.on("error", (error) => {
         broadcastLog("output", `\nFailed to start tests: ${error.message}\n`);
         broadcastLog("complete", "1");
         if (activeProcess === child) activeProcess = null;
+        if (activeContainerName === containerName) activeContainerName = null;
         removeHeadlessConfigOverride(headlessConfigPath);
       });
 

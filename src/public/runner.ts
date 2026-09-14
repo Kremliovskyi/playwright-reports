@@ -63,6 +63,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const optUpdateSnapshots = document.getElementById(
     "opt-update-snapshots",
   ) as HTMLInputElement;
+  const optPodman = document.getElementById("opt-podman") as HTMLInputElement;
+  const labelPodman = document.getElementById("label-podman") as HTMLLabelElement;
+  const podmanInfoBtn = document.getElementById("podman-info-btn") as HTMLButtonElement;
 
   const optGrep = document.getElementById("opt-grep") as HTMLInputElement;
   const optRepeat = document.getElementById("opt-repeat") as HTMLInputElement;
@@ -131,11 +134,29 @@ document.addEventListener("DOMContentLoaded", () => {
       options.title || (options.confirm ? "Confirm" : "Notification");
     dialogMessage.textContent = message;
     dialogFooter.innerHTML = "";
+    const previousFocus = document.activeElement as HTMLElement | null;
 
     return new Promise((resolve) => {
       const close = (result: boolean) => {
         dialogModal.classList.add("hidden");
+        dialogModal.removeEventListener("keydown", onKeyDown);
+        previousFocus?.focus();
         resolve(result);
+      };
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") close(false);
+        if (event.key === "Tab") {
+          const buttons = Array.from(dialogModal.querySelectorAll<HTMLButtonElement>("button"));
+          const first = buttons[0];
+          const last = buttons[buttons.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }
       };
 
       if (options.confirm) {
@@ -155,8 +176,36 @@ document.addEventListener("DOMContentLoaded", () => {
       dialogHeaderCloseBtn.onclick = () => close(false);
 
       dialogModal.classList.remove("hidden");
+      dialogModal.addEventListener("keydown", onKeyDown);
+      okBtn.focus();
     });
   };
+
+  podmanInfoBtn.addEventListener("click", () => showDialog([
+    "Install Podman (or Podman Desktop with the Podman engine) on the machine hosting this reports server. Put podman on its PATH; standard Windows install locations are also detected automatically.",
+    "On Windows/macOS: run podman machine init once if needed, then podman machine start before running tests, or start the machine in Podman Desktop. Verify with podman info. On Linux, no Podman machine is normally needed.",
+    "Prepare the official Playwright image matching the exact version in your project's npm lockfile. Example for 1.59.0: podman pull mcr.microsoft.com/playwright:v1.59.0-noble. A missing-image error gives the exact pull command for your project.",
+    "Do not start a container manually. The runner creates a temporary container and removes it on completion or Stop. It runs npm ci (requires an npm lockfile and registry access) in isolated Linux node_modules, then runs tests headlessly. Host node_modules is not changed.",
+    "The project is mounted read/write at /work. Keep report and snapshot paths inside the project; output and snapshot updates are saved back to it. Image snapshots use Linux baselines. Paths and dependencies must work on Linux.",
+    "Only variables entered in System Env Variables are forwarded (plus runner defaults). For host services use host.containers.internal instead of localhost. Private registries may need project .npmrc settings and credentials supplied through environment variables.",
+    "BrowserStack, Headed, UI Mode and Debug cannot be combined with Podman. Use only trusted tests and sites: the container runs as root with Chromium sandboxing disabled.",
+    "Reference: https://playwright.dev/docs/docker",
+  ].join("\n\n"), { title: "Run in Podman" }));
+
+  const updatePodmanOptions = () => {
+    const enabled = optPodman.checked;
+    [optHeaded, optHeadless, optUi, optDebug].forEach((input) => {
+      input.disabled = enabled;
+      input.closest("label")?.classList.toggle("bs-disabled", enabled || optBrowserstack.checked);
+    });
+    if (enabled) {
+      optHeaded.checked = false;
+      optHeadless.checked = true;
+      optUi.checked = false;
+      optDebug.checked = false;
+    }
+  };
+  optPodman.addEventListener("change", updatePodmanOptions);
 
   let allProjects: string[] = [];
   let selectedProjects: string[] = [];
@@ -179,6 +228,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let savedUi = false;
   let savedDebug = false;
   let savedUpdateSnapshots = false;
+  let savedPodman = false;
   let savedRepeat = "";
   let savedWorkers = "";
 
@@ -219,6 +269,7 @@ document.addEventListener("DOMContentLoaded", () => {
       labelUi,
       labelDebug,
       labelUpdateSnapshots,
+      labelPodman,
     ];
     const wrappers = [wrapperRepeat, wrapperWorkers];
 
@@ -229,6 +280,7 @@ document.addEventListener("DOMContentLoaded", () => {
       savedUi = optUi.checked;
       savedDebug = optDebug.checked;
       savedUpdateSnapshots = optUpdateSnapshots.checked;
+      savedPodman = optPodman.checked;
       savedRepeat = optRepeat.value;
       savedWorkers = optWorkers.value;
 
@@ -238,6 +290,7 @@ document.addEventListener("DOMContentLoaded", () => {
       optUi.checked = false;
       optDebug.checked = false;
       optUpdateSnapshots.checked = false;
+      optPodman.checked = false;
       optRepeat.value = "";
       optWorkers.value = "";
 
@@ -250,12 +303,15 @@ document.addEventListener("DOMContentLoaded", () => {
       optUi.checked = savedUi;
       optDebug.checked = savedDebug;
       optUpdateSnapshots.checked = savedUpdateSnapshots;
+      optPodman.checked = savedPodman;
       optRepeat.value = savedRepeat;
       optWorkers.value = savedWorkers;
 
       elements.forEach((el) => el.classList.remove("bs-disabled"));
       wrappers.forEach((el) => el.classList.remove("bs-disabled"));
     }
+    optPodman.disabled = disabled;
+    updatePodmanOptions();
   };
 
   optBrowserstack.addEventListener("change", () => {
@@ -277,6 +333,8 @@ document.addEventListener("DOMContentLoaded", () => {
         optDebug.checked = config.runnerOptions.debug || false;
         optUpdateSnapshots.checked =
           config.runnerOptions.updateSnapshots || false;
+        optPodman.checked = config.runnerOptions.usePodman || false;
+        updatePodmanOptions();
         optGrep.value = config.runnerOptions.grep || "";
         optRepeat.value = config.runnerOptions.repeatEach || "";
         optWorkers.value = config.runnerOptions.workers || "";
@@ -308,6 +366,7 @@ document.addEventListener("DOMContentLoaded", () => {
         ui: optUi.checked,
         debug: optDebug.checked,
         updateSnapshots: optUpdateSnapshots.checked,
+        usePodman: optPodman.checked,
         grep: optGrep.value,
         repeatEach: optRepeat.value,
         workers: optWorkers.value,
@@ -347,6 +406,7 @@ document.addEventListener("DOMContentLoaded", () => {
     optUi,
     optDebug,
     optUpdateSnapshots,
+    optPodman,
     optGrep,
     optRepeat,
     optWorkers,
@@ -756,7 +816,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isRunning) {
       runBtn.disabled = true;
       try {
-        await fetch("/api/stop-tests", { method: "POST" });
+        const response = await fetch("/api/stop-tests", { method: "POST" });
+        if (!response.ok) throw new Error((await response.json()).error || "Failed to stop tests");
       } catch (err: any) {
         term.writeln(
           "\x1b[31mError stopping tests: " + err.message + "\x1b[0m",
@@ -833,6 +894,7 @@ document.addEventListener("DOMContentLoaded", () => {
           args,
           env,
           useBrowserstack,
+          usePodman: optPodman.checked,
           headless: optHeadless.checked,
           playwrightConfig: selectedPlaywrightConfig,
           browserstackConfig: selectedBrowserstackConfig,

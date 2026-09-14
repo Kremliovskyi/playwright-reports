@@ -20,6 +20,7 @@ export interface AppConfig {
     ui: boolean;
     debug: boolean;
     updateSnapshots: boolean;
+    usePodman: boolean;
     grep: string;
     repeatEach: string;
     workers: string;
@@ -75,6 +76,7 @@ const DEFAULT_RUNNER_OPTIONS = {
   ui: false,
   debug: false,
   updateSnapshots: false,
+  usePodman: false,
   grep: "",
   repeatEach: "",
   workers: "",

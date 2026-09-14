@@ -196,8 +196,30 @@
       .options-grid {
         display: flex;
         flex-wrap: wrap;
+        align-items: center;
         gap: 20px;
         margin-bottom: 15px;
+      }
+      #dialog-modal .modal-content {
+        max-height: 85vh;
+        width: calc(100% - 32px);
+      }
+      #dialog-modal .modal-body {
+        min-height: 0;
+        padding: 20px;
+        overflow-y: auto;
+        overflow-wrap: anywhere;
+      }
+      #podman-info-btn {
+        width: 24px;
+        height: 24px;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+      }
+      #dialog-modal .modal-header,
+      #dialog-modal .modal-footer {
+        flex-shrink: 0;
       }
       .input-group {
         display: flex;
@@ -496,6 +518,14 @@
               ><input type="checkbox" id="opt-update-snapshots" /> Update
               Snapshots</label
             >
+            <div style="display: flex; align-items: center; gap: 6px">
+              <label class="checkbox-label" id="label-podman">
+                <input type="checkbox" id="opt-podman" /> Run in Podman
+              </label>
+              <button type="button" id="podman-info-btn" class="icon-btn"
+                title="Podman setup requirements" aria-label="Podman setup requirements"
+                aria-haspopup="dialog" aria-controls="dialog-modal">&#9432;</button>
+            </div>
           </div>
 
           <div class="input-group">
@@ -620,11 +650,11 @@
     </div>
 
     <!-- Generic Dialog Modal -->
-    <div id="dialog-modal" class="modal-backdrop hidden">
+    <div id="dialog-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
       <div class="modal-content" style="max-width: 450px">
         <div class="modal-header">
           <h2 id="dialog-title">Notification</h2>
-          <button id="dialog-header-close-btn" class="icon-btn">
+          <button id="dialog-header-close-btn" class="icon-btn" aria-label="Close dialog">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="20"

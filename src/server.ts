@@ -20,11 +20,14 @@ import {
   searchReports,
   addAnalysisRun,
   getAnalysisRuns,
+  getAllAnalysisRuns,
+  deleteAnalysisRunIds,
   deleteAnalysisRunsByReport,
   pruneOrphanAnalysisRuns,
   clearAnalysisRunDir,
   deleteAnalysisRun,
-  addDigest,
+  relocateDigest,
+  replaceDigests,
   getDigests,
   deleteDigestsByReport,
   deleteDigest,
@@ -63,10 +66,22 @@ import {
   GroupingDiagnostics,
   GroupingRunError,
 } from "./copilot-grouper";
+import {
+  analysisInventory,
+  removeAnalysisArtifacts,
+  assertOwnedPath,
+  ArtifactError,
+  reportArtifactRoot,
+  traceIdentity,
+  publishDigest,
+  contentVersion,
+  legacyDigestLocation,
+  moveLegacyDigest,
+} from "./report-artifacts";
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 9333;
 
 // Enable CORS if you need to fetch from other origins
@@ -92,6 +107,10 @@ const invalidateReportSize = (reportId: string): void => {
   reportSizeCache.delete(reportId);
 };
 const activeFailureAnalyses = new Set<string>();
+const activeDigests = new Set<string>();
+const reportIsBusy = (uuid: string): boolean =>
+  activeFailureAnalyses.has(uuid) ||
+  [...activeDigests].some((key) => key.startsWith(uuid + ":"));
 
 const refreshConfigCache = () => {
   appConfig = getConfig();
@@ -99,6 +118,50 @@ const refreshConfigCache = () => {
 
 // Enable JSON body parsing for our API
 app.use(express.json());
+
+app.use((req: Request, res: Response, next: NextFunction): any => {
+  const mutationPaths = [
+    "/api/archive",
+    "/api/delete",
+    "/api/report-rename",
+    "/api/extract",
+    "/api/analysis-run/output-dir",
+    "/api/analysis-run/analysis-file",
+    "/api/digest",
+    "/api/analysis-run/grouped-analysis",
+  ];
+  if (req.method !== "GET" && mutationPaths.includes(req.path)) {
+    const reportId =
+      req.body?.reportId ||
+      req.query.reportId ||
+      req.body?.reportPath?.split("/")[3];
+    const report =
+      typeof reportId === "string" ? getReport(reportId) : undefined;
+    if (report && reportIsBusy(report.uuid))
+      return res.status(409).json({
+        code: "REPORT_ARTIFACTS_BUSY",
+        error: "Wait for this report's analysis or digest to finish.",
+      });
+  }
+  if (
+    req.method === "POST" &&
+    req.path === "/api/config" &&
+    (activeFailureAnalyses.size || activeDigests.size)
+  ) {
+    if (
+      ["currentPath", "archivePath", "vaultPath"].some(
+        (key) =>
+          req.body?.[key] !== undefined &&
+          req.body[key] !== appConfig[key as keyof AppConfig],
+      )
+    )
+      return res.status(409).json({
+        error:
+          "Storage paths cannot change while analysis or digest jobs are running.",
+      });
+  }
+  next();
+});
 
 // Serve the reports dynamically using isolated mount points
 app.use(
@@ -529,6 +592,8 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
         // Look up existing DB record to preserve metadata
         const existing = getReport(dirent.name);
         const metadata = existing?.metadata || "";
+        if (existing && reportIsBusy(existing.uuid))
+          return toReportInfo(existing);
 
         // Stable per-instance identity: reuse the uuid only when the same folder name is
         // still the same physical report (matching birth time). A recycled name (e.g. a
@@ -577,6 +642,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
       dbReport.reportPath.startsWith(`/reports/${prefix}/`) &&
       !diskIds.has(dbReport.id)
     ) {
+      if (reportIsBusy(dbReport.uuid)) continue;
       purgeReportRuns(dbReport.uuid);
       deleteReportRecord(dbReport.id);
     }
@@ -835,10 +901,16 @@ const stopTests = async (): Promise<void> => {
   if (activeContainerName) {
     const containerName = activeContainerName;
     try {
-      await execFileAsync(podmanExecutable, ["rm", "--force", "--ignore", containerName], { timeout: 120000 });
+      await execFileAsync(
+        podmanExecutable,
+        ["rm", "--force", "--ignore", containerName],
+        { timeout: 120000 },
+      );
       if (activeContainerName === containerName) activeContainerName = null;
     } catch (error: any) {
-      throw new Error(`Could not stop Podman container ${containerName}: ${error.message}`);
+      throw new Error(
+        `Could not stop Podman container ${containerName}: ${error.message}`,
+      );
     }
   }
   return new Promise((resolve) => {
@@ -886,14 +958,31 @@ app.post(
     if (!appConfig.projectPath) {
       return res.status(400).json({ error: "Project path is not configured" });
     }
-    if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string") ||
-        !env || typeof env !== "object" || Array.isArray(env) ||
-        Object.values(env).some((value) => typeof value !== "string")) {
-      return res.status(400).json({ error: "Invalid runner arguments or environment variables" });
+    if (
+      !Array.isArray(args) ||
+      args.some((arg) => typeof arg !== "string") ||
+      !env ||
+      typeof env !== "object" ||
+      Array.isArray(env) ||
+      Object.values(env).some((value) => typeof value !== "string")
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Invalid runner arguments or environment variables" });
     }
-    if (usePodman && (useBrowserstack || args.some((arg: string) =>
-      /^(--headed|--debug|--ui(?:-host|-port)?)(=|$)/.test(arg)))) {
-      return res.status(400).json({ error: "Podman runs are headless and cannot use BrowserStack, Headed, UI Mode or Debug" });
+    if (
+      usePodman &&
+      (useBrowserstack ||
+        args.some((arg: string) =>
+          /^(--headed|--debug|--ui(?:-host|-port)?)(=|$)/.test(arg),
+        ))
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "Podman runs are headless and cannot use BrowserStack, Headed, UI Mode or Debug",
+        });
     }
     if (headless && useBrowserstack) {
       return res.status(400).json({
@@ -930,16 +1019,30 @@ app.post(
     if (usePodman) {
       try {
         podmanImage = resolvePodmanImage(appConfig.projectPath);
-        await execFileAsync(podmanExecutable, ["info", "--format", "json"], { timeout: 120000 });
+        await execFileAsync(podmanExecutable, ["info", "--format", "json"], {
+          timeout: 120000,
+        });
       } catch (error: any) {
-        return res.status(400).json({ error: podmanImage
-          ? "Podman is unavailable. Install Podman on the reports server and start its machine (podman machine start on Windows/macOS), then retry."
-          : error.message });
+        return res
+          .status(400)
+          .json({
+            error: podmanImage
+              ? "Podman is unavailable. Install Podman on the reports server and start its machine (podman machine start on Windows/macOS), then retry."
+              : error.message,
+          });
       }
       try {
-        await execFileAsync(podmanExecutable, ["image", "inspect", podmanImage], { timeout: 120000 });
+        await execFileAsync(
+          podmanExecutable,
+          ["image", "inspect", podmanImage],
+          { timeout: 120000 },
+        );
       } catch {
-        return res.status(400).json({ error: `Prepare the matching image first: podman pull ${podmanImage}` });
+        return res
+          .status(400)
+          .json({
+            error: `Prepare the matching image first: podman pull ${podmanImage}`,
+          });
       }
     }
 
@@ -949,9 +1052,16 @@ app.post(
       customEnv.BROWSERSTACK_ACCESS_KEY = appConfig.browserstackAccessKey;
       customEnv.PLAYWRIGHT_HTML_OPEN = "never";
     }
-    const command = usePodman ? podmanExecutable : process.platform === "win32" ? "npx.cmd" : "npx";
+    const command = usePodman
+      ? podmanExecutable
+      : process.platform === "win32"
+        ? "npx.cmd"
+        : "npx";
 
-    const finalArgs = prepareRunnerArgs(args, usePodman ? "linux" : process.platform);
+    const finalArgs = prepareRunnerArgs(
+      args,
+      usePodman ? "linux" : process.platform,
+    );
 
     let headlessConfigPath: string | null = null;
     const containerName = usePodman ? `pw-reports-${randomUUID()}` : null;
@@ -966,7 +1076,9 @@ app.post(
       }
       if (usePodman) runConfig = runConfig.replaceAll("\\", "/");
       const shellConfigArgument =
-        !usePodman && process.platform === "win32" ? `"${runConfig}"` : runConfig;
+        !usePodman && process.platform === "win32"
+          ? `"${runConfig}"`
+          : runConfig;
       finalArgs.push("--config", shellConfigArgument);
       if (useBrowserstack)
         finalArgs.push(
@@ -979,20 +1091,20 @@ app.post(
 
       const spawnArgs = usePodman
         ? buildPodmanArgs({
-          projectPath: path.resolve(appConfig.projectPath),
-          image: podmanImage,
-          containerName: containerName!,
-          args: finalArgs,
-          env: { FORCE_COLOR: "1", ...env },
-        })
+            projectPath: path.resolve(appConfig.projectPath),
+            image: podmanImage,
+            containerName: containerName!,
+            args: finalArgs,
+            env: { FORCE_COLOR: "1", ...env },
+          })
         : useBrowserstack
-        ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
-        : ["playwright", "test", ...finalArgs];
+          ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
+          : ["playwright", "test", ...finalArgs];
       const logPrefix = usePodman
         ? `Podman (${podmanImage}): npm ci && npx playwright test`
         : useBrowserstack
-        ? "browserstack-node-sdk playwright test"
-        : "npx playwright test";
+          ? "browserstack-node-sdk playwright test"
+          : "npx playwright test";
 
       const child = spawn(command, spawnArgs, {
         cwd: appConfig.projectPath,
@@ -1147,7 +1259,7 @@ app.get(
 // Failure digest endpoint — runs the playwright-traces-reader `failures` command
 app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
-  const { reportPath } = req.body;
+  const { reportPath, replaceRunId, analysisVersion } = req.body;
   if (!reportPath)
     return res.status(400).json({ error: "reportPath is required" });
 
@@ -1171,19 +1283,52 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
   if (!appConfig.currentPath)
     return res.status(400).json({ error: "Current directory not configured" });
 
-  const analysisKey =
-    process.platform === "win32"
-      ? path.resolve(reportRootPath).toLowerCase()
-      : path.resolve(reportRootPath);
+  const report = getReport(folderName);
+  if (
+    !report ||
+    report.reportPath !== reportPath ||
+    !parseDashboardReportPath(reportPath)
+  )
+    return res
+      .status(404)
+      .json({ error: "Report not found in the report index." });
+  const analysisKey = report.uuid;
   if (activeFailureAnalyses.has(analysisKey)) {
     return res.status(409).json({
       code: "FAILURE_ANALYSIS_IN_PROGRESS",
       error: "Failure analysis is already running for this report.",
     });
   }
-  activeFailureAnalyses.add(analysisKey);
-
   const config = appConfig;
+  const previousRuns = getAnalysisRuns(report.uuid);
+  const inventory = analysisInventory(config, previousRuns);
+  if (inventory.needsReview)
+    return res.status(409).json({
+      code: "ANALYSIS_REVIEW_REQUIRED",
+      error:
+        "Review the existing analysis data in Report Info before rerunning.",
+      inventory,
+      reportId: report.id,
+    });
+  if (
+    previousRuns.length &&
+    (replaceRunId !== previousRuns[0].id ||
+      analysisVersion !== inventory.version)
+  )
+    return res.status(409).json({
+      code: "ANALYSIS_REPLACEMENT_REQUIRED",
+      error: "Confirm deletion of the previous analysis before rerunning.",
+      inventory,
+      runId: previousRuns[0].id,
+    });
+  if (!previousRuns.length && replaceRunId)
+    return res.status(409).json({
+      code: "ANALYSIS_CHANGED",
+      error: "The previous analysis changed. Refresh and try again.",
+    });
+  activeFailureAnalyses.add(analysisKey);
+  let generationRoot = "";
+  let persisted = false;
   try {
     const result = await withCopilotAnalysisClient(
       {
@@ -1192,8 +1337,46 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
       },
       config.copilotToken || undefined,
       async (client) => {
-        const outputDir = path.join(config.currentPath, "tmp");
+        const outputDir = reportArtifactRoot(
+          config.currentPath,
+          report.uuid,
+          "analysis",
+        );
+        const allowedChildren = previousRuns
+          .filter((run) => path.dirname(run.runDir) === outputDir)
+          .map((run) => path.basename(run.runDir));
+        if (
+          fs.existsSync(outputDir) &&
+          fs
+            .readdirSync(outputDir)
+            .some((name) => !allowedChildren.includes(name))
+        )
+          throw new ArtifactError(
+            "ANALYSIS_REVIEW_REQUIRED",
+            `Untracked analysis output requires review: ${outputDir}`,
+          );
+        if (getReport(report.id)?.uuid !== report.uuid)
+          throw new ArtifactError(
+            "ANALYSIS_CHANGED",
+            "The report changed while preparing analysis.",
+          );
+        if (previousRuns.length) {
+          const removed = removeAnalysisArtifacts(
+            config,
+            getAnalysisRuns(report.uuid),
+            analysisVersion,
+            undefined,
+            getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid),
+          );
+          deleteAnalysisRunIds(report.uuid, removed);
+        }
+        if (fs.existsSync(outputDir) && fs.readdirSync(outputDir).length)
+          throw new ArtifactError(
+            "ANALYSIS_REVIEW_REQUIRED",
+            `Unexpected files remain in ${outputDir}`,
+          );
         fs.mkdirSync(outputDir, { recursive: true });
+        generationRoot = outputDir;
 
         const pkgMain =
           require.resolve("@andrii_kremlovskyi/playwright-traces-reader");
@@ -1243,34 +1426,45 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           });
         });
 
-        let manifest: FailureManifest;
-        try {
-          manifest = JSON.parse(stdout) as FailureManifest;
-        } catch {
-          return { success: true, output: stdout.trim(), outputDir };
-        }
+        const manifest = JSON.parse(stdout) as FailureManifest;
+        assertOwnedPath(outputDir, manifest.runDir);
+        if (
+          !Array.isArray(manifest.failures) ||
+          !fs.existsSync(path.join(manifest.runDir, "index.json"))
+        )
+          throw new Error(
+            "The failures command did not produce a valid analysis manifest.",
+          );
+        if (getReport(report.id)?.uuid !== report.uuid)
+          throw new ArtifactError(
+            "ANALYSIS_CHANGED",
+            "The report changed during analysis.",
+          );
+
+        const uniqueRunDir = path.join(
+          outputDir,
+          `${path.basename(manifest.runDir)}-${report.uuid}`,
+        );
+        fs.renameSync(manifest.runDir, uniqueRunDir);
+        manifest.runDir = uniqueRunDir;
+        fs.writeFileSync(
+          path.join(uniqueRunDir, "index.json"),
+          JSON.stringify(manifest, null, 2) + "\n",
+        );
 
         const relativeRunDir = path.relative(
           config.currentPath,
           manifest.runDir,
         );
-        const failuresUrl = `/reports/current/${relativeRunDir}/index.json`;
-
-        // Persist this run directory against the report (one report -> many runs; never overwrite previous).
-        try {
-          const reportUuid = getReport(folderName)?.uuid;
-          if (reportUuid) {
-            addAnalysisRun({
-              id: randomUUID(),
-              reportId: reportUuid,
-              runDir: manifest.runDir,
-              runName: path.basename(manifest.runDir),
-              createdAt: new Date().toISOString(),
-            });
-          }
-        } catch (err) {
-          console.error("Failed to persist analysis run:", err);
-        }
+        const failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join("/")}/index.json`;
+        addAnalysisRun({
+          id: randomUUID(),
+          reportId: report.uuid,
+          runDir: manifest.runDir,
+          runName: path.basename(manifest.runDir),
+          createdAt: new Date().toISOString(),
+        });
+        persisted = true;
 
         // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
         let aiSummary: AnalyzeRunSummary | null = null;
@@ -1377,6 +1571,8 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
     res.json(result);
   } catch (error: any) {
     console.error("Failures endpoint error:", error);
+    if (error instanceof ArtifactError)
+      return res.status(409).json({ code: error.code, error: error.message });
     if (error instanceof CopilotAnalysisError) {
       const status = error.code === "COPILOT_NOT_AUTHENTICATED" ? 401 : 409;
       return res.status(status).json({
@@ -1390,7 +1586,44 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
       .status(500)
       .json({ error: "Failed to analyze failures: " + error.message });
   } finally {
+    if (generationRoot && !persisted) {
+      try {
+        fs.rmSync(generationRoot, { recursive: true, force: true });
+      } catch (error) {
+        console.error("Failed to clean incomplete analysis:", error);
+      }
+    }
     activeFailureAnalyses.delete(analysisKey);
+  }
+});
+
+app.post("/api/analysis/consolidate", (req: Request, res: Response): any => {
+  refreshConfigCache();
+  const { reportId, keepRunId, version } = req.body;
+  const report = getReport(reportId);
+  if (!report) return res.status(404).json({ error: "Report not found." });
+  if (!keepRunId || !version)
+    return res
+      .status(400)
+      .json({ error: "Select an analysis and confirm the reviewed files." });
+  if (reportIsBusy(report.uuid))
+    return res
+      .status(409)
+      .json({ error: "This report has an active operation." });
+  try {
+    const removed = removeAnalysisArtifacts(
+      appConfig,
+      getAnalysisRuns(report.uuid),
+      version,
+      keepRunId,
+      getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid),
+    );
+    deleteAnalysisRunIds(report.uuid, removed);
+    return res.json({ success: true });
+  } catch (error: any) {
+    return res
+      .status(error instanceof ArtifactError ? 409 : 500)
+      .json({ code: error.code, error: error.message });
   }
 });
 
@@ -1473,123 +1706,206 @@ app.post("/api/report-tests", (req: Request, res: Response): any => {
   }
 });
 
-// Digest a single trace — runs the playwright-traces-reader `digest` command
-app.post("/api/digest-test", (req: Request, res: Response): any => {
-  refreshConfigCache();
-  const { reportPath, tracePath } = req.body;
-  if (!reportPath)
-    return res.status(400).json({ error: "reportPath is required" });
-  if (!tracePath)
-    return res.status(400).json({ error: "tracePath is required" });
+const digestRecordKey = (
+  digest: ReturnType<typeof getDigests>[number],
+  root: string,
+): string => {
+  if (digest.traceKey) return digest.traceKey;
+  const metadata = JSON.parse(
+    fs.readFileSync(
+      path.join(legacyDigestLocation(root, digest), "digest.json"),
+      "utf8",
+    ),
+  );
+  const identity = metadata.tracePath
+    ? path.basename(metadata.tracePath).replace(/\.zip$/i, "")
+    : metadata.traceSha1;
+  if (!identity || typeof identity !== "string")
+    throw new Error(
+      "A legacy digest has no trace identity. Review it in Report Info.",
+    );
+  return contentVersion(identity);
+};
 
-  try {
-    const isArchive = reportPath.startsWith("/reports/archive/");
-    const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
-    if (!basePath)
-      return res.status(400).json({ error: "Base directory not configured" });
-
-    const urlParts = reportPath.split("/");
-    if (urlParts.length < 4)
-      return res.status(400).json({ error: "Invalid report path format" });
-    const folderName = urlParts[3];
-
-    const reportRootPath = path.join(basePath, folderName);
-    if (!fs.existsSync(reportRootPath)) {
-      return res.status(404).json({ error: "Report folder not found on disk" });
-    }
-
-    // Output goes into the Current Reports Directory + tmp dir
-    if (!appConfig.currentPath)
+app.post(
+  "/api/digest-test",
+  async (req: Request, res: Response): Promise<any> => {
+    refreshConfigCache();
+    const config = appConfig;
+    const { reportPath, tracePath, replaceDigestVersion } = req.body;
+    if (typeof reportPath !== "string" || typeof tracePath !== "string")
       return res
         .status(400)
-        .json({ error: "Current directory not configured" });
-    const outputDir = path.join(appConfig.currentPath, "tmp");
-    fs.mkdirSync(outputDir, { recursive: true });
-
-    const pkgMain =
-      require.resolve("@andrii_kremlovskyi/playwright-traces-reader");
-    const cliPath = path.join(path.dirname(pkgMain), "cli.js");
-
-    const child = spawn(
-      process.execPath,
-      [
-        cliPath,
-        "digest",
-        tracePath,
-        outputDir,
-        "--report",
-        reportRootPath,
-        "--format",
-        "json",
-      ],
-      {
-        cwd: appConfig.currentPath,
-      },
-    );
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (err) => {
-      console.error("digest command spawn error:", err);
-      res
-        .status(500)
-        .json({ error: "Failed to start digest command: " + err.message });
-    });
-
-    child.on("close", (code) => {
-      if (code !== 0) {
-        console.error("digest command failed:", stderr || stdout);
-        return res.status(500).json({
-          error:
-            "digest command failed: " + (stderr.trim() || `exit code ${code}`),
+        .json({ error: "reportPath and tracePath are required" });
+    let jobKey = "";
+    let staging = "";
+    try {
+      const parsed = parseDashboardReportPath(reportPath);
+      const report = parsed ? getReport(parsed.folderName) : undefined;
+      if (!parsed || !report || report.reportPath !== reportPath)
+        return res.status(404).json({ error: "Report not found." });
+      const basePath =
+        parsed.scope === "archive" ? config.archivePath : config.currentPath;
+      if (!basePath || !config.currentPath)
+        throw new Error("Report storage is not configured.");
+      const reportRoot = path.join(basePath, report.id);
+      assertOwnedPath(basePath, reportRoot);
+      const traceKey = traceIdentity(reportRoot, tracePath);
+      if (!fs.existsSync(tracePath))
+        return res.status(404).json({ error: "Trace not found." });
+      const key = `${report.uuid}:${traceKey}`;
+      if (activeDigests.has(key))
+        return res.status(409).json({
+          code: "DIGEST_IN_PROGRESS",
+          error: "This trace is already being digested.",
         });
-      }
-      try {
-        const manifest = JSON.parse(stdout);
-        const relativeRunDir = path.relative(
-          appConfig.currentPath!,
-          manifest.runDir,
+      const root = reportArtifactRoot(
+        config.currentPath,
+        report.uuid,
+        "digests",
+      );
+      const records = getDigests(report.uuid);
+      const previous = records.filter((digest) => {
+        assertOwnedPath(
+          path.join(config.currentPath, "tmp"),
+          path.join(digest.runDir, digest.folder),
         );
-        const digestUrl = `/reports/current/${relativeRunDir}/${manifest.folder}`;
-        const digestFolder = path.join(relativeRunDir, manifest.folder);
-
-        // Persist this digest against the report (one report -> many digests; keyed by stable uuid).
-        try {
-          const reportUuid = getReport(folderName)?.uuid;
-          if (reportUuid) {
-            addDigest({
-              id: randomUUID(),
-              reportId: reportUuid,
-              runDir: manifest.runDir,
-              folder: manifest.folder,
-              testTitle: manifest.testTitle || manifest.title || "",
-              createdAt: new Date().toISOString(),
-            });
-          }
-        } catch (err) {
-          console.error("Failed to persist digest:", err);
-        }
-
-        res.json({ success: true, digestFolder, digestUrl, manifest });
-      } catch (e: any) {
-        console.error("Failed to parse digest JSON:", e);
-        res
-          .status(500)
-          .json({ error: "Invalid JSON response from digest command" });
+        return digestRecordKey(digest, root) === traceKey;
+      });
+      const replacementVersion = contentVersion(JSON.stringify(previous));
+      if (previous.length > 1 && replaceDigestVersion !== replacementVersion)
+        return res.status(409).json({
+          code: "DIGEST_REPLACEMENT_REQUIRED",
+          error:
+            "Multiple digests exist for this trace. Confirm replacing these copies with one digest.",
+          version: replacementVersion,
+          paths: previous.map((digest) =>
+            path.join(digest.runDir, digest.folder),
+          ),
+        });
+      activeDigests.add(key);
+      jobKey = key;
+      fs.mkdirSync(root, { recursive: true });
+      for (const digest of records) {
+        if (path.resolve(digest.runDir) === path.resolve(root)) continue;
+        moveLegacyDigest(root, digest, (folder) =>
+          relocateDigest(digest.id, root, folder, digest.traceKey || ""),
+        );
+        digest.runDir = root;
+        digest.folder = `legacy-${digest.id}`;
       }
-    });
-  } catch (error: any) {
-    console.error("Digest test endpoint error:", error);
-    res.status(500).json({ error: "Failed to digest test: " + error.message });
-  }
-});
+      staging = fs.mkdtempSync(path.join(root, ".staging-"));
+      const pkgMain =
+        require.resolve("@andrii_kremlovskyi/playwright-traces-reader");
+      const stdout = await new Promise<string>((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          [
+            path.join(path.dirname(pkgMain), "cli.js"),
+            "digest",
+            tracePath,
+            staging,
+            "--report",
+            reportRoot,
+            "--format",
+            "json",
+          ],
+          { cwd: config.currentPath },
+        );
+        let output = "";
+        let errors = "";
+        child.stdout.on("data", (chunk) => {
+          output += chunk.toString();
+        });
+        child.stderr.on("data", (chunk) => {
+          errors += chunk.toString();
+        });
+        child.on("error", reject);
+        child.on("close", (code) =>
+          code === 0
+            ? resolve(output)
+            : reject(
+                new Error(
+                  errors.trim() || `Digest command exited with ${code}`,
+                ),
+              ),
+        );
+      });
+      const manifest = JSON.parse(stdout);
+      assertOwnedPath(staging, manifest.runDir);
+      const source = path.join(manifest.runDir, manifest.folder);
+      assertOwnedPath(manifest.runDir, source);
+      const metadata = JSON.parse(
+        fs.readFileSync(path.join(source, "digest.json"), "utf8"),
+      );
+      if (
+        typeof metadata.tracePath !== "string" ||
+        traceIdentity(reportRoot, metadata.tracePath) !== traceKey
+      )
+        throw new Error("Digest output does not match the requested trace.");
+      if (getReport(report.id)?.uuid !== report.uuid)
+        throw new Error("The report changed during digestion.");
+      const canonical = path.join(root, traceKey);
+      if (
+        fs.existsSync(canonical) &&
+        !previous.some(
+          (digest) => path.join(digest.runDir, digest.folder) === canonical,
+        )
+      )
+        throw new Error(
+          `Untracked digest output requires review: ${canonical}`,
+        );
+      publishDigest(root, traceKey, source, () =>
+        replaceDigests(
+          {
+            id: previous[0]?.id || randomUUID(),
+            reportId: report.uuid,
+            traceKey,
+            runDir: root,
+            folder: traceKey,
+            testTitle: manifest.testTitle || manifest.title || "",
+            createdAt: new Date().toISOString(),
+          },
+          previous.map((digest) => digest.id),
+        ),
+      );
+      for (const digest of previous) {
+        const obsolete = path.join(digest.runDir, digest.folder);
+        if (obsolete !== canonical)
+          fs.rmSync(obsolete, { recursive: true, force: true });
+      }
+      const digestFolder = path
+        .relative(config.currentPath, canonical)
+        .split(path.sep)
+        .join("/");
+      return res.json({
+        success: true,
+        digestFolder,
+        digestUrl: `/reports/current/${digestFolder}`,
+        manifest: {
+          ...manifest,
+          outputDir: root,
+          runDir: root,
+          folder: traceKey,
+        },
+      });
+    } catch (error: any) {
+      return res.status(error instanceof ArtifactError ? 409 : 500).json({
+        code: error.code,
+        error: "Failed to digest test: " + error.message,
+      });
+    } finally {
+      if (staging) {
+        try {
+          fs.rmSync(staging, { recursive: true, force: true });
+        } catch (error) {
+          console.error("Failed to clean digest staging:", error);
+        }
+      }
+      if (jobKey) activeDigests.delete(jobKey);
+    }
+  },
+);
 
 // Auto-archive report endpoint
 app.post("/api/archive", (req: Request, res: Response): any => {
@@ -2544,6 +2860,10 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
       folderExists,
       runs,
       digests,
+      analysisInventory: analysisInventory(
+        appConfig,
+        getAnalysisRuns(report.uuid),
+      ),
     });
   } catch (error: any) {
     console.error("Report info error:", error.message);
@@ -2824,6 +3144,23 @@ app.put("/api/vault/:filename", (req: Request, res: Response): any => {
 
   // Try to resolve existing file first (covers both vaultPath and archivePath/analysis/)
   const existing = resolveVaultFile(safeName.replace(/\.md$/, ""));
+  if (req.body.expectedVersion !== undefined) {
+    if (
+      !existing ||
+      contentVersion(fs.readFileSync(existing, "utf8")) !==
+        req.body.expectedVersion
+    )
+      return res.status(409).json({
+        error: "This analysis was changed or deleted. Reload before saving.",
+      });
+  }
+  const owningRun = getAllAnalysisRuns().find(
+    (run) => run.runName === safeName.replace(/\.md$/, ""),
+  );
+  if (owningRun && reportIsBusy(owningRun.reportId))
+    return res.status(409).json({
+      error: "Wait for this report's active operation before saving.",
+    });
   if (existing) {
     try {
       fs.writeFileSync(existing, content, "utf-8");
@@ -2960,6 +3297,7 @@ const renderVaultPage = (
   </main>
   <script>
     const saveUrl = ${JSON.stringify(saveUrl)};
+    const expectedVersion = ${JSON.stringify(contentVersion(rawContent))};
     const editBtn = document.getElementById('edit-btn');
     const saveBtn = document.getElementById('save-btn');
     const cancelBtn = document.getElementById('cancel-btn');
@@ -2998,7 +3336,7 @@ const renderVaultPage = (
         const res = await fetch(saveUrl, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: editor.value })
+          body: JSON.stringify({ content: editor.value, expectedVersion })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Save failed');
@@ -3075,6 +3413,14 @@ app.put(
     if (!resolved)
       return res.status(404).json({ error: "Grouped analysis file not found" });
     try {
+      if (
+        req.body.expectedVersion !== undefined &&
+        contentVersion(fs.readFileSync(resolved, "utf8")) !==
+          req.body.expectedVersion
+      )
+        return res
+          .status(409)
+          .json({ error: "This analysis changed. Reload before saving." });
       fs.writeFileSync(resolved, content, "utf-8");
       return res.json({ success: true });
     } catch (error: any) {
@@ -3150,8 +3496,9 @@ app.use((req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(
-    `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`,
-  );
-});
+if (require.main === module)
+  app.listen(PORT, () => {
+    console.log(
+      `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`,
+    );
+  });

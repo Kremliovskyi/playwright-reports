@@ -57,6 +57,7 @@ export interface AnalysisRun {
 export interface Digest {
   id: string;
   reportId: string;
+  traceKey?: string;
   runDir: string;
   folder: string;
   testTitle: string;
@@ -101,7 +102,9 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 // --- Database Connection ---
-const DB_PATH = path.join(__dirname, "..", "app.db");
+const DB_PATH =
+  process.env.PLAYWRIGHT_REPORTS_DB_PATH ||
+  path.join(__dirname, "..", "app.db");
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 
@@ -237,6 +240,15 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_digests_reportId ON digests(reportId);
 `);
+
+const digestColumns = db.prepare("PRAGMA table_info(digests)").all() as {
+  name: string;
+}[];
+if (!digestColumns.some((column) => column.name === "traceKey"))
+  db.exec("ALTER TABLE digests ADD COLUMN traceKey TEXT NOT NULL DEFAULT ''");
+db.exec(
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_digests_trace ON digests(reportId, traceKey) WHERE traceKey <> ''",
+);
 
 // Ensure default config row exists
 const existing = db
@@ -406,10 +418,20 @@ export const pruneOrphanAnalysisRuns = (): void => {
 
 // --- Analysis Run Operations ---
 export const addAnalysisRun = (run: AnalysisRun): void => {
-  db.prepare(
-    `INSERT OR IGNORE INTO analysis_runs (id, reportId, runDir, runName, createdAt)
-     VALUES (?, ?, ?, ?, ?)`,
-  ).run(run.id, run.reportId, run.runDir, run.runName, run.createdAt);
+  db.transaction(() => {
+    if (
+      db
+        .prepare("SELECT id FROM analysis_runs WHERE reportId = ?")
+        .get(run.reportId)
+    )
+      throw new Error(
+        "This report already has an analysis. Confirmation is required to replace it.",
+      );
+    db.prepare(
+      `INSERT INTO analysis_runs (id, reportId, runDir, runName, createdAt)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(run.id, run.reportId, run.runDir, run.runName, run.createdAt);
+  }).immediate();
 };
 
 export const getAnalysisRuns = (reportId: string): AnalysisRun[] => {
@@ -428,6 +450,16 @@ export const getAllAnalysisRuns = (): AnalysisRun[] => {
 
 export const deleteAnalysisRunsByReport = (reportId: string): void => {
   db.prepare("DELETE FROM analysis_runs WHERE reportId = ?").run(reportId);
+};
+
+export const deleteAnalysisRunIds = (reportId: string, ids: string[]): void => {
+  db.transaction(() => {
+    for (const id of ids)
+      db.prepare("DELETE FROM analysis_runs WHERE reportId = ? AND id = ?").run(
+        reportId,
+        id,
+      );
+  })();
 };
 
 // Detach the (ephemeral) output directory reference from a run while keeping the
@@ -461,8 +493,11 @@ export const renameAnalysisRunsReport = (
 // --- Digest Operations ---
 export const addDigest = (digest: Digest): void => {
   db.prepare(
-    `INSERT OR IGNORE INTO digests (id, reportId, runDir, folder, testTitle, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO digests (id, reportId, runDir, folder, testTitle, createdAt, traceKey)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(reportId, traceKey) WHERE traceKey <> '' DO UPDATE SET
+       runDir = excluded.runDir, folder = excluded.folder,
+       testTitle = excluded.testTitle, createdAt = excluded.createdAt`,
   ).run(
     digest.id,
     digest.reportId,
@@ -470,7 +505,30 @@ export const addDigest = (digest: Digest): void => {
     digest.folder,
     digest.testTitle,
     digest.createdAt,
+    digest.traceKey || "",
   );
+};
+
+export const relocateDigest = (
+  id: string,
+  runDir: string,
+  folder: string,
+  traceKey: string,
+): void => {
+  db.prepare(
+    "UPDATE digests SET runDir = ?, folder = ?, traceKey = ? WHERE id = ?",
+  ).run(runDir, folder, traceKey, id);
+};
+
+export const replaceDigests = (digest: Digest, previousIds: string[]): void => {
+  db.transaction(() => {
+    for (const id of previousIds)
+      db.prepare("DELETE FROM digests WHERE reportId = ? AND id = ?").run(
+        digest.reportId,
+        id,
+      );
+    addDigest(digest);
+  }).immediate();
 };
 
 export const getDigests = (reportId: string): Digest[] => {

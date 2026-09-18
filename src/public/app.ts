@@ -1924,13 +1924,50 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
-      const response = await fetch("/api/failures", {
+      let response = await fetch("/api/failures", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reportPath }),
       });
-      const data = await response.json();
+      let data = await response.json();
+      while (data.code === "ANALYSIS_REPLACEMENT_REQUIRED") {
+        const paths = data.inventory.entries.flatMap(
+          (entry: AnalysisInventoryEntry) => [
+            ...(entry.output ? [entry.output.path] : []),
+            ...entry.notes.map((note) => note.path),
+          ],
+        );
+        const confirmed = await openConfirm({
+          title: "Analyze again?",
+          message:
+            "This permanently deletes the existing analysis output and saved analysis file before starting a new analysis. If the new run fails, the previous analysis cannot be restored.",
+          path: paths.join("\n"),
+          confirmLabel: "Delete & Analyze",
+        });
+        if (!confirmed) {
+          row.querySelector(".row-progress-overlay")?.classList.add("hidden");
+          return;
+        }
+        response = await fetch("/api/failures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reportPath,
+            replaceRunId: data.runId,
+            analysisVersion: data.inventory.version,
+          }),
+        });
+        data = await response.json();
+      }
       if (!response.ok) {
+        if (
+          data.code === "ANALYSIS_REVIEW_REQUIRED" &&
+          data.inventory?.needsReview
+        ) {
+          row.querySelector(".row-progress-overlay")?.classList.add("hidden");
+          openReportInfoModal(data.reportId || reportPath.split("/")[3]);
+          return;
+        }
         if (data.code === "FAILURE_ANALYSIS_IN_PROGRESS") {
           hideRowProgress(row, "error", "Analysis already running");
           return;
@@ -1962,10 +1999,15 @@ document.addEventListener("DOMContentLoaded", () => {
         count === 0
           ? "No failures"
           : `${count} failure${count === 1 ? "" : "s"}`;
-      hideRowProgress(row, "success", label);
+      const hasWarnings = data.aiError || data.groupingError || data.ai?.failed;
+      hideRowProgress(
+        row,
+        hasWarnings ? "error" : "success",
+        hasWarnings ? "Analysis has warnings" : label,
+      );
 
       // Populate and open the failures modal, including evidence-record outcome.
-      let statusText = `Analyzed failures successfully! ${count === 0 ? "No failures" : `${count} failure${count === 1 ? "" : "s"} found.`}`;
+      let statusText = `${hasWarnings ? "Analysis completed with warnings." : "Analyzed failures successfully!"} ${count === 0 ? "No failures" : `${count} failure${count === 1 ? "" : "s"} found.`}`;
       if (data.ai) {
         statusText +=
           ` Evidence records: ${data.ai.analyzed} written` +
@@ -2052,6 +2094,9 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       if (aiEvents) aiEvents.close();
       activeFailureAnalyses.delete(reportPath);
+      await fetchAnalysisRuns();
+      if (reportInfoCurrentReportId === reportPath.split("/")[3])
+        await loadReportInfo(reportInfoCurrentReportId);
     }
   };
 
@@ -2275,6 +2320,27 @@ document.addEventListener("DOMContentLoaded", () => {
     folderExists: boolean;
     runs: ReportInfoRun[];
     digests: ReportInfoDigest[];
+    analysisInventory: AnalysisInventory;
+  }
+  interface AnalysisInventoryEntry {
+    id: string;
+    runName: string;
+    createdAt: string;
+    output: { path: string } | null;
+    notes: { path: string }[];
+  }
+  interface AnalysisInventory {
+    version: string;
+    needsReview: boolean;
+    duplicated: boolean;
+    entries: AnalysisInventoryEntry[];
+    choices: {
+      runId: string;
+      keepPaths: string[];
+      removePaths: string[];
+      blockedReason: string;
+    }[];
+    issues: string[];
   }
   interface ReportInfoDigest {
     id: string;
@@ -2358,6 +2424,24 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const renderReportInfo = (info: ReportInfoResponse): void => {
     reportInfoName.textContent = info.reportId;
+    const review = document.getElementById("report-info-review")!;
+    review.replaceChildren();
+    review.classList.toggle("hidden", !info.analysisInventory?.needsReview);
+    if (info.analysisInventory?.needsReview) {
+      const message = document.createElement("p");
+      message.textContent = info.analysisInventory.duplicated
+        ? "Duplicate analysis data found. No files have been deleted."
+        : "Existing analysis records need review. All files have been preserved.";
+      const button = document.createElement("button");
+      button.className = "btn";
+      button.textContent = "Review analysis data";
+      button.addEventListener(
+        "click",
+        () =>
+          void reviewAnalysisDuplicates(info.reportId, info.analysisInventory),
+      );
+      review.append(message, button);
+    }
     const runs = info.runs || [];
     if (runs.length === 0) {
       reportInfoRuns.innerHTML =
@@ -2512,16 +2596,67 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Generic promise-based delete confirmation.
   let confirmResolve: ((value: boolean) => void) | null = null;
+  let confirmPreviousFocus: HTMLElement | null = null;
+  const confirmOptions = document.getElementById("confirm-delete-options")!;
   const openConfirm = (opts: {
     title: string;
     message: string;
     path?: string;
+    confirmLabel?: string;
+    choices?: {
+      label: string;
+      path: string;
+      disabled: boolean;
+      reason: string;
+    }[];
+    onSelect?: (index: number) => void;
   }): Promise<boolean> => {
+    if (confirmResolve) return Promise.resolve(false);
+    confirmPreviousFocus = document.activeElement as HTMLElement;
     confirmDeleteTitle.textContent = opts.title;
     confirmDeleteMessage.textContent = opts.message;
     confirmDeletePath.textContent = opts.path || "";
     confirmDeletePath.classList.toggle("hidden", !opts.path);
+    confirmDeleteConfirmBtn.textContent = opts.confirmLabel || "Delete";
+    confirmDeleteConfirmBtn.disabled = !!opts.choices;
+    confirmOptions.replaceChildren();
+    confirmOptions.classList.toggle("hidden", !opts.choices);
+    if (opts.choices) {
+      const label = document.createElement("label");
+      label.textContent = "Analysis to keep";
+      label.htmlFor = "confirm-analysis-selection";
+      const select = document.createElement("select");
+      select.id = "confirm-analysis-selection";
+      select.style.maxWidth = "100%";
+      select.add(new Option("Select analysis", ""));
+      opts.choices.forEach((choice, index) => {
+        const option = new Option(choice.label, String(index));
+        option.disabled = choice.disabled;
+        select.add(option);
+      });
+      const issues = document.createElement("p");
+      issues.textContent = [
+        ...new Set(
+          opts.choices
+            .filter((choice) => choice.disabled)
+            .map((choice) => choice.reason),
+        ),
+      ].join(" ");
+      select.addEventListener("change", () => {
+        const choice =
+          select.value === "" ? undefined : opts.choices![Number(select.value)];
+        confirmDeleteConfirmBtn.disabled = !choice || choice.disabled;
+        confirmDeletePath.textContent = choice?.path || opts.path || "";
+        confirmDeletePath.classList.toggle(
+          "hidden",
+          !confirmDeletePath.textContent,
+        );
+        if (choice) opts.onSelect?.(Number(select.value));
+      });
+      confirmOptions.append(label, select, issues);
+    }
     confirmDeleteModal.classList.remove("hidden");
+    confirmDeleteCancelBtn.focus();
     return new Promise<boolean>((resolve) => {
       confirmResolve = resolve;
     });
@@ -2532,12 +2667,92 @@ document.addEventListener("DOMContentLoaded", () => {
       confirmResolve(result);
       confirmResolve = null;
     }
+    confirmPreviousFocus?.focus();
   };
   confirmDeleteConfirmBtn.addEventListener("click", () => closeConfirm(true));
   confirmDeleteCancelBtn.addEventListener("click", () => closeConfirm(false));
   closeConfirmDeleteModalBtn.addEventListener("click", () =>
     closeConfirm(false),
   );
+  confirmDeleteModal.addEventListener("click", (event) => {
+    if (event.target === confirmDeleteModal) closeConfirm(false);
+  });
+  confirmDeleteModal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeConfirm(false);
+    }
+    if (event.key === "Tab") {
+      const elements = Array.from(
+        confirmDeleteModal.querySelectorAll<HTMLElement>(
+          "button:not(:disabled), select",
+        ),
+      ).filter((element) => element.offsetParent !== null);
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      }
+      if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+  });
+
+  const reviewAnalysisDuplicates = async (
+    reportId: string,
+    inventory: AnalysisInventory,
+  ): Promise<void> => {
+    let selected = -1;
+    const confirmed = await openConfirm({
+      title: inventory.duplicated
+        ? "Duplicate analysis data found"
+        : "Analysis data needs review",
+      message: `Report: ${reportId}. Only the duplicate files listed for removal will be deleted. The selected analysis will be preserved.`,
+      path: inventory.entries
+        .flatMap((entry) => [
+          entry.runName,
+          ...(entry.output ? [entry.output.path] : []),
+          ...entry.notes.map((note) => note.path),
+        ])
+        .join("\n"),
+      confirmLabel: "Delete Selected Duplicates",
+      choices: inventory.choices.map((choice) => ({
+        label:
+          inventory.entries.find((entry) => entry.id === choice.runId)
+            ?.runName || choice.runId,
+        path: `KEEP\n${choice.keepPaths.join("\n")}\n\nDELETE\n${choice.removePaths.join("\n") || "No files (duplicate records only)"}`,
+        disabled: !!choice.blockedReason,
+        reason: choice.blockedReason,
+      })),
+      onSelect: (index) => {
+        selected = index;
+      },
+    });
+    if (!confirmed || selected < 0) return;
+    try {
+      const response = await fetch("/api/analysis/consolidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reportId,
+          keepRunId: inventory.choices[selected].runId,
+          version: inventory.version,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok)
+        throw new Error(
+          data.error || "Failed to remove duplicate analysis data.",
+        );
+    } catch (error) {
+      showErrorDialog("Analysis cleanup failed", error);
+    }
+    await refreshAfterRunChange();
+  };
 
   const refreshAfterRunChange = async (): Promise<void> => {
     try {
@@ -2815,12 +3030,34 @@ document.addEventListener("DOMContentLoaded", () => {
     container.innerHTML = "";
 
     try {
-      const res = await fetch("/api/digest-test", {
+      let res = await fetch("/api/digest-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reportPath, tracePath }),
       });
-      const data = await res.json();
+      let data = await res.json();
+      while (data.code === "DIGEST_REPLACEMENT_REQUIRED") {
+        const confirmed = await openConfirm({
+          title: "Replace duplicate digests?",
+          message: data.error,
+          path: data.paths.join("\n"),
+          confirmLabel: "Replace Digests",
+        });
+        if (!confirmed) {
+          btn.innerHTML = originalHtml;
+          return;
+        }
+        res = await fetch("/api/digest-test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reportPath,
+            tracePath,
+            replaceDigestVersion: data.version,
+          }),
+        });
+        data = await res.json();
+      }
       if (!res.ok) throw new Error(data.error);
 
       btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check"><path d="M20 6 9 17l-5-5"/></svg> Digested`;

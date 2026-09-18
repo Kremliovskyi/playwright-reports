@@ -15,11 +15,15 @@ Use the **Copilot** tab in [Preferences](configuration.md#copilot) to configure 
 3. Keep the dashboard open while the row progress bar is active. Large reports and antivirus scanning can make this operation take time.
 4. When analysis finishes, use **Copy Relative Path**, **View index.json**, or **View grouped-analysis.md** in the completion dialog.
 
+Each report retains one analysis output set. When an analysis already exists, **Analyze Failures** opens a warning with **Delete & Analyze** and **Cancel**. Confirming permanently removes the previous output and its saved vault note before generation starts. If the new run fails, the previous analysis cannot be restored. Cancel, Escape, and closing the warning leave existing files unchanged. Invalid configuration or unavailable Copilot access is checked before deletion.
+
 The dashboard runs the installed [`@andrii_kremlovskyi/playwright-traces-reader`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-traces-reader) `failures` command and writes output below the Current Reports Directory:
 
 ```text
-<currentPath>/tmp/run-<timestamp>/
+<currentPath>/tmp/analysis-<reportUuid>/run-<timestamp>-<reportUuid>/
 ```
+
+Existing analysis paths remain unchanged until an explicitly confirmed rerun. Manual trace digests are stored separately and are never deleted by analysis replacement.
 
 ## Concurrent requests and trace extraction
 
@@ -195,11 +199,11 @@ Depending on the available trace data, each failure folder can contain:
 - `evidence.json`
 - `ai-analysis.md`
 
-## Manage analysis runs
+## Manage analysis
 
-Every successful failure-analysis run is stored against the report's stable identity and appears under **Analysis runs** in the report's **Info** dialog. Each run can have two independently managed artifacts:
+The retained analysis is stored against the report's stable identity and appears under **Analysis** in the report's **Info** dialog. Partial results remain inspectable when AI analysis or grouping fails; the completion dialog reports the warning. An analysis can have two independently managed artifacts:
 
-- **Output directory:** The ephemeral `<currentPath>/tmp/run-<timestamp>/` directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `evidence.json`, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
+- **Output directory:** The ephemeral run directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `evidence.json`, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
 - **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
 
 The artifacts follow this lifecycle:
@@ -212,5 +216,21 @@ The artifacts follow this lifecycle:
 - **Report removed or replaced outside the dashboard:** The next directory scan removes run records belonging to the missing report instance and prevents them from being attached to a new report that reuses the same folder name.
 
 Deleting an output directory does not change the Playwright report folder itself; analysis output lives under the Current Reports Directory's separate `tmp` folder.
+
+### Existing reports and duplicate history
+
+Upgrading does not delete, regenerate, relocate, or rewrite existing analysis files. Reports with one analysis keep their paths, saved notes, and links, including archived reports. One output directory plus its grouped analysis, per-attempt evidence, and optional vault note is one analysis, not duplicate data.
+
+When older reports contain multiple outputs or competing saved analysis notes, **Info** displays **Review analysis data**. The confirmation lists the exact paths to keep and delete and requires an explicit keeper selection. Only confirmed surplus artifacts are removed. The only remaining output or saved note cannot be selected for duplicate removal. Cancel preserves every artifact and mapping.
+
+Ambiguous ownership, complementary records, unsafe paths, and conflicting file locations block automatic consolidation. Those records remain accessible for manual review; they are not silently discarded or hidden. A new analysis is blocked until the review is resolved. Cleanup confirmation and **Delete & Analyze** are separate actions.
+
+The server also enforces confirmation for direct API requests and rejects stale approvals. Archive, rename, storage-path changes, and artifact deletion cannot interfere with active jobs. A vault editor opened before a note was changed or deleted must reload before saving.
+
+### Development verification
+
+Run `npm test` from this project. Artifact tests use disposable SQLite databases and synthetic report files below `tests/`; they do not use configured report directories or another project's test suite. `PLAYWRIGHT_REPORTS_DB_PATH` overrides the database location for an isolated test server.
+
+Focused check: `npm run build && node --test tests/report-artifacts.test.js`. The tests include preservation, explicit consent, duplicate review, interrupted digest relocation, concurrent requests, the installed trace-reader CLI, and archive behavior. Browser checks are in `tests/artifact-browser.js`, run through `playwright-cli run-code --filename=tests/artifact-browser.js` against `tests/artifact-test-server.cjs` with `ARTIFACT_TEST_SEED=browser`, a disposable `ARTIFACT_TEST_ROOT`, and `PLAYWRIGHT_REPORTS_DB_PATH` set inside that root. Never point the synthetic server at a real report database.
 
 For one test rather than every failure in a report, use [Selective Trace Digestion](trace-digestion.md).

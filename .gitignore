@@ -128,3 +128,8 @@ app.db-shm
 
 # Build output
 dist/
+
+.playwright-cli/
+tests/.artifacts-*/
+tests/.browser-*/
+tests/.browser-results/

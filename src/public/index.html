@@ -1274,7 +1274,8 @@
               >
             </div>
           </div>
-          <h3 class="report-info-runs-title">Analysis runs</h3>
+          <h3 class="report-info-runs-title">Analysis</h3>
+          <div id="report-info-review" class="hidden"></div>
           <div id="report-info-runs" class="report-info-runs"></div>
           <h3 class="report-info-runs-title">Digests</h3>
           <div id="report-info-digests" class="report-info-runs"></div>
@@ -1294,7 +1295,14 @@
     </div>
 
     <!-- Generic Delete Confirmation Modal -->
-    <div id="confirm-delete-modal" class="modal-backdrop hidden">
+    <div
+      id="confirm-delete-modal"
+      class="modal-backdrop hidden"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-delete-title"
+      aria-describedby="confirm-delete-message"
+    >
       <div class="modal-content" style="max-width: 460px">
         <div class="modal-header">
           <h2 id="confirm-delete-title">Confirm deletion</h2>
@@ -1327,7 +1335,14 @@
           <div
             id="confirm-delete-path"
             class="digest-path-value confirm-delete-path"
+            style="
+              white-space: pre-wrap;
+              overflow-wrap: anywhere;
+              max-height: 35vh;
+              overflow: auto;
+            "
           ></div>
+          <div id="confirm-delete-options" class="hidden"></div>
         </div>
         <div
           class="modal-footer"

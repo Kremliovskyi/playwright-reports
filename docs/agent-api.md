@@ -10,6 +10,8 @@ The dashboard exposes a local-first API for discovering reports and resolving th
 
 Searches the persisted report index and returns descriptors with an opaque, stable `reportRef`. Each descriptor also contains `analysisFiles`, an array of available `run-<timestamp>` vault note names.
 
+The array shape is unchanged. Reconciled reports have at most one retained analysis; legacy duplicates stay accessible until their removal is explicitly confirmed in **Report Info**. Upgrade does not remove single existing analyses or change their links.
+
 ### `GET /api/agent/reports/prepare?reportRef=...`
 
 Resolves a selected report descriptor into local analysis-ready values such as the report root and `data/` directory.
@@ -41,5 +43,7 @@ The intended sequence is:
 ## Responsibility boundary
 
 `playwright-reports` owns report inventory, metadata and date search, and local path resolution. It does not parse traces or reimplement summary, network, DOM, or failure-analysis commands.
+
+Dashboard-generated manual digests share a report-owned `tmp/digests-<reportUuid>/` directory. Agents consuming those paths must not remove that directory as scratch cleanup. Standalone CLI output remains caller-owned and is not subject to dashboard retention.
 
 `playwright-traces-reader` owns trace parsing and higher-level analysis. A future remote-storage implementation can materialize the report behind the same prepare step without changing the parser's contract.

@@ -152,12 +152,45 @@ The header search panel behaves as a persistent filter control rather than a tem
 
 - **Draft vs applied state:** The frontend keeps a distinction between the values currently typed into the open dialog and the values currently applied to the dashboard. This is why the dialog can be closed without clearing the filtered result set.
 - **Close behavior:** Clicking the `X` only hides the panel. It does not clear the active filter.
-- **Reset behavior:** The explicit `Reset` action clears the applied filter, clears the form values, and restores the cached unfiltered dashboard.
+- **Date defaults:** Search and Trends calculate UTC creation-date extrema over the complete Current + Archive catalog using `TrendModel.dateBounds`. They do not depend on metadata, a filtered table, or array ordering. Empty catalogs leave dates blank and disabled. Defaults are draft values, not applied filters; untouched full bounds are omitted when submitting Search so future reports are not hidden.
+- **Reset behavior:** The explicit `Reset` action clears metadata and the applied filter, repopulates full-catalog date defaults, and restores the cached unfiltered dashboard. Explicit date edits survive reopening an applied Search.
 - **Header signal:** When a filter is applied, the Search button remains highlighted so the filtered state is visible even when the dialog is closed.
 - **Refresh gating:** Refresh is disabled only while the dialog is open. Once the panel is closed, Refresh is available again even if a filter remains applied.
 - **Row actions remain live:** Archive, delete, extract, rename, and metadata editing are still allowed while the dashboard is filtered.
 
 This model reduces layout disruption because the floating panel can be closed while leaving the filtered table view intact.
+
+## On-Demand Test Trends
+
+The dashboard-level Trends dialog uses [src/report-trends.ts](src/report-trends.ts) for read-only source parsing, [src/public/trends-model.ts](src/public/trends-model.ts) for shared calculations/export projection, and [src/public/trends.ts](src/public/trends.ts) for both live and offline rendering. The shared DTO is declared in [src/public/trends-types.d.ts](src/public/trends-types.d.ts). Styling is scoped in [src/public/trends.css](src/public/trends.css).
+
+### Catalog and generation boundary
+
+- Opening Trends and applying its filters explicitly refresh the catalog through the existing `/api/reports` scan. This does not render an unfiltered dashboard over an applied Search. `/api/report-search` remains a read-only query over persisted catalog rows.
+- `ReportInfo` exposes the stable `uuid` in addition to the existing folder ID and path. `POST /api/trends` accepts `reportUuids`, resolves the current records, and reads their HTML sequentially. It returns a versioned dataset with report descriptors, series, attempts, and per-report issues. It does not scan, mutate SQLite, spawn the trace CLI, or create artifacts.
+- The reader uses `adm-zip` in memory for the embedded `report.json` and referenced per-file JSON. It recognizes legacy `window.playwrightReportBase64`, script, and template embedding styles. The summary alone lacks per-attempt duration/status, so it cannot replace detailed test JSON. Traces and even a `data/` directory are unnecessary.
+- Input is bounded to 500 selected reports, 128 MB per source HTML, and 64 MB per decompressed JSON entry. Unsupported/malformed reports remain explicit issues; valid reports can still contribute. Partial data is never silently presented as a complete selection.
+- Report inclusion, test/project filtering, sorting, metric changes, and point selection use the current browser dataset. Only 40 test rows/sparklines are rendered per page. Closing aborts requests, disconnects observers, and releases the dataset. Request sequencing prevents canceled generations from overwriting newer results.
+
+No timing table, durable cache, historical/deleted-report record, export directory, or vault change is introduced. Existing archive/deletion policy is unchanged.
+
+### Identity and measurements
+
+Series keys hash a versioned tuple of project, slash-normalized spec path, suite path, exact leaf title, and repeat index. Only the observed trailing `[ENV REG - numeric/slash/date]` suite pattern has its date removed; environment/region and leaf titles remain intact. Test IDs are report-local link identities, not cross-run matching keys. Collisions within one report cause all observations of that key to remain separate and marked ambiguous.
+
+Values are milliseconds. Passed duration requires a real `passed` attempt; `outcome: expected` alone is insufficient because it also includes expected failures. Total duration sums attempts once and must agree with report totals. Skipped/not-run values are null; a genuine zero-duration execution remains zero. `repeatEach` entries remain separate, not retries.
+
+Chart ordering uses execution `startTime`, falling back to earliest attempt time then catalog date with a visible fallback label. Catalog filtering deliberately retains Search's existing UTC creation-date basis. Baseline calculations use five earlier physically passing executions with expected/flaky outcomes, exclude the latest report, and suppress percentages when insufficient or zero. Missing/failed latest values never carry forward an older success.
+
+### Source links and sharing
+
+`GET /api/trends/reports/:uuid/test?testId=...&run=...&version=...` resolves a report by UUID through a read-only database lookup. It checks managed-root containment, symlinks, folder birthtime, source-file stability, the SHA-256 of the captured HTML, and test/result existence before redirecting to the current `index.html#?testId=...&run=<result-array-index>`. `Cache-Control: no-store` prevents stale redirects. Existing agent `reportRef` values encode paths and are intentionally not used here. Rename/archive works; missing or changed sources return clear 404/409 responses. This also protects against an in-place HTML rewrite that preserves folder birthtime/UUID.
+
+The download action projects an allowlisted dataset for only the selected test and included reports, replacing source UUIDs with snapshot-local IDs and removing test link IDs, versions, absolute paths, and all non-timing artifacts. It inlines the shared compiled model/viewer and CSS in one HTML Blob. Embedded data is escaped and report strings are rendered as text/escaped HTML. Snapshot mode omits live controls and links, and a restrictive CSP disables network connections and external dependencies. Files are user-triggered downloads only; the server retains no export state. Names and user-entered metadata are intentionally included and are not anonymized.
+
+### Verification
+
+[tests/report-trends.test.js](tests/report-trends.test.js) covers parsing, calculations, identity, source guards, safe serialization, and API lifecycle using synthetic embedded reports and an isolated SQLite database. [tests/trends-browser.js](tests/trends-browser.js) is a Playwright CLI scenario for filters, exact links, single-run cases, export, cancellation, and desktop/mobile interaction. It runs against the opt-in `ARTIFACT_TEST_SEED=trends` fixture in [tests/artifact-test-server.cjs](tests/artifact-test-server.cjs), never production reports. The full build/test gate is `npm test`.
 
 ---
 

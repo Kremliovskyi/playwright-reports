@@ -75,6 +75,67 @@ if (process.env.ARTIFACT_TEST_SEED === "browser") {
   }
   database.close();
 }
+if (process.env.ARTIFACT_TEST_SEED === "trends") {
+  const { reportHtml, trendTest } = require("./trends-fixture.cjs");
+  for (let index = 0; index < 12; index++) {
+    const id = `daily-${String(index + 1).padStart(2, "0")}`;
+    const scope = index === 11 ? "current" : "archive";
+    const directory = path.join(config[scope + "Path"], id);
+    fs.mkdirSync(directory, { recursive: true });
+    const duration =
+      [112, 115, 119, 118, 121, 135, 148, 158, 258, 190, 226, 240][index] *
+      1000;
+    const startTime = new Date(Date.UTC(2026, 8, index + 1, 7)).toISOString();
+    const results =
+      index === 8
+        ? [
+            { retry: 0, startTime, duration: 258000, status: "failed" },
+            { retry: 1, startTime, duration: 234000, status: "failed" },
+          ]
+        : index === 6
+          ? [
+              { retry: 0, startTime, duration: 210000, status: "failed" },
+              { retry: 1, startTime, duration, status: "passed" },
+            ]
+          : [{ retry: 0, startTime, duration, status: "passed" }];
+    const tests = [
+      trendTest({
+        testId: `daily-test-${index}`,
+        path: [`Orders [DEV NA - 9/${index + 1}]`],
+        results,
+        duration: results.reduce((sum, result) => sum + result.duration, 0),
+        outcome:
+          index === 8 ? "unexpected" : index === 6 ? "flaky" : "expected",
+      }),
+    ];
+    if (index !== 10)
+      tests.push(
+        trendTest({
+          testId: `second-${index}`,
+          title: "e2eExampleTC02 - stable workflow",
+          path: [`Orders [DEV NA - 9/${index + 1}]`],
+        }),
+      );
+    if (index === 11)
+      tests.push(
+        trendTest({
+          testId: "new-test",
+          title: "e2eExampleTC03 - new workflow",
+        }),
+      );
+    fs.writeFileSync(
+      path.join(directory, "index.html"),
+      reportHtml(tests, { startTime: Date.parse(startTime) }),
+    );
+    store.upsertReport({
+      id,
+      uuid: `daily-uuid-${index}`,
+      dateCreated: fs.statSync(directory).birthtime.toISOString(),
+      metadata: "DEV NA nightly",
+      reportPath: `/reports/${scope}/${id}/index.html`,
+    });
+  }
+}
 let sequence = 0;
 const analyzer = require("../dist/copilot-analyzer");
 analyzer.copilotAccessCheck = async () => ({

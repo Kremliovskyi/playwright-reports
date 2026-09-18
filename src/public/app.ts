@@ -1,5 +1,6 @@
 interface Report {
   id: string;
+  uuid: string;
   path: string;
   name: string;
   createdAt: string;
@@ -182,6 +183,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const searchResetBtn = document.getElementById(
     "search-reset-btn",
   ) as HTMLButtonElement;
+  const trendsBtn = document.getElementById("trends-btn") as HTMLButtonElement;
+  let trendsOpen = false;
+  let searchDatesEdited = false;
 
   // Modal Elements
   const settingsBtn = document.getElementById(
@@ -912,9 +916,18 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
   const syncSearchInputs = (filters: SearchFilters) => {
+    const bounds = TrendModel.dateBounds(
+      cachedReportsData
+        ? [...cachedReportsData.current, ...cachedReportsData.archive]
+        : [],
+    );
     searchInput.value = filters.query;
-    searchRangeStartInput.value = filters.rangeStart;
-    searchRangeEndInput.value = filters.rangeEnd;
+    searchRangeStartInput.value =
+      filters.rangeStart || (!searchDatesEdited ? bounds.rangeStart : "");
+    searchRangeEndInput.value =
+      filters.rangeEnd || (!searchDatesEdited ? bounds.rangeEnd : "");
+    searchRangeStartInput.disabled = searchRangeEndInput.disabled =
+      !bounds.rangeStart;
   };
 
   const hasSearchFilters = (filters: SearchFilters) => {
@@ -922,9 +935,13 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const setRefreshDisabled = (disabled: boolean) => {
-    refreshBtn.disabled = disabled;
-    refreshBtn.setAttribute("aria-disabled", String(disabled));
-    refreshBtn.title = disabled ? "Close search to refresh reports" : "";
+    refreshBtn.disabled = disabled || trendsOpen;
+    refreshBtn.setAttribute("aria-disabled", String(disabled || trendsOpen));
+    refreshBtn.title = trendsOpen
+      ? "Close Trends to refresh reports"
+      : disabled
+        ? "Close search to refresh reports"
+        : "Refresh reports";
   };
 
   const updateSearchButtonState = () => {
@@ -961,6 +978,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const setAppliedFilters = (filters: SearchFilters | null) => {
     const normalized = filters ? normalizeSearchFilters(filters) : null;
+    searchDatesEdited = Boolean(normalized?.rangeStart || normalized?.rangeEnd);
     activeSearchState.applied =
       normalized && hasSearchFilters(normalized) ? normalized : null;
     setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
@@ -3248,6 +3266,7 @@ document.addEventListener("DOMContentLoaded", () => {
       await fetchAnalysisRuns();
       const data = await requestReports("/api/reports");
       cachedReportsData = data;
+      if (!searchDatesEdited) syncSearchInputs(activeSearchState.draft);
       if (render) {
         renderReportsData(data, "default");
       } else {
@@ -3299,6 +3318,16 @@ document.addEventListener("DOMContentLoaded", () => {
   ) => {
     const { showLoading = true } = options;
     const filters = readSearchInputs();
+    const invalid = TrendModel.validateFilters(filters);
+    searchRangeEndInput.setCustomValidity(invalid || "");
+    if (invalid) {
+      searchRangeEndInput.reportValidity();
+      return;
+    }
+    if (!searchDatesEdited) {
+      filters.rangeStart = "";
+      filters.rangeEnd = "";
+    }
     setDraftFilters(filters);
 
     if (!hasSearchFilters(filters)) {
@@ -3339,6 +3368,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const openSearchPanel = () => {
     activeSearchState.isOpen = true;
+    searchDatesEdited = Boolean(
+      activeSearchState.applied?.rangeStart ||
+      activeSearchState.applied?.rangeEnd,
+    );
     setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
     searchPanel.classList.remove("hidden");
     updateSearchButtonState();
@@ -3347,6 +3380,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const closeSearchPanel = () => {
     activeSearchState.isOpen = false;
+    searchDatesEdited = Boolean(
+      activeSearchState.applied?.rangeStart ||
+      activeSearchState.applied?.rangeEnd,
+    );
     setDraftFilters(activeSearchState.applied || createEmptySearchFilters());
     searchPanel.classList.add("hidden");
     updateSearchButtonState();
@@ -3606,6 +3643,85 @@ document.addEventListener("DOMContentLoaded", () => {
       hideAnalysisContextMenu();
     }
   });
+
+  const utilitiesToggle = document.getElementById(
+    "utilities-toggle",
+  ) as HTMLButtonElement;
+  const utilitiesPanel = document.getElementById(
+    "utilities-panel",
+  ) as HTMLElement;
+  utilitiesPanel.append(refreshBtn, settingsBtn);
+  const closeUtilities = (restoreFocus = false) => {
+    utilitiesPanel.dataset.open = "false";
+    utilitiesPanel.style.transform = "";
+    utilitiesToggle.setAttribute("aria-expanded", "false");
+    if (restoreFocus) utilitiesToggle.focus();
+  };
+  utilitiesToggle.addEventListener("click", () => {
+    const open = utilitiesToggle.getAttribute("aria-expanded") !== "true";
+    utilitiesToggle.setAttribute("aria-expanded", String(open));
+    utilitiesPanel.dataset.open = String(open);
+    utilitiesPanel.style.transform = "";
+    if (open) {
+      const bounds = utilitiesPanel.getBoundingClientRect();
+      const offset = Math.max(
+        8 - bounds.left,
+        Math.min(0, window.innerWidth - 8 - bounds.right),
+      );
+      utilitiesPanel.style.transform = `translateX(${offset}px)`;
+      (refreshBtn.disabled ? settingsBtn : refreshBtn).focus();
+    }
+  });
+  window.addEventListener("resize", () => closeUtilities());
+  utilitiesPanel.addEventListener("click", (event) => {
+    if ((event.target as HTMLElement).closest("button")) closeUtilities();
+  });
+  document.addEventListener("click", (event) => {
+    if (!(event.target as HTMLElement).closest(".header-utilities"))
+      closeUtilities();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      utilitiesToggle.getAttribute("aria-expanded") === "true"
+    )
+      closeUtilities(true);
+  });
+  trendsBtn.addEventListener("click", () => {
+    if (trendsOpen) return;
+    closeSearchPanel();
+    closeUtilities();
+    trendsOpen = true;
+    trendsBtn.setAttribute("aria-expanded", "true");
+    setRefreshDisabled(false);
+    TrendView.open({
+      catalog: async (signal) => {
+        const response = await fetch("/api/reports", { signal });
+        if (!response.ok) throw new Error("Could not load report catalog.");
+        const data = (await response.json()) as ReportsResponse;
+        if (!signal.aborted) {
+          cachedReportsData = data;
+          if (!searchDatesEdited) syncSearchInputs(activeSearchState.draft);
+        }
+        return data;
+      },
+      onClose: () => {
+        trendsOpen = false;
+        trendsBtn.setAttribute("aria-expanded", "false");
+        updateSearchButtonState();
+        trendsBtn.focus();
+        void reloadVisibleReports().catch((error) =>
+          console.error("Could not refresh reports after Trends:", error),
+        );
+      },
+    });
+  });
+  [searchRangeStartInput, searchRangeEndInput].forEach((input) =>
+    input.addEventListener("input", () => {
+      searchDatesEdited = true;
+      searchRangeEndInput.setCustomValidity("");
+    }),
+  );
 
   searchToggleBtn.addEventListener("click", () => {
     if (activeSearchState.isOpen) {

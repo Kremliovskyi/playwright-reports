@@ -389,6 +389,12 @@ export const getAllReports = (): ReportRecord[] => {
   return db.prepare("SELECT * FROM reports").all() as ReportRecord[];
 };
 
+export const getReportByUuid = (uuid: string): ReportRecord | undefined => {
+  return db.prepare("SELECT * FROM reports WHERE uuid = ?").get(uuid) as
+    | ReportRecord
+    | undefined;
+};
+
 export const updateReportMetadata = (id: string, metadata: string): void => {
   db.prepare("UPDATE reports SET metadata = ? WHERE id = ?").run(metadata, id);
 };
@@ -586,7 +592,10 @@ const normalizeDateInput = (value?: string): string | null => {
   }
 
   const parsed = new Date(`${trimmed}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime())) {
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== trimmed
+  ) {
     throw new Error(`Invalid date value: ${value}`);
   }
 

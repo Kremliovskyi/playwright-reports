@@ -13,13 +13,41 @@ Click a report row to open the Playwright HTML report. Use the always-available 
 Open **Search** in the header to filter persisted reports by metadata and creation date.
 
 - Metadata matching is case-insensitive and requires every whitespace-delimited search term. For example, `UAT e2e` matches `UAT EU e2e`.
-- Use **From** and **To** for a full or partial date range.
+- **From** and **To** initially span the oldest through newest report across both Current and Archive, independently of metadata. Bounds use the catalog creation date in UTC, not the test execution timestamp. A single report gives equal bounds; an empty catalog leaves them blank and disabled.
+- Edit either date for an explicit full or partial range. Opening the panel does not apply a filter, and untouched defaults do not become a fixed date filter that would hide future reports.
 - Press `Enter` in a search or date field to apply the filter.
 - Closing the panel keeps the current filter active, and the Search button stays highlighted.
-- **Reset** clears the fields and restores the unfiltered dashboard.
+- **Reset** clears metadata and the applied filter, restores the unfiltered dashboard, and repopulates the full date range. Explicitly applied dates survive closing and reopening Search.
 - Refresh is disabled while the panel is open, but report actions remain available on filtered results.
 
 Search is read-only. It queries the persisted report index without scanning directories, changing metadata, or mutating report files.
+
+## Test Trends
+
+Open **Trends** beside Search in the dashboard header. Refresh and Preferences are compact icon controls; on narrow screens they are in **More actions**. Trends does not change the dashboard's active Search filter.
+
+Enter metadata such as `DEV NA` and select **Apply filters**. The date fields default to the same complete Current + Archive range as Search. Applying refreshes the catalog and reads only the reports currently available. Expand the report list to exclude individual reports, then search or filter tests by project and sort by duration increase, latest duration, or name.
+
+The selected test shows its chart, run history, individual attempts, and two metrics:
+
+- **Passed attempt** uses the duration of the actual successful attempt, including successful retries. A failed or skipped execution has no passed duration.
+- **Total incl. retries** sums the attempt durations, matching the Playwright report's displayed test duration. Missing tests and skipped executions are gaps, not zeroes.
+
+The baseline is the median of the first five earlier passing runs among the included reports, excluding the latest report. Expected failures and unexpected passes are excluded from that baseline. Insufficient history or a zero baseline produces no percentage comparison. A new test with one execution remains visible with **1 run; trend not available yet**. The latest value always refers to the latest included report, not an older successful execution.
+
+Charts are ordered by report execution time; multiple reports on the same day remain separate points. If execution time is unavailable, the view labels its attempt-time or catalog-time fallback. Imported reports can therefore have execution dates earlier than the catalog date used for filtering.
+
+Tests are matched by project, spec path, full test title, suite context, and repeat index. The changing date in suite suffixes such as `[DEV NA - 6/1]` is normalized while preserving the environment and region. Other title/file/project changes start a separate series. Ambiguous identities are kept separate instead of guessed.
+
+Select a chart point or a run-history date to see that run. **Open test** and **Open attempt** open the exact source test in a new tab. These links continue to work after a report is renamed or archived. A deleted, replaced, or overwritten report produces an unavailable/changed message rather than opening a different run. Unreadable reports are explicitly listed and can be excluded.
+
+Trends are generated on demand and held only in memory. There are no timing tables, retained generations, background indexing, additional folders, or new path preferences. Closing the dialog releases its dataset; the next Apply reads the currently available reports. Step-level trends and backend performance diagnosis are not included.
+
+### Share one test
+
+Use the download icon in the selected test's detail header to export **that test only**, across the included reports, as a single HTML file. The snapshot retains metric switching, chart point selection, attempt timings, statuses, and run history, and opens directly in a browser without the dashboard or a network connection.
+
+The export includes the selected test's name, report names, user-entered metadata, date/filter context, and capture time. It is not anonymized. It excludes other tests, local filesystem paths, source-report links, credentials, errors, traces, and attachments. Deleting the original reports does not affect the snapshot, but it cannot open their original detail pages. Share the file through your organization's approved channels; some mail systems block HTML attachments.
 
 ## Edit report metadata
 

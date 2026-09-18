@@ -100,6 +100,87 @@ p {
   letter-spacing: -0.5px;
 }
 
+.header-content {
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.header-content .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.header-content .btn {
+  min-height: 36px;
+  white-space: nowrap;
+}
+.header-content .logo h1 {
+  letter-spacing: 0;
+}
+.header-utilities {
+  position: relative;
+}
+#utilities-toggle {
+  display: none;
+}
+#utilities-panel {
+  display: flex;
+  gap: 8px;
+}
+#utilities-panel .btn {
+  width: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.utility-label {
+  display: none;
+}
+@media (max-width: 800px) {
+  .header-content {
+    padding: 12px 16px;
+  }
+  .header-content .actions {
+    width: 100%;
+    gap: 6px;
+  }
+  .header-content .actions .btn {
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+  .header-content #copilot-status-chip {
+    margin-left: auto;
+    order: 5;
+  }
+  #utilities-toggle {
+    display: inline-flex;
+  }
+  #utilities-panel {
+    display: none;
+    position: absolute;
+    right: 0;
+    top: calc(100% + 6px);
+    z-index: 110;
+    min-width: 160px;
+    padding: 5px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: var(--card-shadow);
+  }
+  #utilities-panel[data-open="true"] {
+    display: flex;
+    flex-direction: column;
+  }
+  #utilities-panel .btn {
+    width: 100%;
+    justify-content: flex-start;
+    padding: 8px 10px;
+  }
+  #utilities-panel .utility-label {
+    display: inline;
+  }
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

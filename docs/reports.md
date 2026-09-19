@@ -24,30 +24,44 @@ Search is read-only. It queries the persisted report index without scanning dire
 
 ## Test Trends
 
-Open **Trends** beside Search in the dashboard header. Refresh and Preferences are compact icon controls; on narrow screens they are in **More actions**. Trends does not change the dashboard's active Search filter.
+Open **Trends** beside Search in the dashboard header to launch a dedicated browser tab. The original dashboard stays usable and keeps its active Search filter. Refresh and Preferences are compact icon controls; on narrow screens they are in **More actions**. The Trends page also has a **Reports** link back to the dashboard.
 
-Enter metadata such as `DEV NA` and select **Apply filters**. The date fields default to the same complete Current + Archive range as Search. Applying refreshes the catalog and reads only the reports currently available. Expand the report list to exclude individual reports, then search or filter tests by project and sort by duration increase, latest duration, or name.
+Enter metadata such as `DEV NA` and a **Test title contains** value, then select **Search matches**. The required title query is a literal, case-insensitive substring of the test's leaf title (1 to 256 characters), not a regular expression or an inferred test ID. A full title or a stable fragment works across title and file moves. The date fields default to the complete Current + Archive range and use catalog creation dates in UTC.
+
+Search refreshes the catalog and captures matches from the currently available reports. Review the matches before selecting **Generate trend**:
+
+- Choose one Playwright project if the matches contain more than one, even if those projects ran on different dates. The selector receives focus and a highlighted **Required** state; the report table appears after selection. Generate stays muted and disabled until a project and valid matches are selected. A single matching project is selected automatically.
+- Expand a report to inspect the original title, suite, file and source location. Counts distinguish logical tests, executions, and attempts.
+- Conflicting matches are highlighted with a **Conflict** label. Uncheck an unrelated test to exclude all its executions and retries, or exclude an entire report. Exclusions are reversible and do not change report files.
+- Repeated executions of one definition are accepted only when their repeat indices can be distinguished. Copied or legacy unlabelled execution records require review; individual execution records can be excluded, but individual retries cannot.
+- An unreadable report blocks generation until excluded. A report with no title match remains a visible gap. A report whose matches are all deliberately excluded is removed from the comparison instead.
+
+Generate uses exactly the captured, reviewed data without fetching it again. Changing a selection hides the generated chart until Generate is selected again. Editing a search field invalidates the preview; another Search is required. A new Search resets exclusions, and changing project resets test/execution exclusions.
+
+After generation, **Search** and **Review matches** collapse to compact summary rows and the chart receives focus and comes into view. Reopen either section to inspect or change the selection; collapsing a section does not discard exclusions. Review uses a bounded scrolling table for larger report sets, and summary counts omit zero-value statuses.
 
 The selected test shows its chart, run history, individual attempts, and two metrics:
 
 - **Passed attempt** uses the duration of the actual successful attempt, including successful retries. A failed or skipped execution has no passed duration.
-- **Total incl. retries** sums the attempt durations, matching the Playwright report's displayed test duration. Missing tests and skipped executions are gaps, not zeroes.
+- **Total incl. retries** sums the attempts within that execution, matching its Playwright report duration. Repetitions are separate points, not added together. Missing tests and skipped executions are gaps, not zeroes.
 
-The baseline is the median of the first five earlier passing runs among the included reports, excluding the latest report. Expected failures and unexpected passes are excluded from that baseline. Insufficient history or a zero baseline produces no percentage comparison. A new test with one execution remains visible with **1 run; trend not available yet**. The latest value always refers to the latest included report, not an older successful execution.
+The baseline gives each report equal weight: calculate the median of eligible passing repetition values within each of the first five earlier eligible reports, then take the median of those five values. The entire latest report, expected failures, and unexpected passes are excluded from the baseline. Insufficient history or a zero baseline produces no percentage comparison. One report with many repetitions is still insufficient cross-report history. The latest value refers to the latest execution in the latest included report, never an older success; a missing latest match remains a gap.
 
-Charts are ordered by report execution time; multiple reports on the same day remain separate points. If execution time is unavailable, the view labels its attempt-time or catalog-time fallback. Imported reports can therefore have execution dates earlier than the catalog date used for filtering.
+Each point uses the execution's first available attempt timestamp, falling back to report time and then catalog time with a visible label. Same-time executions remain separate in history and can be selected with the chart's arrow keys. Imported reports can therefore have execution dates earlier than the catalog date used for filtering.
 
-Tests are matched by project, spec path, full test title, suite context, and repeat index. The changing date in suite suffixes such as `[DEV NA - 6/1]` is normalized while preserving the environment and region. Other title/file/project changes start a separate series. Ambiguous identities are kept separate instead of guessed.
+Across reports, the title query, chosen project and manual selections define the comparison. No fuzzy title matching or aliases are inferred. Within a report, an exact project, file, suite path, title and source location identify a logical definition. Parameterized titles and identically named tests in different suites remain separate candidates. Use metadata and source inspection to keep environments comparable.
+
+For sharded runs, merge the blob reports into one final Playwright HTML report before importing it. Trends treats that merged HTML as one report; distinct tests from different shards are not duplicates, and retries remain inside their test execution. It does not merge separate shard folders or infer whether every shard completed. Playwright 1.60+ HTML exposes nonzero repeat indices; older HTML may not distinguish repetitions, even though an older blob can retain the indices. Duplicate indices, including copied blob inputs, require manual exclusion rather than being treated as new repetitions.
 
 Select a chart point or a run-history date to see that run. **Open test** and **Open attempt** open the exact source test in a new tab. These links continue to work after a report is renamed or archived. A deleted, replaced, or overwritten report produces an unavailable/changed message rather than opening a different run. Unreadable reports are explicitly listed and can be excluded.
 
-Trends are generated on demand and held only in memory. There are no timing tables, retained generations, background indexing, additional folders, or new path preferences. Closing the dialog releases its dataset; the next Apply reads the currently available reports. Step-level trends and backend performance diagnosis are not included.
+Trends are generated on demand and held only in memory. There are no timing tables, retained generations, background indexing, additional folders, or new path preferences. Closing or reloading the tab releases its dataset; the next Search reads the currently available reports. Step-level trends and backend performance diagnosis are not included.
 
 ### Share one test
 
 Use the download icon in the selected test's detail header to export **that test only**, across the included reports, as a single HTML file. The snapshot retains metric switching, chart point selection, attempt timings, statuses, and run history, and opens directly in a browser without the dashboard or a network connection.
 
-The export includes the selected test's name, report names, user-entered metadata, date/filter context, and capture time. It is not anonymized. It excludes other tests, local filesystem paths, source-report links, credentials, errors, traces, and attachments. Deleting the original reports does not affect the snapshot, but it cannot open their original detail pages. Share the file through your organization's approved channels; some mail systems block HTML attachments.
+The export includes the query, chosen project, retained executions' original titles and relative source context, report names, metadata, date filters, exclusion counts, and capture time. It is not anonymized. It excludes other candidates, original source IDs, absolute filesystem roots, source-report links, credentials, errors, traces, and attachments. Deleting the original reports does not affect the snapshot, but it cannot open their original detail pages. Schema-2 exports retain one point per repetition; existing downloaded schema-1 HTML files keep their embedded viewer and continue to work. Share the file through your organization's approved channels; some mail systems block HTML attachments.
 
 ## Edit report metadata
 

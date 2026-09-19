@@ -1,0 +1,1207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Test Trends | Design Concept</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --surface: #161b22;
+        --hover: #21262d;
+        --border: #30363d;
+        --text: #e6edf3;
+        --muted: #9da7b3;
+        --blue: #58a6ff;
+        --green: #56d39b;
+        --red: #ff8585;
+        --amber: #eac268;
+      }
+      * {
+        box-sizing: border-box;
+        letter-spacing: 0;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+      }
+      button,
+      select,
+      input {
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        background: var(--bg);
+        min-height: 36px;
+        padding: 6px 10px;
+      }
+      button,
+      select,
+      summary {
+        cursor: pointer;
+      }
+      button:hover,
+      a:hover {
+        background: var(--hover);
+      }
+      button:focus-visible,
+      a:focus-visible,
+      summary:focus-visible,
+      canvas:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+      }
+      h2 {
+        font-size: 17px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      h3 {
+        font-size: 14px;
+      }
+      small,
+      .muted {
+        color: var(--muted);
+      }
+      [hidden] {
+        display: none !important;
+      }
+      .topbar {
+        min-height: 56px;
+        padding: 12px 28px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface);
+      }
+      .brand {
+        font-weight: 600;
+      }
+      .concept {
+        font-size: 12px;
+        color: var(--amber);
+      }
+      main {
+        max-width: 1460px;
+        margin: auto;
+        padding: 24px 28px;
+      }
+      .heading,
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+      }
+      .heading {
+        margin-bottom: 20px;
+      }
+      .subtitle {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .scope {
+        color: var(--blue);
+        font-size: 12px;
+      }
+      .filters {
+        display: grid;
+        grid-template-columns: minmax(200px, 1fr) 190px 190px auto;
+        gap: 12px;
+        align-items: end;
+      }
+      label.field {
+        display: grid;
+        gap: 5px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      input {
+        width: 100%;
+        min-width: 0;
+      }
+      .primary {
+        background: #1f6feb;
+        border-color: #388bfd;
+        color: white;
+      }
+      .primary:hover {
+        background: #388bfd;
+      }
+      #filter-error {
+        color: var(--red);
+        margin-top: 8px;
+      }
+      details {
+        border-bottom: 1px solid var(--border);
+        padding: 14px 0;
+        margin-bottom: 22px;
+      }
+      summary {
+        color: var(--muted);
+        width: fit-content;
+      }
+      .report-scroll {
+        max-height: 238px;
+        overflow: auto;
+        margin-top: 12px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th {
+        color: var(--muted);
+        text-align: left;
+        font-weight: 500;
+      }
+      td,
+      th {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border);
+      }
+      td input {
+        width: 16px;
+        height: 16px;
+        min-height: 0;
+        accent-color: var(--blue);
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(335px, 0.95fr) minmax(0, 1.8fr);
+        gap: 24px;
+      }
+      .test-list {
+        min-width: 0;
+        border-right: 1px solid var(--border);
+        padding-right: 24px;
+      }
+      .list-controls {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 144px;
+        gap: 8px;
+        margin: 14px 0 12px;
+      }
+      .list-controls input,
+      .list-controls select {
+        font-size: 12px;
+      }
+      .test-columns {
+        display: flex;
+        justify-content: space-between;
+        color: var(--muted);
+        font-size: 11px;
+        padding: 0 12px 8px;
+      }
+      .test-row {
+        width: 100%;
+        padding: 14px 12px;
+        border: 0;
+        border-bottom: 1px solid var(--border);
+        border-radius: 0;
+        text-align: left;
+        display: block;
+        background: transparent;
+      }
+      .test-row[aria-pressed="true"] {
+        background: #142339;
+        box-shadow: inset 3px 0 var(--blue);
+      }
+      .test-row-name {
+        display: block;
+        font-size: 12px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      .test-row-desc {
+        font-size: 11px;
+        color: var(--muted);
+        display: block;
+        margin: 3px 0 10px;
+      }
+      .test-row-bottom {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .sparkline {
+        width: 112px;
+        height: 26px;
+      }
+      .numbers {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        font-variant-numeric: tabular-nums;
+      }
+      .delta {
+        font-size: 12px;
+      }
+      .up {
+        color: var(--red);
+      }
+      .down {
+        color: var(--green);
+      }
+      .flat {
+        color: var(--muted);
+      }
+      .detail {
+        min-width: 0;
+      }
+      .detail-title {
+        min-height: 62px;
+      }
+      .metric-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .segments {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 3px;
+      }
+      .segments button {
+        font-size: 12px;
+        border: 0;
+        min-height: 29px;
+      }
+      .segments button[aria-pressed="true"] {
+        color: var(--blue);
+        background: var(--hover);
+      }
+      .baseline-caption {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .chart-wrap {
+        position: relative;
+        width: 100%;
+        height: 258px;
+      }
+      #trend-chart {
+        width: 100%;
+        height: 258px;
+        display: block;
+        cursor: crosshair;
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        color: var(--muted);
+        font-size: 11px;
+        margin: 4px 0 16px;
+      }
+      .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--blue);
+        margin-right: 6px;
+      }
+      .legend .flaky::before {
+        background: var(--amber);
+      }
+      .legend .failed::before {
+        background: var(--red);
+        border-radius: 0;
+      }
+      .legend .baseline::before {
+        width: 12px;
+        height: 0;
+        border-top: 1px dashed var(--muted);
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 14px 0;
+        gap: 12px;
+      }
+      .stat-label {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .stat-value {
+        font-size: 22px;
+        line-height: 1.5;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+      }
+      .selected-run {
+        margin: 18px 0;
+        border-left: 2px solid var(--blue);
+        padding-left: 14px;
+      }
+      .selected-run .section-head {
+        align-items: start;
+      }
+      .selected-run p {
+        margin-top: 7px;
+        font-size: 12px;
+      }
+      .run-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+        font-size: 12px;
+        padding: 4px 0;
+      }
+      .run-link svg {
+        width: 13px;
+        height: 13px;
+      }
+      .history {
+        margin-top: 22px;
+      }
+      .history .section-head {
+        margin-bottom: 10px;
+      }
+      .history-scroll {
+        max-height: 244px;
+        overflow: auto;
+      }
+      .history tr[data-report] {
+        cursor: pointer;
+      }
+      .history tr[data-report]:hover,
+      .history tr.selected {
+        background: var(--surface);
+      }
+      .status-passed {
+        color: var(--green);
+      }
+      .status-failed {
+        color: var(--red);
+      }
+      .status-flaky {
+        color: var(--amber);
+      }
+      .empty {
+        padding: 28px 0;
+        color: var(--muted);
+      }
+      .report-page {
+        max-width: 1000px;
+      }
+      .report-page .heading {
+        align-items: start;
+      }
+      .report-page h1 {
+        overflow-wrap: anywhere;
+      }
+      .report-page section {
+        margin: 24px 0;
+      }
+      .report-page pre {
+        padding: 18px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        overflow: auto;
+        font-size: 12px;
+      }
+      .step {
+        display: grid;
+        grid-template-columns: 180px 1fr 70px;
+        gap: 14px;
+        align-items: center;
+        margin: 16px 0;
+        font-size: 13px;
+      }
+      .step-track {
+        height: 7px;
+        background: var(--hover);
+      }
+      .step-fill {
+        height: 7px;
+        background: var(--blue);
+      }
+      @media (max-width: 1000px) {
+        .workspace {
+          grid-template-columns: 300px minmax(0, 1fr);
+          gap: 18px;
+        }
+        .test-list {
+          padding-right: 18px;
+        }
+        .filters {
+          grid-template-columns: minmax(150px, 1fr) 160px 160px auto;
+        }
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 20px 16px;
+        }
+        .topbar {
+          padding: 12px 16px;
+          align-items: start;
+        }
+        .concept {
+          text-align: right;
+          max-width: 135px;
+        }
+        .filters {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+        .filters .metadata-field {
+          grid-column: 1 / -1;
+        }
+        .filters .primary {
+          grid-column: 1 / -1;
+        }
+        .workspace {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .test-list {
+          border-right: 0;
+          padding-right: 0;
+        }
+        #test-rows {
+          max-height: 258px;
+          overflow: auto;
+        }
+        .detail {
+          border-top: 1px solid var(--border);
+          padding-top: 20px;
+        }
+        .heading {
+          align-items: start;
+        }
+        .heading .scope {
+          max-width: 105px;
+          text-align: right;
+        }
+        .stat-value {
+          font-size: 20px;
+        }
+        .history-scroll,
+        .report-scroll {
+          overflow-x: auto;
+        }
+        .history table {
+          min-width: 470px;
+        }
+        .step {
+          grid-template-columns: 130px 1fr 55px;
+          gap: 8px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <span class="brand">Test Reports Central</span
+      ><span class="concept">Design concept / synthetic data</span>
+    </header>
+    <main id="trends-page">
+      <div class="heading">
+        <div>
+          <h1>Test Trends</h1>
+          <p class="subtitle">Functional test duration</p>
+        </div>
+        <span class="scope">all-falcons / DEV NA</span>
+      </div>
+      <form id="filters" class="filters">
+        <label class="field metadata-field"
+          >Metadata<input
+            id="metadata"
+            placeholder="Any metadata"
+            autocomplete="off"
+        /></label>
+        <label class="field"
+          >From<input id="from" type="date" required
+        /></label>
+        <label class="field">To<input id="to" type="date" required /></label>
+        <button class="primary" type="submit">Apply filters</button>
+      </form>
+      <p id="filter-error" role="alert" hidden></p>
+      <details>
+        <summary id="report-summary">Reports</summary>
+        <div class="report-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Include</th>
+                <th>Run date</th>
+                <th>Report</th>
+                <th>Metadata</th>
+                <th>Location</th>
+              </tr>
+            </thead>
+            <tbody id="report-rows"></tbody>
+          </table>
+        </div>
+      </details>
+      <div class="workspace">
+        <aside class="test-list" aria-label="Test cases">
+          <div class="section-head">
+            <h3>Test cases</h3>
+            <small id="test-count"></small>
+          </div>
+          <div class="list-controls">
+            <input
+              id="test-search"
+              aria-label="Find test"
+              placeholder="Find a test..."
+            /><select id="sort" aria-label="Sort tests">
+              <option value="change">Largest increase</option>
+              <option value="latest">Longest duration</option>
+              <option value="name">Test name</option>
+            </select>
+          </div>
+          <div class="test-columns">
+            <span>TEST / TREND</span><span>LATEST / CHANGE</span>
+          </div>
+          <div id="test-rows"></div>
+        </aside>
+        <section id="detail" class="detail" aria-label="Selected test trend">
+          <div class="detail-title">
+            <h2 id="test-title"></h2>
+            <p id="test-description" class="subtitle"></p>
+          </div>
+          <div class="metric-row">
+            <div class="segments" role="group" aria-label="Duration metric">
+              <button id="passed-metric" aria-pressed="true">
+                Passed attempt</button
+              ><button id="total-metric" aria-pressed="false">
+                Total incl. retries
+              </button>
+            </div>
+            <span class="baseline-caption">Baseline: first 5 passing runs</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas
+              id="trend-chart"
+              tabindex="0"
+              aria-label="Duration by report date. Left and right arrow keys select a report."
+            ></canvas>
+          </div>
+          <div class="legend">
+            <span>Passed</span><span class="flaky">Passed on retry</span
+            ><span class="failed">Failed attempt</span
+            ><span class="baseline">Baseline median</span>
+          </div>
+          <div class="stats">
+            <div>
+              <div class="stat-label">LATEST VALUE</div>
+              <div class="stat-value" id="latest-value"></div>
+            </div>
+            <div>
+              <div class="stat-label">BASELINE MEDIAN</div>
+              <div class="stat-value" id="baseline-value"></div>
+            </div>
+            <div>
+              <div class="stat-label">VS BASELINE</div>
+              <div class="stat-value" id="change-value"></div>
+            </div>
+          </div>
+          <div class="selected-run" id="selected-run" aria-live="polite"></div>
+          <section class="history">
+            <div class="section-head">
+              <h3>Run history</h3>
+              <small id="history-count"></small>
+            </div>
+            <div class="history-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Outcome</th>
+                    <th>Passed</th>
+                    <th>Total</th>
+                    <th>Report</th>
+                  </tr>
+                </thead>
+                <tbody id="history-rows"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </div>
+    </main>
+    <main id="report-page" class="report-page" hidden></main>
+    <script>
+      const reports = Array.from({ length: 12 }, (_, index) => ({
+        id: `demo-${index + 1}`,
+        date: `2026-09-${String(index + 1).padStart(2, "0")}`,
+        name: `daily-falcons-${String(index + 1).padStart(2, "0")}`,
+        metadata:
+          index % 3 === 0 ? "DEV NA nightly release-42" : "DEV NA nightly",
+        location: index === 11 ? "Current" : "Archive",
+      }));
+      const tests = [
+        {
+          id: "e2eDBSEnhancedCombinedManualTC03",
+          description: "DBS Enhanced / manual route 3",
+          suite: "Order-core DBS Enhanced Combined manual flow",
+          values: [112, 115, 119, 118, 121, 135, 148, 158, 258, 190, 226, 240],
+        },
+        {
+          id: "e2eRTWDBSCombinedDigitalTC04",
+          description: "RTW + DBS / digital flow",
+          suite: "Order-core RTW combined + DBS Basic combined digital flow",
+          values: [76, 79, 80, 77, 78, 80, 87, 90, 99, 114, 130, 132],
+        },
+        {
+          id: "e2eDBSEnhancedCombinedManualTC01",
+          description: "DBS Enhanced / manual route 1",
+          suite: "Order-core DBS Enhanced Combined manual flow",
+          values: [151, 150, 148, 153, 150, 154, 148, 151, 156, 153, 157, 156],
+        },
+        {
+          id: "e2eDBSEnhancedCombinedManualTC02",
+          description: "DBS Enhanced / manual route 2",
+          suite: "Order-core DBS Enhanced Combined manual flow",
+          values: [149, 153, 152, 151, 150, 149, 155, 150, 153, 149, 152, 150],
+        },
+        {
+          id: "e2eDBSEnhancedCombinedManualTC05",
+          description: "DBS Enhanced / confirmation route 2",
+          suite: "Order-core DBS Enhanced Combined manual flow",
+          values: [71, 72, 69, 70, 72, 68, 66, 65, 63, 62, 59, 58],
+        },
+        {
+          id: "e2eDBSEnhancedCombinedManualTC06",
+          description: "DBS Enhanced / confirmation route 3",
+          suite: "Order-core DBS Enhanced Combined manual flow",
+          values: [142, 145, 148, 143, 144, 134, 130, 126, 120, 114, 110, 108],
+        },
+      ];
+      const byId = (id) => document.getElementById(id);
+      const externalIcon =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6"/></svg>';
+      const escapeHtml = (value) =>
+        String(value).replace(
+          /[&<>"']/g,
+          (character) =>
+            ({
+              "&": "&amp;",
+              "<": "&lt;",
+              ">": "&gt;",
+              '"': "&quot;",
+              "'": "&#39;",
+            })[character],
+        );
+      const duration = (seconds) =>
+        seconds == null
+          ? "N/A"
+          : seconds < 60
+            ? `${Math.round(seconds)}s`
+            : `${Math.floor(seconds / 60)}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`;
+      const shortDate = (report) => `Sep ${Number(report.date.slice(-2))}`;
+      const median = (values) => {
+        const sorted = [...values].sort((left, right) => left - right);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2
+          ? sorted[middle]
+          : (sorted[middle - 1] + sorted[middle]) / 2;
+      };
+      const observation = (test, report) => {
+        const index = reports.indexOf(report);
+        if (test === tests[3] && index === 6)
+          return {
+            report,
+            status: "not run",
+            passed: null,
+            total: null,
+            attempts: [],
+          };
+        const failed = test === tests[0] && index === 8;
+        const flaky = test === tests[0] && index === 6;
+        const attempts = failed
+          ? [
+              { status: "failed", duration: 258 },
+              { status: "failed", duration: 234 },
+            ]
+          : flaky
+            ? [
+                { status: "failed", duration: 210 },
+                { status: "passed", duration: test.values[index] },
+              ]
+            : [{ status: "passed", duration: test.values[index] }];
+        return {
+          report,
+          status: failed ? "failed" : flaky ? "flaky" : "passed",
+          passed: failed ? null : test.values[index],
+          total: attempts.reduce((sum, attempt) => sum + attempt.duration, 0),
+          attempts,
+        };
+      };
+      let matchedReports = [...reports];
+      let selectedReports = new Set(reports.map((report) => report.id));
+      let selectedTest = tests[0];
+      let selectedReport = reports.at(-1).id;
+      let metric = "passed";
+      let chartPoints = [];
+      const includedReports = () =>
+        matchedReports.filter((report) => selectedReports.has(report.id));
+      const observations = (test) =>
+        includedReports().map((report) => observation(test, report));
+      const statistics = (test) => {
+        const runs = observations(test);
+        const passing = runs.filter((run) => run.passed !== null);
+        const baseline =
+          passing.length >= 6
+            ? median(passing.slice(0, 5).map((run) => run[metric]))
+            : null;
+        const latest = runs.at(-1)?.[metric] ?? null;
+        const change =
+          baseline && latest != null
+            ? Math.round((latest / baseline - 1) * 100)
+            : null;
+        return { runs, baseline, latest, change };
+      };
+      const changeText = (value) =>
+        value == null ? "N/A" : `${value > 0 ? "+" : ""}${value}%`;
+      const changeClass = (value) =>
+        value == null || Math.abs(value) < 5
+          ? "flat"
+          : value > 0
+            ? "up"
+            : "down";
+      const testLink = (test, report) => {
+        const url = new URL(window.location.href);
+        url.search = new URLSearchParams({
+          report: report.id,
+          test: test.id,
+        }).toString();
+        url.hash = `?testId=${test.id}`;
+        return escapeHtml(url.href);
+      };
+      const openLink = (test, report, text = "Open test") =>
+        `<a class="run-link" href="${testLink(test, report)}" target="_blank" rel="noopener" title="Open synthetic test report in a new tab">${text}${externalIcon}</a>`;
+      function canvasContext(canvas) {
+        const bounds = canvas.getBoundingClientRect();
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.round(bounds.width * ratio);
+        canvas.height = Math.round(bounds.height * ratio);
+        const context = canvas.getContext("2d");
+        context.scale(ratio, ratio);
+        return { context, width: bounds.width, height: bounds.height };
+      }
+      function sparkline(canvas, test) {
+        const { context, width, height } = canvasContext(canvas);
+        const runs = observations(test);
+        const values = runs.map((run) => run[metric]);
+        const maximum = Math.max(1, ...values.filter((value) => value != null));
+        const minimum = Math.min(
+          maximum,
+          ...values.filter((value) => value != null),
+        );
+        context.strokeStyle = "#58a6ff";
+        context.lineWidth = 1.5;
+        context.beginPath();
+        let connected = false;
+        values.forEach((value, index) => {
+          if (value == null) {
+            connected = false;
+            return;
+          }
+          const horizontal =
+            2 + (index / Math.max(1, values.length - 1)) * (width - 4);
+          const vertical =
+            height -
+            3 -
+            ((value - minimum) / Math.max(10, maximum - minimum)) *
+              (height - 6);
+          if (connected) context.lineTo(horizontal, vertical);
+          else context.moveTo(horizontal, vertical);
+          connected = true;
+        });
+        context.stroke();
+      }
+      function renderReports() {
+        byId("report-summary").textContent =
+          `${includedReports().length} of ${matchedReports.length} reports selected / ${includedReports().filter((report) => report.location === "Archive").length} archived`;
+        byId("report-rows").innerHTML = matchedReports
+          .map(
+            (report) =>
+              `<tr><td><input type="checkbox" aria-label="Include ${report.name}" data-report="${report.id}" ${selectedReports.has(report.id) ? "checked" : ""}></td><td>${shortDate(report)}, 07:00</td><td>${report.name}</td><td>${report.metadata}</td><td>${report.location}</td></tr>`,
+          )
+          .join("");
+      }
+      function renderTestList() {
+        const query = byId("test-search").value.toLowerCase();
+        const visible = tests.filter((test) =>
+          `${test.id} ${test.description}`.toLowerCase().includes(query),
+        );
+        visible.sort((left, right) =>
+          byId("sort").value === "name"
+            ? left.id.localeCompare(right.id)
+            : (statistics(right)[byId("sort").value] ?? -Infinity) -
+              (statistics(left)[byId("sort").value] ?? -Infinity),
+        );
+        byId("test-count").textContent = `${visible.length} tests`;
+        byId("test-rows").innerHTML =
+          visible
+            .map((test) => {
+              const stats = statistics(test);
+              return `<button class="test-row" data-test="${test.id}" aria-pressed="${selectedTest === test}"><span class="test-row-name">${test.id}</span><span class="test-row-desc">${test.description}</span><span class="test-row-bottom"><canvas class="sparkline" data-spark="${test.id}" aria-hidden="true"></canvas><span class="numbers"><span>${duration(stats.latest)}</span><span class="delta ${changeClass(stats.change)}">${changeText(stats.change)}</span></span></span></button>`;
+            })
+            .join("") || '<p class="empty">No matching tests</p>';
+        document.querySelectorAll("[data-spark]").forEach((canvas) =>
+          sparkline(
+            canvas,
+            tests.find((test) => test.id === canvas.dataset.spark),
+          ),
+        );
+      }
+      function drawChart() {
+        const canvas = byId("trend-chart");
+        const { context, width, height } = canvasContext(canvas);
+        const stats = statistics(selectedTest);
+        const runs = stats.runs;
+        const maximum = Math.max(
+          60,
+          ...runs.map((run) => run[metric] ?? run.attempts[0]?.duration ?? 0),
+        );
+        const ceiling = Math.ceil(maximum / 60) * 60;
+        const left = 43;
+        const right = width - 18;
+        const top = 20;
+        const bottom = height - 33;
+        const horizontal = (report) => {
+          const first = Date.parse(runs[0].report.date);
+          const last = Date.parse(runs.at(-1).report.date);
+          return first === last
+            ? (left + right) / 2
+            : left +
+                ((Date.parse(report.date) - first) / (last - first)) *
+                  (right - left);
+        };
+        const vertical = (value) => bottom - (value / ceiling) * (bottom - top);
+        context.font = "11px sans-serif";
+        context.textBaseline = "middle";
+        for (let tick = 0; tick <= 4; tick++) {
+          const value = (ceiling * tick) / 4;
+          const position = vertical(value);
+          context.strokeStyle = "#242c36";
+          context.setLineDash([]);
+          context.beginPath();
+          context.moveTo(left, position);
+          context.lineTo(right, position);
+          context.stroke();
+          context.fillStyle = "#9da7b3";
+          context.textAlign = "right";
+          context.fillText(
+            `${Number((value / 60).toFixed(1))}m`,
+            left - 10,
+            position,
+          );
+        }
+        if (stats.baseline != null) {
+          context.strokeStyle = "#8b949e";
+          context.setLineDash([5, 5]);
+          context.beginPath();
+          context.moveTo(left, vertical(stats.baseline));
+          context.lineTo(right, vertical(stats.baseline));
+          context.stroke();
+          context.setLineDash([]);
+        }
+        chartPoints = [];
+        if (!runs.length) {
+          context.textAlign = "center";
+          context.fillText("No reports selected", width / 2, height / 2);
+          return;
+        }
+        const active = runs.find((run) => run.report.id === selectedReport);
+        if (active) {
+          context.fillStyle = "#58a6ff0c";
+          context.fillRect(
+            horizontal(active.report) - 12,
+            top,
+            24,
+            bottom - top,
+          );
+        }
+        context.strokeStyle = "#58a6ff";
+        context.lineWidth = 2;
+        context.beginPath();
+        let connected = false;
+        runs.forEach((run) => {
+          const value = run[metric];
+          if (value == null) {
+            connected = false;
+            return;
+          }
+          if (connected)
+            context.lineTo(horizontal(run.report), vertical(value));
+          else context.moveTo(horizontal(run.report), vertical(value));
+          connected = true;
+        });
+        context.stroke();
+        runs.forEach((run, index) => {
+          const position = horizontal(run.report);
+          const value = run[metric] ?? run.attempts[0]?.duration;
+          const pointY = value == null ? bottom : vertical(value);
+          chartPoints.push({
+            horizontal: position,
+            vertical: pointY,
+            report: run.report,
+          });
+          if (value != null) {
+            context.fillStyle =
+              run.status === "failed"
+                ? "#ff8585"
+                : run.status === "flaky"
+                  ? "#eac268"
+                  : "#58a6ff";
+            context.strokeStyle = context.fillStyle;
+            context.lineWidth = 2;
+            if (run.status === "failed") {
+              context.beginPath();
+              context.moveTo(position - 4, pointY - 4);
+              context.lineTo(position + 4, pointY + 4);
+              context.moveTo(position + 4, pointY - 4);
+              context.lineTo(position - 4, pointY + 4);
+              context.stroke();
+            } else {
+              context.beginPath();
+              context.arc(position, pointY, 4, 0, Math.PI * 2);
+              context.fill();
+            }
+            if (run.report.id === selectedReport) {
+              context.beginPath();
+              context.arc(position, pointY, 8, 0, Math.PI * 2);
+              context.stroke();
+            }
+          }
+          const interval = width < 500 ? 3 : 2;
+          if (index % interval === 0 || index === runs.length - 1) {
+            context.fillStyle = "#9da7b3";
+            context.textAlign =
+              index === 0
+                ? "left"
+                : index === runs.length - 1
+                  ? "right"
+                  : "center";
+            context.fillText(shortDate(run.report), position, height - 10);
+          }
+        });
+      }
+      function renderDetail() {
+        const stats = statistics(selectedTest);
+        if (!stats.runs.some((run) => run.report.id === selectedReport))
+          selectedReport = stats.runs.at(-1)?.report.id;
+        byId("test-title").textContent = selectedTest.id;
+        byId("test-description").textContent =
+          `${selectedTest.description} / all-falcons`;
+        byId("latest-value").textContent = duration(stats.latest);
+        byId("baseline-value").textContent = duration(stats.baseline);
+        byId("change-value").textContent = changeText(stats.change);
+        byId("change-value").className =
+          `stat-value ${changeClass(stats.change)}`;
+        byId("history-count").textContent =
+          `${stats.runs.filter((run) => run.passed != null).length} passing / ${stats.runs.length} reports`;
+        const selected = stats.runs.find(
+          (run) => run.report.id === selectedReport,
+        );
+        byId("selected-run").innerHTML = selected
+          ? `<div class="section-head"><div><strong>${shortDate(selected.report)}, 2026</strong><span class="muted"> / ${selected.report.location}</span></div>${selected.attempts.length ? openLink(selectedTest, selected.report) : ""}</div><p><span class="status-${selected.status}">${selected.status === "flaky" ? "Passed on retry" : selected.status === "not run" ? "Not run in this report" : selected.status === "failed" ? "Failed" : "Passed"}</span>${selected.attempts.map((attempt, index) => ` / ${index ? `Retry ${index}` : "Run"} ${duration(attempt.duration)}`).join("")}${selected.attempts.length > 1 ? ` / Total ${duration(selected.total)}` : ""}</p><p class="muted">${selected.report.name} / ${selected.report.metadata}</p>`
+          : '<p class="muted">No reports selected</p>';
+        byId("history-rows").innerHTML = [...stats.runs]
+          .reverse()
+          .map(
+            (run) =>
+              `<tr data-report="${run.report.id}" class="${run.report.id === selectedReport ? "selected" : ""}"><td>${shortDate(run.report)}</td><td class="status-${run.status}">${run.status}</td><td>${duration(run.passed)}</td><td>${duration(run.total)}</td><td>${run.attempts.length ? openLink(selectedTest, run.report, run.report.location) : "Not run"}</td></tr>`,
+          )
+          .join("");
+        drawChart();
+      }
+      function render() {
+        renderReports();
+        renderTestList();
+        renderDetail();
+      }
+      byId("from").value = reports.filter(
+        (report) => report.location === "Archive",
+      )[0].date;
+      byId("to").value = reports.at(-1).date;
+      byId("filters").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const from = byId("from").value;
+        const to = byId("to").value;
+        byId("filter-error").hidden = from <= to;
+        byId("filter-error").textContent = "From must be on or before To.";
+        if (from > to) return;
+        const tokens = byId("metadata")
+          .value.toLowerCase()
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean);
+        matchedReports = reports.filter(
+          (report) =>
+            report.date >= from &&
+            report.date <= to &&
+            tokens.every((token) =>
+              report.metadata.toLowerCase().includes(token),
+            ),
+        );
+        selectedReports = new Set(matchedReports.map((report) => report.id));
+        render();
+      });
+      byId("report-rows").addEventListener("change", (event) => {
+        const reportId = event.target.dataset.report;
+        if (!reportId) return;
+        if (event.target.checked) selectedReports.add(reportId);
+        else selectedReports.delete(reportId);
+        render();
+      });
+      byId("test-search").addEventListener("input", renderTestList);
+      byId("sort").addEventListener("change", renderTestList);
+      byId("test-rows").addEventListener("click", (event) => {
+        const row = event.target.closest("[data-test]");
+        if (!row) return;
+        selectedTest = tests.find((test) => test.id === row.dataset.test);
+        renderTestList();
+        renderDetail();
+      });
+      byId("history-rows").addEventListener("click", (event) => {
+        if (event.target.closest("a")) return;
+        const row = event.target.closest("[data-report]");
+        if (row) {
+          selectedReport = row.dataset.report;
+          renderDetail();
+        }
+      });
+      for (const option of ["passed", "total"])
+        byId(`${option}-metric`).addEventListener("click", () => {
+          metric = option;
+          for (const other of ["passed", "total"])
+            byId(`${other}-metric`).setAttribute(
+              "aria-pressed",
+              String(other === option),
+            );
+          renderTestList();
+          renderDetail();
+        });
+      byId("trend-chart").addEventListener("click", (event) => {
+        const coordinate =
+          event.clientX - event.target.getBoundingClientRect().left;
+        const nearest = [...chartPoints].sort(
+          (left, right) =>
+            Math.abs(left.horizontal - coordinate) -
+            Math.abs(right.horizontal - coordinate),
+        )[0];
+        if (nearest) {
+          selectedReport = nearest.report.id;
+          renderDetail();
+        }
+      });
+      byId("trend-chart").addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+        event.preventDefault();
+        const index = chartPoints.findIndex(
+          (point) => point.report.id === selectedReport,
+        );
+        const next =
+          chartPoints[
+            Math.max(
+              0,
+              Math.min(
+                chartPoints.length - 1,
+                index + (event.key === "ArrowLeft" ? -1 : 1),
+              ),
+            )
+          ];
+        if (next) {
+          selectedReport = next.report.id;
+          renderDetail();
+        }
+      });
+      const parameters = new URLSearchParams(location.search);
+      if (parameters.has("report")) {
+        const report = reports.find(
+          (item) => item.id === parameters.get("report"),
+        );
+        const test = tests.find((item) => item.id === parameters.get("test"));
+        byId("trends-page").hidden = true;
+        byId("report-page").hidden = false;
+        if (!report || !test)
+          byId("report-page").textContent = "Synthetic report not found.";
+        else {
+          const run = observation(test, report);
+          byId("report-page").innerHTML =
+            `<div class="heading"><div><p class="subtitle">${test.suite} [DEV NA - ${shortDate(report)}]</p><h1>${test.id}</h1><p class="subtitle">${test.description}</p></div></div><p class="muted">${report.name} / ${shortDate(report)}, 2026 / ${report.location}</p><section><div id="attempts" class="segments" role="group" aria-label="Test attempts">${run.attempts.map((attempt, index) => `<button data-attempt="${index}" aria-pressed="${index === 0}">${index ? `Retry ${index}` : "Run"} / ${duration(attempt.duration)}</button>`).join("")}</div></section><section id="attempt-detail"></section>`;
+          const showAttempt = (index) => {
+            const attempt = run.attempts[index];
+            if (!attempt) return;
+            document
+              .querySelectorAll("[data-attempt]")
+              .forEach((button) =>
+                button.setAttribute(
+                  "aria-pressed",
+                  String(Number(button.dataset.attempt) === index),
+                ),
+              );
+            const steps = [
+              { title: "Open order", fraction: 0.06 },
+              { title: "Submit application", fraction: 0.12 },
+              { title: "Wait for order result", fraction: 0.77 },
+              { title: "Verify result", fraction: 0.05 },
+            ];
+            byId("attempt-detail").innerHTML =
+              `<h3 class="status-${attempt.status}">${attempt.status === "failed" ? "Failed" : "Passed"} / ${duration(attempt.duration)}</h3>${attempt.status === "failed" ? '<pre>Illustrative assertion failure\n\nExpected zipCode: "W7 4RT"\nReceived zipCode: "W74RT"</pre>' : ""}<section><h3>Test steps</h3>${steps.map((step) => `<div class="step"><span>${step.title}</span><div class="step-track"><div class="step-fill" style="width:${step.fraction * 100}%"></div></div><span>${duration(attempt.duration * step.fraction)}</span></div>`).join("")}</section>`;
+          };
+          byId("attempts").addEventListener("click", (event) => {
+            const button = event.target.closest("[data-attempt]");
+            if (button) showAttempt(Number(button.dataset.attempt));
+          });
+          showAttempt(0);
+        }
+      } else {
+        render();
+        new ResizeObserver(() => {
+          renderTestList();
+          drawChart();
+        }).observe(byId("detail"));
+      }
+    </script>
+  </body>
+</html>

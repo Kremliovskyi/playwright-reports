@@ -129,6 +129,244 @@ test("matches stable titles across dated suites but separates environment, proje
   assert.equal(mergeTrendSeries(absolute).length, 2);
 });
 
+test("query review resolves moves, candidate exclusions, retries and verified repetitions", () => {
+  const reports = [descriptor("old"), descriptor("new"), descriptor("missing")];
+  const old = parseTrendReport(reportHtml([trendTest()]), reports[0]);
+  const moved = parseTrendReport(
+    reportHtml([
+      trendTest({
+        title: "e2eExampleTC01 - renamed",
+        location: { file: "moved.spec.ts", line: 4, column: 1 },
+        path: ["New suite"],
+      }),
+    ]),
+    reports[1],
+  );
+  const extra = parseTrendReport(
+    reportHtml([
+      trendTest({ testId: "duplicate", title: "e2eExampleTC010 - other" }),
+    ]),
+    reports[1],
+  );
+  const preview = {
+    schemaVersion: 2,
+    testQuery: "e2eExampleTC01",
+    generatedAt: "now",
+    reports,
+    candidates: [...old, ...moved, ...extra].flatMap(
+      (entry) => entry.observations,
+    ),
+  };
+  const selected = new Set(reports.map((report) => report.uuid));
+  const excluded = new Set();
+  assert.equal(
+    model.review(preview, "all-falcons", selected, excluded).rows[1].state,
+    "conflict",
+  );
+  assert.throws(
+    () => model.generate(preview, "all-falcons", selected, excluded),
+    /conflicts/,
+  );
+  excluded.add(extra[0].observations[0].id);
+  const generated = model.generate(preview, "all-falcons", selected, excluded);
+  assert.equal(generated.series[0].observations.length, 2);
+  assert.equal(generated.reports.length, 3);
+  excluded.add(moved[0].observations[0].id);
+  assert.equal(
+    model.generate(preview, "all-falcons", selected, excluded).reports.length,
+    2,
+  );
+  assert.equal(
+    model.review(preview, null, selected, excluded).canGenerate,
+    false,
+  );
+
+  const repetitions = [undefined, 1, 2].flatMap((repeatEachIndex, index) =>
+    parseTrendReport(
+      reportHtml([
+        trendTest({
+          testId: `repeat-${index}`,
+          repeatEachIndex,
+          duration: 30,
+          results: [
+            { retry: 0, duration: 10, status: "failed" },
+            { retry: 1, duration: 20, status: "passed" },
+          ],
+          outcome: "flaky",
+        }),
+      ]),
+      reports[0],
+    ),
+  );
+  preview.candidates = repetitions.flatMap((entry) => entry.observations);
+  assert.equal(
+    model.review(preview, "all-falcons", selected, new Set()).canGenerate,
+    true,
+  );
+  assert.equal(
+    model.generate(preview, "all-falcons", selected, new Set()).series[0]
+      .observations.length,
+    3,
+  );
+  preview.candidates.push({ ...preview.candidates[1], id: "copied-repeat" });
+  assert.equal(
+    model.review(preview, "all-falcons", selected, new Set()).canGenerate,
+    false,
+  );
+  assert.equal(
+    model.review(preview, "all-falcons", selected, new Set(["copied-repeat"]))
+      .canGenerate,
+    true,
+  );
+  preview.candidates = preview.candidates
+    .slice(0, 3)
+    .map((entry) => ({ ...entry, repeat: null }));
+  assert.equal(
+    model.review(preview, "all-falcons", selected, new Set()).canGenerate,
+    false,
+  );
+  assert.equal(model.validateTestQuery("  ") !== null, true);
+  assert.equal(model.validateTestQuery("[literal] (title)"), null);
+});
+
+test("repetition points preserve retries, report-balanced baselines and offline tie order", () => {
+  const reports = Array.from({ length: 6 }, (_, index) =>
+    descriptor(`run-${index}`),
+  );
+  const candidates = reports.flatMap((report, index) => {
+    const values =
+      index === 0
+        ? Array(9).fill(1000)
+        : index === 5
+          ? [200, 300]
+          : [index * 10];
+    const startTime = new Date(Date.UTC(2026, 5, index + 1)).toISOString();
+    return parseTrendReport(
+      reportHtml(
+        values.map((duration, repeat) =>
+          trendTest({
+            testId: `execution-${values.length - repeat}`,
+            repeatEachIndex: repeat || undefined,
+            outcome: "flaky",
+            duration: duration + 5,
+            results: [
+              { retry: 0, duration: 5, status: "failed", startTime },
+              { retry: 1, duration, status: "passed", startTime },
+            ],
+          }),
+        ),
+        { startTime: Date.parse(startTime) },
+      ),
+      report,
+    ).flatMap((series) => series.observations);
+  });
+  const preview = {
+    schemaVersion: 2,
+    testQuery: "e2eExampleTC01",
+    generatedAt: "now",
+    reports,
+    candidates,
+  };
+  const data = model.generate(
+    preview,
+    "all-falcons",
+    new Set(reports.map((report) => report.uuid)),
+    new Set(),
+  );
+  const stats = model.statistics(data.series[0], reports, "passed");
+  assert.equal(stats.runs.length, 15);
+  assert.equal(new Set(stats.runs.map((run) => run.id)).size, 15);
+  assert.equal(stats.baseline, 30);
+  assert.equal(stats.latest, 300);
+  assert.equal(stats.reportCount, 6);
+  assert.equal(
+    stats.runs.reduce((sum, run) => sum + run.observation.attempts.length, 0),
+    30,
+  );
+  assert.equal(model.statistics(data.series[0], reports, "total").baseline, 35);
+  assert.equal(model.statistics(data.series[0], reports, "total").latest, 305);
+  const snapshot = model.selectedSnapshot(
+    data,
+    data.series[0],
+    reports,
+    { query: "", rangeStart: "", rangeEnd: "" },
+    "passed",
+  );
+  const offline = model.statistics(
+    snapshot.data.series[0],
+    snapshot.data.reports,
+    "passed",
+  );
+  assert.equal(offline.latest, stats.latest);
+  assert.equal(offline.baseline, stats.baseline);
+  assert.deepEqual(
+    Array.from(offline.runs, (run) => run.observation.passed),
+    Array.from(stats.runs, (run) => run.observation.passed),
+  );
+  assert.ok(
+    snapshot.data.series[0].observations.every(
+      (record) => record.testId === "" && record.definition === "selected-test",
+    ),
+  );
+});
+
+test("review separates projects, same-line parameters and unavailable reports", () => {
+  const reports = [descriptor("first"), descriptor("second")];
+  const candidates = reports.flatMap((report, index) =>
+    parseTrendReport(
+      reportHtml([trendTest({ projectName: index ? "" : "chromium" })]),
+      report,
+    ).flatMap((series) => series.observations),
+  );
+  const preview = {
+    schemaVersion: 2,
+    testQuery: "TC01",
+    reports,
+    candidates,
+    generatedAt: "now",
+  };
+  const selected = new Set(reports.map((report) => report.uuid));
+  assert.equal(
+    model.review(preview, null, selected, new Set()).canGenerate,
+    false,
+  );
+  assert.equal(
+    model.generate(preview, "", selected, new Set()).series[0].observations
+      .length,
+    1,
+  );
+  assert.equal(
+    model.review(preview, "chromium", selected, new Set()).rows[1].state,
+    "missing",
+  );
+  candidates.push({
+    ...candidates[0],
+    id: "parameter",
+    definition: "other-title-same-line",
+    title: "TC01 - GB",
+  });
+  assert.equal(
+    model.review(preview, "chromium", selected, new Set()).rows[0].state,
+    "conflict",
+  );
+  const excluded = new Set(["parameter"]);
+  reports[1].issue = "Report unavailable";
+  assert.equal(
+    model.review(preview, "chromium", selected, excluded).canGenerate,
+    false,
+  );
+  selected.delete("second");
+  assert.equal(
+    model.generate(preview, "chromium", selected, excluded).reports.length,
+    1,
+  );
+  excluded.add(candidates[0].id);
+  assert.equal(
+    model.review(preview, "chromium", selected, excluded).canGenerate,
+    false,
+  );
+});
+
 test("source reads reject traversal, symlinks and recycled folder instances", async (context) => {
   const root = fs.mkdtempSync(path.join(__dirname, ".trends-source-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -219,11 +457,29 @@ test("on-demand API is read-only and live links survive moves but reject replace
   const before = database.prepare("SELECT * FROM reports ORDER BY id").all();
   const data = await (
     await post("/api/trends", {
+      testQuery: "e2eExampleTC01",
       reportUuids: ["daily-uuid-11", "daily-uuid-8", "fixture-uuid", "missing"],
     })
   ).json();
   assert.equal(data.reports.filter((report) => report.issue).length, 2);
-  assert.equal(data.series.length, 3);
+  assert.equal(data.candidates.length, 2);
+  assert.ok(
+    data.candidates.every((candidate) =>
+      candidate.title.includes("e2eExampleTC01"),
+    ),
+  );
+  assert.equal(
+    (await post("/api/trends", { reportUuids: [], testQuery: " " })).status,
+    400,
+  );
+  const noMatches = await (
+    await post("/api/trends", {
+      reportUuids: ["daily-uuid-11"],
+      testQuery: "[literal].*",
+    })
+  ).json();
+  assert.equal(noMatches.reports.length, 1);
+  assert.equal(noMatches.candidates.length, 0);
   assert.deepEqual(
     database.prepare("SELECT * FROM reports ORDER BY id").all(),
     before,

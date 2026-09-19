@@ -184,7 +184,6 @@ document.addEventListener("DOMContentLoaded", () => {
     "search-reset-btn",
   ) as HTMLButtonElement;
   const trendsBtn = document.getElementById("trends-btn") as HTMLButtonElement;
-  let trendsOpen = false;
   let searchDatesEdited = false;
 
   // Modal Elements
@@ -935,13 +934,11 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const setRefreshDisabled = (disabled: boolean) => {
-    refreshBtn.disabled = disabled || trendsOpen;
-    refreshBtn.setAttribute("aria-disabled", String(disabled || trendsOpen));
-    refreshBtn.title = trendsOpen
-      ? "Close Trends to refresh reports"
-      : disabled
-        ? "Close search to refresh reports"
-        : "Refresh reports";
+    refreshBtn.disabled = disabled;
+    refreshBtn.setAttribute("aria-disabled", String(disabled));
+    refreshBtn.title = disabled
+      ? "Close search to refresh reports"
+      : "Refresh reports";
   };
 
   const updateSearchButtonState = () => {
@@ -3688,33 +3685,8 @@ document.addEventListener("DOMContentLoaded", () => {
       closeUtilities(true);
   });
   trendsBtn.addEventListener("click", () => {
-    if (trendsOpen) return;
-    closeSearchPanel();
     closeUtilities();
-    trendsOpen = true;
-    trendsBtn.setAttribute("aria-expanded", "true");
-    setRefreshDisabled(false);
-    TrendView.open({
-      catalog: async (signal) => {
-        const response = await fetch("/api/reports", { signal });
-        if (!response.ok) throw new Error("Could not load report catalog.");
-        const data = (await response.json()) as ReportsResponse;
-        if (!signal.aborted) {
-          cachedReportsData = data;
-          if (!searchDatesEdited) syncSearchInputs(activeSearchState.draft);
-        }
-        return data;
-      },
-      onClose: () => {
-        trendsOpen = false;
-        trendsBtn.setAttribute("aria-expanded", "false");
-        updateSearchButtonState();
-        trendsBtn.focus();
-        void reloadVisibleReports().catch((error) =>
-          console.error("Could not refresh reports after Trends:", error),
-        );
-      },
-    });
+    window.open("trends.html", "_blank", "noopener");
   });
   [searchRangeStartInput, searchRangeEndInput].forEach((input) =>
     input.addEventListener("input", () => {

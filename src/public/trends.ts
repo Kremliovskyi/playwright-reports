@@ -1,7 +1,6 @@
 namespace TrendView {
   interface Options {
     catalog: (signal: AbortSignal) => Promise<TrendData.Catalog>;
-    onClose: () => void;
   }
   const escape = (value: unknown): string =>
     String(value).replace(
@@ -17,7 +16,7 @@ namespace TrendView {
     );
   const icon = (paths: string) =>
     `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
-  const closeIcon = icon('<path d="m18 6-12 12M6 6l12 12"/>');
+  const backIcon = icon('<path d="m12 19-7-7 7-7M5 12h14"/>');
   const downloadIcon = icon(
     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
   );
@@ -33,6 +32,7 @@ namespace TrendView {
           year: "numeric",
           hour: "2-digit",
           minute: "2-digit",
+          second: "2-digit",
         }) + " UTC"
       : "Unavailable";
   const changeText = (value: number | null) =>
@@ -43,6 +43,14 @@ namespace TrendView {
       : value > 0
         ? "increase"
         : "decrease";
+  const countLabel = (count: number, noun: string) =>
+    `${count} ${noun}${count === 1 ? "" : "s"}`;
+  const sourceLabel = (record: TrendData.Observation) =>
+    `${record.project || "(unnamed project)"} / ${record.path.join(" > ")} / ${record.file}${record.line === null ? "" : `:${record.line}:${record.column ?? "?"}`}`;
+  const repeatLabel = (record: TrendData.Observation) =>
+    record.repeat === null
+      ? "First / unlabelled execution"
+      : `Repeat index ${record.repeat}`;
   const jsonRequest = async <Result>(
     url: string,
     signal: AbortSignal,
@@ -65,9 +73,11 @@ namespace TrendView {
 
   class Viewer {
     private data: TrendData.Dataset | null = null;
+    private preview: TrendData.Preview | null = null;
     private selected = new Set<string>();
-    private seriesKey = "";
-    private reportUuid = "";
+    private excluded = new Set<string>();
+    private projects: string[] = [];
+    private executionId = "";
     private metric: TrendData.Metric = "passed";
     private filters: TrendData.Filters = {
       query: "",
@@ -78,8 +88,8 @@ namespace TrendView {
     private abort = new AbortController();
     private events = new AbortController();
     private sequence = 0;
-    private page = 0;
-    private points: { horizontal: number; report: TrendData.Report }[] = [];
+    private loading = false;
+    private points: { horizontal: number; vertical: number; id: string }[] = [];
     private observer: ResizeObserver;
     private destroyed = false;
     private downloading = false;
@@ -90,42 +100,41 @@ namespace TrendView {
     ) {
       root.classList.add("trends");
       root.innerHTML = `
-        <header class="trend-heading"><div><h1 data-role="heading">Test Trends</h1><p class="muted" data-role="subtitle">Functional test duration</p></div><button type="button" class="trend-icon" data-role="close" aria-label="Close Trends" title="Close Trends">${closeIcon}</button></header>
+        <header class="trend-heading"><div><h1 data-role="heading">Test Trends</h1><p class="muted" data-role="subtitle">Playwright Reports</p></div>${options ? `<a class="trend-dashboard" href="./" data-role="dashboard">${backIcon}Reports</a>` : ""}</header>
+        <details class="trend-zone" data-role="search-zone" open>
+        <summary class="trend-zone-heading"><span class="trend-step" aria-hidden="true">1</span><h2>Search</h2><span class="trend-zone-summary muted" data-role="search-summary"></span></summary>
         <form class="trend-filters" data-role="filters">
-          <label class="trend-metadata">Metadata<input data-role="metadata" placeholder="Any metadata" maxlength="256" autocomplete="off"></label>
+          <label>Metadata<input data-role="metadata" placeholder="Any metadata" maxlength="256" autocomplete="off"></label>
           <label>From (UTC)<input data-role="from" type="date"></label><label>To (UTC)<input data-role="to" type="date"></label>
-          <button type="submit" class="trend-primary" data-role="apply">Apply filters</button>
+          <label class="trend-title-query">Test title contains<input data-role="test-query" type="search" required maxlength="256" placeholder="Title or stable fragment" autocomplete="off"></label>
+          <button type="submit" class="trend-primary" data-role="apply">Search matches</button>
         </form>
+        </details>
         <p class="trend-message" data-role="message" role="status" aria-live="polite"></p>
-        <details class="trend-reports" data-role="reports" hidden><summary data-role="report-summary">Reports</summary><div class="trend-scroll"><table><thead><tr><th>Include</th><th>Report date (UTC)</th><th>Report</th><th>Metadata</th><th>Location</th></tr></thead><tbody data-role="report-rows"></tbody></table></div></details>
+        <details class="trend-zone trend-reports" data-role="reports" aria-label="Match review" hidden open>
+          <summary class="trend-zone-heading"><span class="trend-step" aria-hidden="true">2</span><h2>Review matches</h2><span class="trend-zone-summary" data-role="report-summary" role="status" aria-live="polite"></span></summary>
+          <div class="trend-review-controls">
+            <label class="trend-project-field" data-role="project-field"><span>Playwright project <span class="trend-required" data-role="project-required">Required</span></span><select data-role="project" aria-label="Playwright project" aria-describedby="trend-generation-status" required></select></label>
+            <div class="trend-generate-action"><span id="trend-generation-status" data-role="generation-status" role="status" aria-live="polite"></span><button type="button" class="trend-primary" data-role="generate" aria-describedby="trend-generation-status" disabled>Generate trend</button></div>
+          </div>
+          <div class="trend-review-scroll" data-role="review-table"><table><thead><tr><th>Include</th><th>Report / date (UTC)</th><th>Matches</th></tr></thead><tbody data-role="report-rows"></tbody></table></div>
+        </details>
         <div class="trend-workspace" data-role="workspace" hidden>
-          <aside class="trend-list" data-role="list" aria-label="Test cases">
-            <div class="trend-section-head"><h2>Test cases</h2><span class="muted" data-role="test-count"></span></div>
-            <input data-role="search" aria-label="Find a test" placeholder="Find a test..." type="search">
-            <div class="trend-list-controls"><select data-role="project" aria-label="Filter project"><option value="">All projects</option></select><select data-role="sort" aria-label="Sort tests"><option value="change">Largest increase</option><option value="latest">Longest duration</option><option value="name">Test name</option></select></div>
-            <div class="trend-columns"><span>TEST / TREND</span><span>LATEST / CHANGE</span></div><div data-role="test-rows"></div>
-            <div class="trend-pagination"><button type="button" data-role="previous" class="trend-icon" title="Previous tests" aria-label="Previous tests">${icon('<path d="m15 18-6-6 6-6"/>')}</button><span class="muted" data-role="page"></span><button type="button" data-role="next" class="trend-icon" title="Next tests" aria-label="Next tests">${icon('<path d="m9 18 6-6-6-6"/>')}</button></div>
-          </aside>
-          <section class="trend-detail" data-role="detail" aria-label="Selected test trend" hidden>
-            <div class="trend-section-head"><h2 data-role="title"></h2><button type="button" data-role="export" class="trend-icon" title="Download selected test as HTML (includes report labels and metadata)" aria-label="Export selected test as HTML">${downloadIcon}</button></div>
+          <section class="trend-detail" data-role="detail" aria-label="Selected test trend">
+            <div class="trend-section-head"><h2 data-role="title" tabindex="-1"></h2><button type="button" data-role="export" class="trend-icon" title="Download selected test as HTML (includes report labels and metadata)" aria-label="Export selected test as HTML">${downloadIcon}</button></div>
             <p class="trend-context muted" data-role="context"></p><p class="trend-status muted" data-role="series-status"></p>
-            <div class="trend-metric-row"><div class="trend-segments" role="group" aria-label="Duration metric"><button type="button" data-metric="passed" aria-pressed="true">Passed attempt</button><button type="button" data-metric="total" aria-pressed="false">Total incl. retries</button></div><span class="muted">Baseline: first 5 earlier passing runs</span></div>
-            <canvas data-role="chart" tabindex="0" aria-label="Duration by execution time. Arrow keys select a report; details are in the run history."></canvas>
+            <div class="trend-metric-row"><div class="trend-segments" role="group" aria-label="Duration metric"><button type="button" data-metric="passed" aria-pressed="true">Passed attempt</button><button type="button" data-metric="total" aria-pressed="false">Total incl. retries</button></div><span class="muted" title="Median of passing repetition medians from the first 5 earlier eligible reports">Baseline: 5 earlier reports, equally weighted</span></div>
+            <canvas data-role="chart" tabindex="0" aria-label="Duration by execution time. Arrow keys select an execution; details are in the run history."></canvas>
             <div class="trend-legend"><span>Passed</span><span class="flaky">Passed on retry</span><span class="failed">Failed / unexpected</span><span class="baseline">Baseline median</span></div>
             <div class="trend-stats"><div><span>LATEST VALUE</span><strong data-role="latest"></strong></div><div><span>BASELINE MEDIAN</span><strong data-role="baseline"></strong></div><div><span>VS BASELINE</span><strong data-role="change"></strong></div></div>
             <div class="trend-selected" data-role="selected-run" aria-live="polite"></div>
             <div class="trend-section-head"><h3>Run history</h3><span class="muted" data-role="history-count"></span></div>
-            <div class="trend-history trend-scroll"><table><thead><tr><th>Execution (UTC)</th><th>Outcome</th><th>Passed</th><th>Total</th><th data-role="link-heading">Report</th></tr></thead><tbody data-role="history"></tbody></table></div>
+            <div class="trend-history trend-scroll"><table><thead><tr><th>Execution (UTC)</th><th>Outcome</th><th>Passed</th><th>Total</th><th>Report</th></tr></thead><tbody data-role="history"></tbody></table></div>
           </section>
         </div>`;
       const signal = this.events.signal;
-      this.element("close").hidden = !options;
-      this.element("filters").hidden = !options;
-      this.element("export").hidden = !options;
-      this.element("list").hidden = !options;
-      this.element("close").addEventListener("click", () => this.close(), {
-        signal,
-      });
+      for (const role of ["search-zone", "export"])
+        this.element(role).hidden = !options;
       this.element("filters").addEventListener(
         "submit",
         (event) => {
@@ -145,41 +154,50 @@ namespace TrendView {
           },
           { signal },
         );
-      for (const role of ["search", "project", "sort"])
-        this.element(role).addEventListener(
-          role === "search" ? "input" : "change",
-          () => {
-            this.page = 0;
-            this.renderList();
-          },
-          { signal },
-        );
-      for (const [role, delta] of [
-        ["previous", -1],
-        ["next", 1],
-      ] as const)
-        this.element(role).addEventListener(
-          "click",
-          () => {
-            this.page += delta;
-            this.renderList();
-          },
-          { signal },
-        );
-      this.element("test-rows").addEventListener(
+      this.element("filters").addEventListener(
+        "input",
+        () => {
+          if (this.preview || this.data || this.loading) {
+            this.invalidate(true);
+            this.message("Search changed. Search matches again.");
+          }
+        },
+        { signal },
+      );
+      this.element("project").addEventListener(
+        "change",
+        () => {
+          this.excluded.clear();
+          this.invalidate();
+          this.renderReview();
+        },
+        { signal },
+      );
+      this.element("generate").addEventListener(
         "click",
-        (event) => {
-          const row = (event.target as HTMLElement).closest<HTMLButtonElement>(
-            "[data-series]",
-          );
-          if (!row) return;
-          this.seriesKey = row.dataset.series!;
-          this.element("test-rows")
-            .querySelectorAll<HTMLButtonElement>("[data-series]")
-            .forEach((button) =>
-              button.setAttribute("aria-pressed", String(button === row)),
+        () => {
+          if (!this.preview) return;
+          try {
+            this.show(
+              TrendModel.generate(
+                this.preview,
+                this.project(),
+                this.selected,
+                this.excluded,
+              ),
             );
-          this.renderDetail();
+            (this.element("search-zone") as HTMLDetailsElement).open = false;
+            (this.element("reports") as HTMLDetailsElement).open = false;
+            this.element("title").focus({ preventScroll: true });
+            this.root.scrollIntoView({ block: "start" });
+            if (
+              this.element("chart").getBoundingClientRect().bottom >
+              window.innerHeight
+            )
+              this.element("workspace").scrollIntoView({ block: "start" });
+          } catch (error) {
+            this.message((error as Error).message, true);
+          }
         },
         { signal },
       );
@@ -187,12 +205,25 @@ namespace TrendView {
         "change",
         (event) => {
           const checkbox = event.target as HTMLInputElement;
-          if (!checkbox.dataset.report) return;
-          if (checkbox.checked) this.selected.add(checkbox.dataset.report);
-          else this.selected.delete(checkbox.dataset.report);
-          this.page = 0;
-          this.renderReports();
-          this.renderList();
+          if (!this.preview || !checkbox.matches("input[type=checkbox]"))
+            return;
+          if (checkbox.dataset.report) {
+            if (checkbox.checked) this.selected.add(checkbox.dataset.report);
+            else this.selected.delete(checkbox.dataset.report);
+          } else {
+            const records = this.preview.candidates.filter((candidate) =>
+              checkbox.dataset.execution
+                ? candidate.id === checkbox.dataset.execution
+                : candidate.definition === checkbox.dataset.group &&
+                  candidate.reportUuid === checkbox.dataset.owner,
+            );
+            for (const record of records) {
+              if (checkbox.checked) this.excluded.delete(record.id);
+              else this.excluded.add(record.id);
+            }
+          }
+          this.invalidate();
+          this.renderReview();
         },
         { signal },
       );
@@ -203,8 +234,7 @@ namespace TrendView {
             "click",
             () => {
               this.metric = button.dataset.metric as TrendData.Metric;
-              this.page = 0;
-              this.renderList();
+              this.renderDetail();
             },
             { signal },
           ),
@@ -216,7 +246,7 @@ namespace TrendView {
             event.target as HTMLElement
           ).closest<HTMLButtonElement>("[data-point]");
           if (button) {
-            this.reportUuid = button.dataset.point!;
+            this.executionId = button.dataset.point!;
             this.renderDetail();
           }
         },
@@ -225,15 +255,22 @@ namespace TrendView {
       this.element("chart").addEventListener(
         "click",
         (event) => {
-          const coordinate =
-            event.clientX - this.element("chart").getBoundingClientRect().left;
+          const bounds = this.element("chart").getBoundingClientRect();
+          const horizontal = event.clientX - bounds.left;
+          const vertical = event.clientY - bounds.top;
           const closest = [...this.points].sort(
             (left, right) =>
-              Math.abs(left.horizontal - coordinate) -
-              Math.abs(right.horizontal - coordinate),
+              Math.hypot(
+                left.horizontal - horizontal,
+                left.vertical - vertical,
+              ) -
+              Math.hypot(
+                right.horizontal - horizontal,
+                right.vertical - vertical,
+              ),
           )[0];
           if (closest) {
-            this.reportUuid = closest.report.uuid;
+            this.executionId = closest.id;
             this.renderDetail();
           }
         },
@@ -245,7 +282,7 @@ namespace TrendView {
           if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
           event.preventDefault();
           const index = this.points.findIndex(
-            (point) => point.report.uuid === this.reportUuid,
+            (point) => point.id === this.executionId,
           );
           const next =
             this.points[
@@ -258,7 +295,7 @@ namespace TrendView {
               )
             ];
           if (next) {
-            this.reportUuid = next.report.uuid;
+            this.executionId = next.id;
             this.renderDetail();
           }
         },
@@ -272,10 +309,7 @@ namespace TrendView {
         { signal },
       );
       this.observer = new ResizeObserver(() => {
-        if (this.data) {
-          this.drawChart();
-          this.drawSparklines();
-        }
+        if (this.data) this.drawChart();
       });
       this.observer.observe(this.element("workspace"));
     }
@@ -286,19 +320,29 @@ namespace TrendView {
     private input(role: string): HTMLInputElement {
       return this.element(role) as HTMLInputElement;
     }
-    private reports(): TrendData.Report[] {
-      return (
-        this.data?.reports.filter((report) => this.selected.has(report.uuid)) ??
-        []
-      );
-    }
-    private series(): TrendData.Series | undefined {
-      return this.data?.series.find((series) => series.key === this.seriesKey);
+    private project(): string | null {
+      const value = this.input("project").value;
+      return value === "" ? null : (this.projects[Number(value)] ?? null);
     }
     private message(text: string, error = false) {
-      const element = this.element("message");
-      element.textContent = text;
-      element.classList.toggle("trend-error", error);
+      this.element("message").textContent = text;
+      this.element("message").classList.toggle("trend-error", error);
+    }
+    private invalidate(search = false) {
+      this.data = null;
+      this.executionId = "";
+      this.points = [];
+      this.element("workspace").hidden = true;
+      (this.element("reports") as HTMLDetailsElement).open = true;
+      if (search) {
+        this.abort.abort();
+        this.sequence++;
+        this.preview = null;
+        this.loading = false;
+        this.element("reports").hidden = true;
+        this.element("search-summary").textContent = "";
+        this.input("apply").disabled = false;
+      }
     }
     private setBounds(catalog: TrendData.Catalog) {
       const bounds = TrendModel.dateBounds([
@@ -314,23 +358,20 @@ namespace TrendView {
       }
       return bounds;
     }
-
     async initialize() {
       this.message("Loading available reports...");
       this.input("apply").disabled = true;
-      const sequence = this.sequence;
       try {
         const catalog = await this.options!.catalog(this.abort.signal);
-        if (this.destroyed || sequence !== this.sequence) return;
+        if (this.destroyed) return;
         const bounds = this.setBounds(catalog);
         this.message(bounds.rangeStart ? "" : "No reports available.");
         this.input("apply").disabled = !bounds.rangeStart;
-        this.input("metadata").focus();
+        this.input("test-query").focus();
       } catch (error) {
         if (!this.destroyed) this.message((error as Error).message, true);
       }
     }
-
     private async apply() {
       if (!this.options) return;
       const filters = {
@@ -338,18 +379,20 @@ namespace TrendView {
         rangeStart: this.input("from").value,
         rangeEnd: this.input("to").value,
       };
-      const invalid = TrendModel.validateFilters(filters);
+      const testQuery = this.input("test-query").value.trim();
+      const invalid =
+        TrendModel.validateFilters(filters) ||
+        TrendModel.validateTestQuery(testQuery);
       if (invalid) {
         this.message(invalid, true);
         return;
       }
-      this.abort.abort();
+      this.invalidate(true);
       this.abort = new AbortController();
       const sequence = ++this.sequence;
+      this.loading = true;
       this.input("apply").disabled = true;
-      this.element("workspace").hidden = true;
-      this.element("reports").hidden = true;
-      this.message("Reading report timings...");
+      this.message("Reading report matches...");
       try {
         const catalog = await this.options.catalog(this.abort.signal);
         if (sequence !== this.sequence || this.destroyed) return;
@@ -358,22 +401,40 @@ namespace TrendView {
         if (!this.edited.rangeEnd) filters.rangeEnd = bounds.rangeEnd;
         const invalidBounds = TrendModel.validateFilters(filters);
         if (invalidBounds) throw new Error(invalidBounds);
-        const query = new URLSearchParams(filters);
         const matches = await jsonRequest<TrendData.Catalog>(
-          `/api/report-search?${query}`,
+          `/api/report-search?${new URLSearchParams(filters)}`,
           this.abort.signal,
         );
-        const uuids = [...matches.current, ...matches.archive].map(
+        const reportUuids = [...matches.current, ...matches.archive].map(
           (report) => report.uuid,
         );
-        const data = await jsonRequest<TrendData.Dataset>(
+        const preview = await jsonRequest<TrendData.Preview>(
           "/api/trends",
           this.abort.signal,
-          { reportUuids: uuids },
+          { reportUuids, testQuery },
         );
         if (sequence !== this.sequence || this.destroyed) return;
         this.filters = filters;
-        this.show(data);
+        this.preview = preview;
+        this.selected = new Set(preview.reports.map((report) => report.uuid));
+        this.excluded.clear();
+        this.projects = [
+          ...new Set(preview.candidates.map((candidate) => candidate.project)),
+        ].sort();
+        this.element("project").innerHTML =
+          '<option value="">Select a project</option>' +
+          this.projects
+            .map(
+              (project, index) =>
+                `<option value="${index}">${escape(project || "(unnamed project)")}</option>`,
+            )
+            .join("");
+        this.input("project").value = this.projects.length === 1 ? "0" : "";
+        this.element("reports").hidden = !preview.reports.length;
+        this.element("search-summary").textContent =
+          `${testQuery} / ${filters.query || "Any metadata"}`;
+        this.renderReview();
+        if (this.projects.length > 1) this.input("project").focus();
       } catch (error) {
         if (
           sequence === this.sequence &&
@@ -382,127 +443,151 @@ namespace TrendView {
         )
           this.message((error as Error).message, true);
       } finally {
-        if (sequence === this.sequence && !this.destroyed)
+        if (sequence === this.sequence && !this.destroyed) {
+          this.loading = false;
           this.input("apply").disabled = false;
+        }
       }
+    }
+
+    private renderReview() {
+      if (!this.preview) return;
+      const project = this.project();
+      const result = TrendModel.review(
+        this.preview,
+        project,
+        this.selected,
+        this.excluded,
+      );
+      const count = (state: string) =>
+        result.rows.filter((row) => row.state === state).length;
+      this.input("generate").disabled = !result.canGenerate;
+      const projectRequired = project === null && this.projects.length > 0;
+      this.element("project-required").hidden = !projectRequired;
+      this.element("project-field").classList.toggle(
+        "needs-selection",
+        projectRequired,
+      );
+      this.element("review-table").hidden = projectRequired;
+      this.element("generation-status").textContent = projectRequired
+        ? "Project required"
+        : count("conflict") + count("unavailable") > 0
+          ? `${countLabel(count("conflict") + count("unavailable"), "report")} need review`
+          : result.canGenerate
+            ? "Ready to generate"
+            : "No included matches";
+      this.element("generation-status").className = result.canGenerate
+        ? "decrease"
+        : "muted";
+      this.element("report-summary").textContent = projectRequired
+        ? `${countLabel(this.preview.reports.length, "report")} / ${countLabel(this.projects.length, "project")}`
+        : [
+            countLabel(this.preview.reports.length, "report"),
+            ...["ready", "conflict", "missing", "unavailable", "excluded"]
+              .filter((state) => count(state))
+              .map((state) =>
+                state === "conflict"
+                  ? countLabel(count(state), "conflict")
+                  : `${count(state)} ${state === "missing" ? "no match" : state}`,
+              ),
+          ].join(" / ");
+      this.message(
+        !this.preview.reports.length
+          ? "No reports match these filters."
+          : !this.preview.candidates.length
+            ? "No title matches in the readable reports."
+            : project === null
+              ? ""
+              : !result.canGenerate
+                ? "Resolve or exclude the highlighted conflicts before generating."
+                : "",
+        !result.canGenerate && project !== null,
+      );
+      const container = this.element("report-rows");
+      const expanded = new Set(
+        Array.from(
+          container.querySelectorAll<HTMLDetailsElement>("details[open]"),
+        ).map((details) => details.dataset.review),
+      );
+      const active = document.activeElement as HTMLElement | null;
+      const focus =
+        active && container.contains(active) ? active.dataset.focus : undefined;
+      const labels: Record<string, string> = {
+        ready: "Ready",
+        conflict: "Conflict",
+        missing: "No title match",
+        unavailable: "Cannot validate",
+        excluded: "Excluded by user",
+      };
+      container.innerHTML = result.rows
+        .map((row) => {
+          const { report, groups, observations, state } = row;
+          const invalid = state === "conflict" || state === "unavailable";
+          const groupCount = groups.filter(
+            (group) => group.included.length,
+          ).length;
+          return `<tr class="${invalid ? "trend-conflict" : ""}" data-state="${state}"><td><input type="checkbox" data-report="${escape(report.uuid)}" data-focus="report-${escape(report.uuid)}" aria-label="Include report ${escape(report.name)}" ${this.selected.has(report.uuid) ? "checked" : ""}></td><td><strong>${escape(report.name)}</strong><div>${escape(calendarDate(report.timestamp))}</div><div class="muted">${escape(report.metadata)} / ${escape(report.scope)}</div><div class="muted">Catalog: ${escape(calendarDate(report.createdAt))}</div></td><td>
+          <details data-review="${escape(report.uuid)}" ${expanded.has(report.uuid) || invalid ? "open" : ""}><summary><strong>${labels[state]}</strong>${
+            observations.length
+              ? ` / ${countLabel(groupCount, "test")} / ${countLabel(observations.length, "execution")} / ${countLabel(
+                  observations.reduce(
+                    (sum, record) => sum + record.attempts.length,
+                    0,
+                  ),
+                  "attempt",
+                )}`
+              : ""
+          }</summary>
+          ${report.issue ? `<p class="trend-error">${escape(report.issue)}</p>` : ""}
+          ${groups
+            .map((group) => {
+              const source = group.records[0];
+              return `<div class="trend-candidate"><label><input type="checkbox" data-group="${escape(group.key)}" data-owner="${escape(report.uuid)}" data-focus="group-${escape(report.uuid)}-${escape(group.key)}" data-partial="${group.included.length > 0 && group.included.length < group.records.length}" aria-label="Include test ${escape(source.title)} in ${escape(report.name)}" ${group.included.length ? "checked" : ""} ${this.selected.has(report.uuid) ? "" : "disabled"}><strong>${escape(source.title)}</strong></label><p class="muted">${escape(sourceLabel(source))}</p>
+            ${group.invalid ? '<p class="trend-error">Repeat identity unavailable or duplicated. Exclude conflicting execution records.</p>' : ""}
+            ${group.records
+              .map(
+                (record) =>
+                  `<div class="trend-record"><label><input type="checkbox" data-execution="${escape(record.id)}" data-focus="execution-${escape(record.id)}" aria-label="Include execution ${escape(record.testId)}" ${!this.excluded.has(record.id) ? "checked" : ""} ${this.selected.has(report.uuid) ? "" : "disabled"}>${escape(repeatLabel(record))} / ${escape(TrendModel.outcome(record))}</label><span class="muted">${escape(calendarDate(record.attempts.find((attempt) => attempt.startTime)?.startTime || report.timestamp))}</span><span>${
+                    record.attempts
+                      .map(
+                        (attempt) =>
+                          `${attempt.retry ? `Retry ${attempt.retry}` : "Run"}: ${TrendModel.duration(attempt.duration)} (${attempt.status})`,
+                      )
+                      .map(escape)
+                      .join(" / ") || "No attempts"
+                  }</span>${this.link(report, record, "Open test")}</div>`,
+              )
+              .join("")}</div>`;
+            })
+            .join("")}</details></td></tr>`;
+        })
+        .join("");
+      container
+        .querySelectorAll<HTMLInputElement>('[data-partial="true"]')
+        .forEach((input) => {
+          input.indeterminate = true;
+        });
+      if (focus)
+        container
+          .querySelector<HTMLElement>(`[data-focus="${CSS.escape(focus)}"]`)
+          ?.focus();
     }
 
     show(data: TrendData.Dataset, snapshot?: TrendData.Snapshot) {
       this.data = data;
-      this.selected = new Set(data.reports.map((report) => report.uuid));
-      this.page = 0;
-      this.seriesKey = "";
-      this.reportUuid = "";
+      this.executionId = "";
       if (snapshot) {
         this.metric = snapshot.metric;
         this.filters = snapshot.filters;
         this.element("heading").textContent = "Test Trend Snapshot";
         this.element("subtitle").textContent =
-          `Captured ${calendarDate(snapshot.exportedAt)}${snapshot.filters.query ? ` / ${snapshot.filters.query}` : ""} / ${snapshot.filters.rangeStart || "Any date"} to ${snapshot.filters.rangeEnd || "Any date"}`;
-        this.element("workspace").classList.add("trend-offline");
+          `Captured ${calendarDate(snapshot.exportedAt)} / ${snapshot.filters.query || "Any metadata"} / ${snapshot.filters.rangeStart || "Any date"} to ${snapshot.filters.rangeEnd || "Any date"}`;
       }
-      const issues = data.reports.filter((report) => report.issue);
-      this.message(
-        issues.length
-          ? `${issues.length} report(s) unavailable. Results are incomplete; see the report list.`
-          : data.reports.length
-            ? data.series.length
-              ? ""
-              : "No test timing data in these reports."
-            : "No reports match these filters.",
-        issues.length > 0,
-      );
-      if (snapshot && issues.length)
-        this.message(
-          `${issues.length} report(s) were unavailable when this snapshot was captured.`,
-          true,
-        );
-      const projects = [
-        ...new Set(data.series.map((series) => series.project)),
-      ].sort();
-      this.element("project").innerHTML =
-        '<option value="">All projects</option>' +
-        projects
-          .map(
-            (project) =>
-              `<option value="${escape(project)}">${escape(project)}</option>`,
-          )
-          .join("");
-      this.input("search").value = "";
-      this.element("workspace").hidden = !data.series.length;
-      this.element("reports").hidden = !this.options || !data.reports.length;
-      this.renderReports();
-      this.renderList();
-    }
-
-    private renderReports() {
-      if (!this.data) return;
-      this.element("report-summary").textContent =
-        `${this.selected.size} of ${this.data.reports.length} reports selected / ${this.reports().filter((report) => report.scope === "archive").length} archived`;
-      this.element("report-rows").innerHTML = this.data.reports
-        .map(
-          (report) =>
-            `<tr><td><input type="checkbox" data-report="${escape(report.uuid)}" aria-label="Include ${escape(report.name)}" ${this.selected.has(report.uuid) ? "checked" : ""}></td><td>${escape(calendarDate(report.createdAt))}</td><td>${escape(report.name)}${report.issue ? `<p class="trend-error">${escape(report.issue)}</p>` : ""}</td><td>${escape(report.metadata)}</td><td>${escape(report.scope)}</td></tr>`,
-        )
-        .join("");
-    }
-
-    private renderList() {
-      if (!this.data) return;
-      const query = this.input("search").value.toLowerCase();
-      const project = this.input("project").value;
-      const reports = this.reports();
-      const rows = this.data.series
-        .filter(
-          (series) =>
-            (!project || series.project === project) &&
-            `${series.title} ${series.path.join(" ")} ${series.file}`
-              .toLowerCase()
-              .includes(query) &&
-            series.observations.some((observation) =>
-              this.selected.has(observation.reportUuid),
-            ),
-        )
-        .map((series) => ({
-          series,
-          stats: TrendModel.statistics(series, reports, this.metric),
-        }));
-      const sort = this.input("sort").value;
-      rows.sort((left, right) => {
-        if (sort !== "name") {
-          const field = sort === "latest" ? "latest" : "change";
-          const leftValue = left.stats[field] ?? -Infinity;
-          const rightValue = right.stats[field] ?? -Infinity;
-          if (leftValue !== rightValue) return rightValue - leftValue;
-          if (field === "change" && left.stats.latest !== right.stats.latest)
-            return (right.stats.latest ?? -1) - (left.stats.latest ?? -1);
-        }
-        return left.series.title.localeCompare(right.series.title);
-      });
-      if (!rows.some(({ series }) => series.key === this.seriesKey))
-        this.seriesKey = rows[0]?.series.key ?? "";
-      const pages = Math.max(1, Math.ceil(rows.length / 40));
-      this.page = Math.max(0, Math.min(this.page, pages - 1));
-      this.element("test-count").textContent = `${rows.length} tests`;
-      this.element("page").textContent = rows.length
-        ? `${this.page + 1} / ${pages}`
-        : "0 tests";
-      this.input("previous").disabled = this.page === 0;
-      this.input("next").disabled = this.page >= pages - 1;
-      this.element("test-rows").innerHTML =
-        rows
-          .slice(this.page * 40, (this.page + 1) * 40)
-          .map(
-            ({ series, stats }) =>
-              `<button type="button" class="trend-test" data-series="${escape(series.key)}" aria-pressed="${series.key === this.seriesKey}"><span class="trend-test-title">${escape(series.title)}</span><span class="trend-test-context">${escape(series.project)}${series.repeat ? ` / repeat ${series.repeat}` : ""} / ${escape(series.file)}</span><span class="trend-test-values"><canvas data-spark="${escape(series.key)}" aria-hidden="true"></canvas><span>${TrendModel.duration(stats.latest)} <span class="${changeClass(stats.change)}">${changeText(stats.change)}</span></span></span></button>`,
-          )
-          .join("") || '<p class="muted">No matching tests.</p>';
-      this.drawSparklines();
+      this.element("workspace").hidden = false;
+      this.message("");
       this.renderDetail();
     }
-
     private link(
-      series: TrendData.Series,
       report: TrendData.Report,
       observation: TrendData.Observation | undefined,
       label: string,
@@ -515,28 +600,34 @@ namespace TrendView {
         run: String(index),
         version: report.version,
       });
-      return `<a href="/api/trends/reports/${encodeURIComponent(report.uuid)}/test?${escape(query)}" target="_blank" rel="noopener" class="trend-link" aria-label="${escape(label)} for ${escape(series.title)}" title="Open this test attempt in a new tab">${escape(label)}${externalIcon}</a>`;
+      return `<a href="/api/trends/reports/${encodeURIComponent(report.uuid)}/test?${escape(query)}" target="_blank" rel="noopener" class="trend-link" aria-label="${escape(label)} for ${escape(observation.title)}" title="Open this test attempt in a new tab">${escape(label)}${externalIcon}</a>`;
     }
-
     private renderDetail() {
-      const series = this.series();
-      this.element("detail").hidden = !series;
-      if (!series) return;
-      const stats = TrendModel.statistics(series, this.reports(), this.metric);
-      if (!stats.runs.some(({ report }) => report.uuid === this.reportUuid))
-        this.reportUuid = stats.runs.at(-1)?.report.uuid ?? "";
+      const series = this.data?.series[0];
+      if (!series || !this.data) return;
+      const stats = TrendModel.statistics(
+        series,
+        this.data.reports,
+        this.metric,
+      );
+      if (!stats.runs.some((run) => run.id === this.executionId))
+        this.executionId = stats.latestId ?? "";
       this.element("title").textContent = series.title;
-      this.element("context").textContent =
-        `${series.project} / ${series.path.join(" > ")} / ${series.file}${series.repeat ? ` / repeat ${series.repeat}` : ""}`;
-      this.element("series-status").textContent = series.ambiguous
-        ? "Ambiguous identity; records are kept separate."
-        : stats.executions === 1
-          ? "1 run; trend not available yet"
-          : stats.executions === 0
-            ? "No executions in the selected reports."
-            : stats.baseline === null
-              ? `${stats.executions} runs / insufficient baseline`
-              : `${stats.executions} runs`;
+      const exclusions = this.data.selection;
+      this.element("context").textContent = [
+        series.project || "(unnamed project)",
+        `Read ${calendarDate(this.data.generatedAt)}`,
+        ...(exclusions?.excludedReports
+          ? [`${countLabel(exclusions.excludedReports, "report")} excluded`]
+          : []),
+        ...(exclusions?.excludedExecutions
+          ? [
+              `${countLabel(exclusions.excludedExecutions, "execution")} excluded`,
+            ]
+          : []),
+      ].join(" / ");
+      this.element("series-status").textContent =
+        `${countLabel(stats.executions, "execution")} / ${countLabel(stats.reportCount, "report")}${stats.reportCount === 1 ? " / Cross-report trend not available yet" : stats.baseline === null ? " / Insufficient baseline" : ""}`;
       this.root
         .querySelectorAll<HTMLButtonElement>("[data-metric]")
         .forEach((button) =>
@@ -552,93 +643,45 @@ namespace TrendView {
       this.element("change").textContent = changeText(stats.change);
       this.element("change").className = changeClass(stats.change);
       this.element("history-count").textContent =
-        `${stats.runs.filter(({ observation }) => observation?.passed !== null && observation?.passed !== undefined).length} passing / ${stats.runs.length} reports`;
-      const selected = stats.runs.find(
-        ({ report }) => report.uuid === this.reportUuid,
-      );
+        `${stats.runs.filter((run) => run.observation?.passed != null).length} passing / ${this.data.reports.length} included reports`;
+      const selected = stats.runs.find((run) => run.id === this.executionId);
       if (selected) {
-        const { report, observation } = selected;
-        const successful = observation?.attempts.find(
-          (attempt) => attempt.status === "passed",
-        );
+        const { report, observation, timestamp, timeSource } = selected;
+        const successful = observation
+          ? [...observation.attempts]
+              .reverse()
+              .find((attempt) => attempt.status === "passed")
+          : undefined;
         const index = this.metric === "passed" ? (successful?.index ?? 0) : 0;
         this.element("selected-run").innerHTML =
-          `<div class="trend-section-head"><strong>${escape(calendarDate(report.timestamp))}</strong>${this.link(series, report, observation, "Open test", index)}</div><p>${escape(report.issue ? "Report unavailable" : TrendModel.outcome(observation))}${observation?.total !== null && observation?.total !== undefined ? ` / Total ${TrendModel.duration(observation.total)}` : ""}</p><p class="muted">${escape(report.name)} / ${escape(report.metadata)} / ${escape(report.scope)}${report.timeSource !== "report" ? ` / ${report.timeSource} timestamp fallback` : ""}</p>${observation?.attempts.map((attempt) => `<div class="trend-attempt"><span>${attempt.retry ? `Retry ${attempt.retry}` : "Run"}: ${TrendModel.duration(attempt.duration)} / ${escape(attempt.status)}</span>${this.link(series, report, observation, "Open attempt", attempt.index)}</div>`).join("") ?? ""}`;
-      } else this.element("selected-run").textContent = "No reports selected.";
+          `<div class="trend-section-head"><strong>${escape(calendarDate(timestamp))}</strong>${this.link(report, observation, "Open test", index)}</div>
+          ${observation ? `<p><strong>${escape(observation.title)}</strong></p><p class="muted">${escape(sourceLabel(observation))}</p><p>${escape(repeatLabel(observation))}</p>` : ""}
+          <p>${escape(report.issue ? "Report unavailable" : TrendModel.outcome(observation))}${observation?.total != null ? ` / Total ${TrendModel.duration(observation.total)}` : ""}</p><p class="muted">${escape(report.name)} / ${escape(report.metadata)} / ${escape(report.scope)}${timeSource !== "attempt" ? ` / ${escape(timeSource)} timestamp fallback` : ""}</p>
+          ${observation?.attempts.map((attempt) => `<div class="trend-attempt"><span>${attempt.retry ? `Retry ${attempt.retry}` : "Run"}: ${TrendModel.duration(attempt.duration)} / ${escape(attempt.status)}</span>${this.link(report, observation, "Open attempt", attempt.index)}</div>`).join("") ?? ""}`;
+      }
       this.element("history").innerHTML = [...stats.runs]
         .reverse()
         .map(
-          ({ report, observation }) =>
-            `<tr class="${report.uuid === this.reportUuid ? "selected" : ""}"><td><button type="button" class="trend-point" data-point="${escape(report.uuid)}" aria-pressed="${report.uuid === this.reportUuid}">${escape(calendarDate(report.timestamp))}</button></td><td>${escape(report.issue ? "Unavailable" : TrendModel.outcome(observation))}</td><td>${TrendModel.duration(observation?.passed ?? null)}</td><td>${TrendModel.duration(observation?.total ?? null)}</td><td>${this.options ? this.link(series, report, observation, report.scope) : escape(report.name)}</td></tr>`,
+          ({ id, report, observation, timestamp }) =>
+            `<tr class="${id === this.executionId ? "selected" : ""}"><td><button type="button" class="trend-point" data-point="${escape(id)}" aria-pressed="${id === this.executionId}">${escape(calendarDate(timestamp))}${observation?.repeat != null ? ` / repeat ${observation.repeat}` : ""}</button></td><td>${escape(report.issue ? "Unavailable" : TrendModel.outcome(observation))}</td><td>${TrendModel.duration(observation?.passed ?? null)}</td><td>${TrendModel.duration(observation?.total ?? null)}</td><td>${escape(report.name)} ${this.link(report, observation, "Open test")}</td></tr>`,
         )
         .join("");
       this.drawChart();
     }
-
-    private context(canvas: HTMLCanvasElement) {
-      const bounds = canvas.getBoundingClientRect();
+    private drawChart() {
+      if (!this.data || this.element("workspace").hidden) return;
+      const canvas = this.element("chart") as HTMLCanvasElement;
+      const { width, height } = canvas.getBoundingClientRect();
       const ratio = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(bounds.width * ratio));
-      canvas.height = Math.max(1, Math.round(bounds.height * ratio));
+      canvas.width = Math.max(1, Math.round(width * ratio));
+      canvas.height = Math.max(1, Math.round(height * ratio));
       const context = canvas.getContext("2d")!;
       context.scale(ratio, ratio);
-      return { context, width: bounds.width, height: bounds.height };
-    }
-
-    private drawSparklines() {
-      if (!this.data) return;
-      const seriesMap = new Map(
-        this.data.series.map((series) => [series.key, series]),
+      const stats = TrendModel.statistics(
+        this.data.series[0],
+        this.data.reports,
+        this.metric,
       );
-      this.element("test-rows")
-        .querySelectorAll<HTMLCanvasElement>("canvas[data-spark]")
-        .forEach((canvas) => {
-          const series = seriesMap.get(canvas.dataset.spark!);
-          if (!series) return;
-          const { context, width, height } = this.context(canvas);
-          const values = TrendModel.statistics(
-            series,
-            this.reports(),
-            this.metric,
-          ).runs.map(({ observation }) => observation?.[this.metric] ?? null);
-          const valid = values.filter(
-            (value): value is number => value !== null,
-          );
-          const maximum = Math.max(1, ...valid);
-          const minimum = Math.min(maximum, ...valid);
-          context.strokeStyle = "#58a6ff";
-          context.fillStyle = "#58a6ff";
-          context.lineWidth = 1.5;
-          context.beginPath();
-          let connected = false;
-          values.forEach((value, index) => {
-            if (value === null) {
-              connected = false;
-              return;
-            }
-            const horizontal =
-              3 + (index / Math.max(1, values.length - 1)) * (width - 6);
-            const vertical =
-              height -
-              3 -
-              ((value - minimum) / Math.max(1000, maximum - minimum)) *
-                (height - 6);
-            if (connected) context.lineTo(horizontal, vertical);
-            else context.moveTo(horizontal, vertical);
-            connected = true;
-            context.fillRect(horizontal - 1, vertical - 1, 2, 2);
-          });
-          context.stroke();
-        });
-    }
-
-    private drawChart() {
-      const series = this.series();
-      if (!series || this.element("detail").hidden) return;
-      const { context, width, height } = this.context(
-        this.element("chart") as HTMLCanvasElement,
-      );
-      const stats = TrendModel.statistics(series, this.reports(), this.metric);
       const runs = stats.runs;
       this.points = [];
       const displayed = runs.map(
@@ -648,26 +691,27 @@ namespace TrendView {
             ?.duration ??
           null,
       );
-      const ceiling =
-        Math.ceil(
-          Math.max(
-            60000,
-            ...displayed.filter((value): value is number => value !== null),
-            stats.baseline ?? 0,
-          ) / 60000,
-        ) * 60000;
-      const left = 48;
-      const right = width - 16;
-      const top = 18;
-      const bottom = height - 34;
+      const maximum = displayed.reduce<number>(
+        (maximum, value) => Math.max(maximum, value ?? 0),
+        Math.max(60000, stats.baseline ?? 0),
+      );
+      const ceiling = Math.ceil(maximum / 60000) * 60000;
+      const left = 48,
+        right = width - 16,
+        top = 18,
+        bottom = height - 34;
       const vertical = (value: number) =>
         bottom - (value / ceiling) * (bottom - top);
-      const times = runs.map(({ report }) =>
-        Date.parse(report.timestamp || report.createdAt),
-      );
+      const times = runs.map((run) => Date.parse(run.timestamp));
       const validTimes = times.filter(Number.isFinite);
-      const first = Math.min(...validTimes);
-      const last = Math.max(...validTimes);
+      const first = validTimes.reduce(
+        (minimum, value) => Math.min(minimum, value),
+        Infinity,
+      );
+      const last = validTimes.reduce(
+        (maximum, value) => Math.max(maximum, value),
+        -Infinity,
+      );
       const horizontal = (index: number) =>
         first === last
           ? (left + right) / 2
@@ -680,8 +724,8 @@ namespace TrendView {
       context.textBaseline = "middle";
       context.lineWidth = 1;
       for (let tick = 0; tick <= 4; tick++) {
-        const value = (ceiling * tick) / 4;
-        const position = vertical(value);
+        const value = (ceiling * tick) / 4,
+          position = vertical(value);
         context.strokeStyle = "#30363d";
         context.beginPath();
         context.moveTo(left, position);
@@ -710,7 +754,7 @@ namespace TrendView {
       let connected = false;
       runs.forEach(({ observation }, index) => {
         const value = observation?.[this.metric];
-        if (value === null || value === undefined) {
+        if (value == null) {
           connected = false;
           return;
         }
@@ -719,10 +763,26 @@ namespace TrendView {
         connected = true;
       });
       context.stroke();
-      runs.forEach(({ report, observation }, index) => {
-        const position = horizontal(index);
-        const value = displayed[index];
-        this.points.push({ horizontal: position, report });
+      const dateLabels = runs.map(({ timestamp }) =>
+        timestamp
+          ? new Date(timestamp).toLocaleDateString(undefined, {
+              timeZone: "UTC",
+              month: "short",
+              day: "numeric",
+            })
+          : "Missing",
+      );
+      const finalLabelLeft =
+        right - context.measureText(dateLabels.at(-1) ?? "").width;
+      let previousLabelRight = -Infinity;
+      runs.forEach(({ id, observation }, index) => {
+        const position = horizontal(index),
+          value = displayed[index];
+        this.points.push({
+          horizontal: position,
+          vertical: value === null ? bottom : vertical(value),
+          id,
+        });
         const failed =
           observation &&
           (observation.passed === null || observation.outcome === "unexpected");
@@ -734,19 +794,18 @@ namespace TrendView {
         context.fillStyle = context.strokeStyle;
         if (value !== null) {
           const point = vertical(value);
+          context.beginPath();
           if (failed) {
-            context.beginPath();
             context.moveTo(position - 4, point - 4);
             context.lineTo(position + 4, point + 4);
             context.moveTo(position + 4, point - 4);
             context.lineTo(position - 4, point + 4);
             context.stroke();
           } else {
-            context.beginPath();
             context.arc(position, point, 4, 0, Math.PI * 2);
             context.fill();
           }
-          if (report.uuid === this.reportUuid) {
+          if (id === this.executionId) {
             context.beginPath();
             context.arc(position, point, 8, 0, Math.PI * 2);
             context.stroke();
@@ -757,38 +816,35 @@ namespace TrendView {
           Math.ceil(runs.length / (width < 450 ? 3 : 6)),
         );
         if (index % interval === 0 || index === runs.length - 1) {
-          context.fillStyle = "#9da7b3";
-          context.textAlign =
-            index === 0
-              ? "left"
-              : index === runs.length - 1
-                ? "right"
-                : "center";
-          const time = report.timestamp || report.createdAt;
-          context.fillText(
-            time
-              ? new Date(time).toLocaleDateString(undefined, {
-                  timeZone: "UTC",
-                  month: "short",
-                  day: "numeric",
-                })
-              : "Missing",
-            position,
-            height - 11,
+          const label = dateLabels[index];
+          const labelWidth = context.measureText(label).width;
+          const labelLeft = Math.max(
+            left,
+            Math.min(right - labelWidth, position - labelWidth / 2),
           );
+          if (
+            labelLeft < previousLabelRight + 12 ||
+            (index !== runs.length - 1 &&
+              labelLeft + labelWidth > finalLabelLeft - 12)
+          )
+            return;
+          context.fillStyle = "#9da7b3";
+          context.textAlign = "left";
+          context.fillText(label, labelLeft, height - 11);
+          previousLabelRight = labelLeft + labelWidth;
         }
       });
     }
-
     private async export() {
-      const series = this.series();
-      if (!series || !this.data || this.downloading || !this.options) return;
+      if (!this.data || this.downloading || !this.options) return;
+      const data = this.data;
+      const series = data.series[0];
       this.downloading = true;
       this.input("export").disabled = true;
       const snapshot = TrendModel.selectedSnapshot(
-        this.data,
+        data,
         series,
-        this.reports(),
+        data.reports,
         this.filters,
         this.metric,
       );
@@ -803,7 +859,7 @@ namespace TrendView {
             return response.text();
           }),
         );
-        if (this.destroyed) return;
+        if (this.destroyed || data !== this.data) return;
         const html = TrendModel.snapshotHtml(
           snapshot,
           assets[0],
@@ -829,7 +885,6 @@ namespace TrendView {
         if (!this.destroyed) this.input("export").disabled = false;
       }
     }
-
     close() {
       if (this.destroyed) return;
       this.destroyed = true;
@@ -838,29 +893,11 @@ namespace TrendView {
       this.events.abort();
       this.observer.disconnect();
       this.data = null;
+      this.preview = null;
       this.selected.clear();
+      this.excluded.clear();
       this.points = [];
-      const dialog = this.root.closest("dialog");
-      dialog?.close();
-      dialog?.remove();
-      this.options?.onClose();
     }
-  }
-
-  export function open(options: Options): void {
-    const dialog = document.createElement("dialog");
-    dialog.className = "trend-dialog";
-    dialog.setAttribute("aria-label", "Test Trends");
-    const content = document.createElement("div");
-    dialog.append(content);
-    document.body.append(dialog);
-    const viewer = new Viewer(content, options);
-    dialog.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      viewer.close();
-    });
-    dialog.showModal();
-    void viewer.initialize();
   }
 
   export function showSnapshot(
@@ -868,13 +905,25 @@ namespace TrendView {
     snapshot: TrendData.Snapshot,
   ): void {
     if (
-      snapshot.schemaVersion !== 1 ||
-      snapshot.data.schemaVersion !== 1 ||
+      snapshot.schemaVersion !== 2 ||
+      snapshot.data.schemaVersion !== 2 ||
       snapshot.data.series.length !== 1
     ) {
       root.textContent = "Unsupported trend snapshot.";
       return;
     }
     new Viewer(root).show(snapshot.data, snapshot);
+  }
+
+  const pageRoot = document.getElementById("trends-page-root");
+  if (pageRoot) {
+    const viewer = new Viewer(pageRoot, {
+      catalog: (signal) =>
+        jsonRequest<TrendData.Catalog>("/api/reports", signal),
+    });
+    window.addEventListener("pagehide", (event) => {
+      if (!event.persisted) viewer.close();
+    });
+    void viewer.initialize();
   }
 }

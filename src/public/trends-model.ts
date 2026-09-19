@@ -1,4 +1,114 @@
 namespace TrendModel {
+  export function validateTestQuery(value: unknown): string | null {
+    return typeof value !== "string" ||
+      !value.trim() ||
+      value.trim().length > 256
+      ? "Enter a test title or fragment (1 to 256 characters)."
+      : null;
+  }
+
+  export function review(
+    preview: TrendData.Preview,
+    project: string | null,
+    selected: Set<string>,
+    excluded: Set<string>,
+  ) {
+    const projects = new Set(
+      preview.candidates.map((candidate) => candidate.project),
+    );
+    const rows = preview.reports.map((report) => {
+      const candidates = preview.candidates.filter(
+        (candidate) =>
+          candidate.reportUuid === report.uuid && candidate.project === project,
+      );
+      const definitions = new Map<string, TrendData.Observation[]>();
+      for (const candidate of candidates) {
+        const group = definitions.get(candidate.definition) ?? [];
+        group.push(candidate);
+        definitions.set(candidate.definition, group);
+      }
+      const groups = [...definitions.entries()].map(([key, records]) => {
+        const included = records.filter((record) => !excluded.has(record.id));
+        const indices = included.map((record) => record.repeat ?? 0);
+        const invalid =
+          included.length > 1 &&
+          (new Set(indices).size !== indices.length ||
+            included.some(
+              (record) => record.line === null || record.column === null,
+            ));
+        return { key, records, included, invalid };
+      });
+      const active = groups.filter((group) => group.included.length);
+      const observations = active.flatMap((group) => group.included);
+      const state =
+        !selected.has(report.uuid) ||
+        (candidates.length > 0 && !observations.length)
+          ? "excluded"
+          : report.issue
+            ? "unavailable"
+            : !candidates.length
+              ? "missing"
+              : active.length > 1 || active.some((group) => group.invalid)
+                ? "conflict"
+                : "ready";
+      return { report, groups, observations, state };
+    });
+    const canGenerate =
+      project !== null &&
+      projects.has(project) &&
+      rows.some((row) => row.state === "ready") &&
+      !rows.some(
+        (row) => row.state === "conflict" || row.state === "unavailable",
+      );
+    return { rows, canGenerate };
+  }
+
+  export function generate(
+    preview: TrendData.Preview,
+    project: string | null,
+    selected: Set<string>,
+    excluded: Set<string>,
+  ): TrendData.Dataset {
+    const result = review(preview, project, selected, excluded);
+    if (!result.canGenerate)
+      throw new Error(
+        "Resolve the included report conflicts before generating.",
+      );
+    const rows = result.rows.filter((row) => row.state !== "excluded");
+    const observations = rows.flatMap((row) => row.observations);
+    if (
+      new Set(observations.map((observation) => observation.id)).size !==
+      observations.length
+    )
+      throw new Error("Duplicate execution identity.");
+    return {
+      schemaVersion: 2,
+      generatedAt: preview.generatedAt,
+      reports: rows.map((row) => row.report),
+      series: [
+        {
+          key: "query",
+          title: preview.testQuery,
+          project: project!,
+          path: [],
+          file: "",
+          repeat: 0,
+          ambiguous: false,
+          observations,
+        },
+      ],
+      selection: {
+        excludedReports: result.rows.filter((row) => row.state === "excluded")
+          .length,
+        excludedExecutions: preview.candidates.filter(
+          (candidate) =>
+            candidate.project === project &&
+            (!selected.has(candidate.reportUuid) || excluded.has(candidate.id)),
+        ).length,
+      },
+    };
+  }
+
   export function dateBounds(reports: { createdAt: string }[]): {
     rangeStart: string;
     rangeEnd: string;
@@ -39,11 +149,10 @@ namespace TrendModel {
   export function orderedReports(
     reports: TrendData.Report[],
   ): TrendData.Report[] {
-    return [...reports].sort(
-      (left, right) =>
-        (left.timestamp || left.createdAt).localeCompare(
-          right.timestamp || right.createdAt,
-        ) || left.uuid.localeCompare(right.uuid),
+    return [...reports].sort((left, right) =>
+      (left.timestamp || left.createdAt).localeCompare(
+        right.timestamp || right.createdAt,
+      ),
     );
   }
 
@@ -52,31 +161,65 @@ namespace TrendModel {
     reports: TrendData.Report[],
     metric: TrendData.Metric,
   ) {
-    const observations = new Map(
-      series.observations.map((observation) => [
-        observation.reportUuid,
-        observation,
-      ]),
-    );
-    const runs = orderedReports(reports).map((report) => ({
-      report,
-      observation: report.issue ? undefined : observations.get(report.uuid),
-    }));
-    const latest = runs.at(-1)?.observation?.[metric] ?? null;
-    const prior = runs
+    if (
+      new Set(series.observations.map((observation) => observation.id)).size !==
+      series.observations.length
+    )
+      throw new Error("Duplicate execution identity.");
+    const observations = new Map<string, TrendData.Observation[]>();
+    for (const observation of series.observations) {
+      const group = observations.get(observation.reportUuid) ?? [];
+      group.push(observation);
+      observations.set(observation.reportUuid, group);
+    }
+    const ordered = orderedReports(reports);
+    const runs = ordered.flatMap((report) => {
+      const records = report.issue ? [] : (observations.get(report.uuid) ?? []);
+      return (records.length ? records : [undefined])
+        .map((observation) => {
+          const start = observation?.attempts.find(
+            (attempt) => attempt.startTime,
+          )?.startTime;
+          return {
+            report,
+            observation,
+            id: observation?.id ?? `missing-${report.uuid}`,
+            timestamp: start || report.timestamp || report.createdAt,
+            timeSource: start ? "attempt" : report.timeSource,
+          };
+        })
+        .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    });
+    const latestReport = ordered.at(-1)?.uuid;
+    const latestRun = runs
+      .filter((run) => run.report.uuid === latestReport)
+      .at(-1);
+    const latest = latestRun?.observation?.[metric] ?? null;
+    const median = (values: number[]): number => {
+      const sorted = [...values].sort((left, right) => left - right);
+      const middle = Math.floor(sorted.length / 2);
+      return sorted.length % 2
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) / 2;
+    };
+    const values = ordered
       .slice(0, -1)
-      .filter(
-        ({ observation }) =>
-          observation &&
-          observation.passed !== null &&
-          ["expected", "flaky"].includes(observation.outcome),
+      .filter((report) => !report.issue)
+      .map((report) =>
+        (observations.get(report.uuid) ?? [])
+          .filter(
+            (observation) =>
+              observation.passed !== null &&
+              ["expected", "flaky"].includes(observation.outcome),
+          )
+          .map((observation) => observation[metric]!)
+          .filter((value) => value !== null),
       )
-      .slice(0, 5);
-    const values = prior
-      .map(({ observation }) => observation![metric]!)
-      .sort((left, right) => left - right);
+      .filter((values) => values.length)
+      .slice(0, 5)
+      .map(median);
     const baseline =
-      !series.ambiguous && values.length === 5 ? values[2] : null;
+      !series.ambiguous && values.length === 5 ? median(values) : null;
     const change =
       baseline !== null && baseline > 0 && latest !== null
         ? Math.round((latest / baseline - 1) * 100)
@@ -85,11 +228,25 @@ namespace TrendModel {
       ({ observation }) =>
         observation?.total !== null && observation?.total !== undefined,
     ).length;
-    return { runs, latest, baseline, change, executions };
+    const reportCount = new Set(
+      runs
+        .filter((run) => run.observation?.total != null)
+        .map((run) => run.report.uuid),
+    ).size;
+    runs.sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    return {
+      runs,
+      latest,
+      latestId: latestRun?.id,
+      baseline,
+      change,
+      executions,
+      reportCount,
+    };
   }
 
   export function outcome(observation?: TrendData.Observation): string {
-    if (!observation) return "Not run";
+    if (!observation) return "No title match";
     if (observation.total === null) return "Skipped";
     if (observation.outcome === "flaky") return "Passed on retry";
     if (observation.outcome === "unexpected")
@@ -112,7 +269,7 @@ namespace TrendModel {
         ? (value.split(/[\\/]/).at(-1) ?? "")
         : value;
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       exportedAt: new Date().toISOString(),
       filters: {
         query: filters.query,
@@ -121,8 +278,16 @@ namespace TrendModel {
       },
       metric,
       data: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         generatedAt: data.generatedAt,
+        ...(data.selection
+          ? {
+              selection: {
+                excludedReports: data.selection.excludedReports,
+                excludedExecutions: data.selection.excludedExecutions,
+              },
+            }
+          : {}),
         reports: reports.map((report) => ({
           uuid: ids.get(report.uuid)!,
           name: report.name,
@@ -145,9 +310,17 @@ namespace TrendModel {
             ambiguous: series.ambiguous,
             observations: series.observations
               .filter((observation) => ids.has(observation.reportUuid))
-              .map((observation) => ({
+              .map((observation, index) => ({
+                id: `execution-${index + 1}`,
+                definition: "selected-test",
                 reportUuid: ids.get(observation.reportUuid)!,
                 testId: "",
+                title: observation.title,
+                file: safePath(observation.file),
+                line: observation.line,
+                column: observation.column,
+                project: observation.project,
+                repeat: observation.repeat,
                 path: observation.path.map(safePath),
                 outcome: observation.outcome,
                 passed: observation.passed,

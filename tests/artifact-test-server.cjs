@@ -101,13 +101,52 @@ if (process.env.ARTIFACT_TEST_SEED === "trends") {
     const tests = [
       trendTest({
         testId: `daily-test-${index}`,
-        path: [`Orders [DEV NA - 9/${index + 1}]`],
+        title:
+          index >= 6
+            ? "e2eExampleTC01 - renamed order workflow"
+            : "e2eExampleTC01 - completes the order",
+        location: {
+          file:
+            index >= 6 ? "tests/moved/orders.spec.ts" : "tests/order.spec.ts",
+          line: 10,
+          column: 1,
+        },
+        path: [
+          index >= 6 ? "New order suite" : `Orders [DEV NA - 9/${index + 1}]`,
+        ],
         results,
         duration: results.reduce((sum, result) => sum + result.duration, 0),
         outcome:
           index === 8 ? "unexpected" : index === 6 ? "flaky" : "expected",
       }),
     ];
+    if (index === 2)
+      tests.push(trendTest({ testId: "other-project", projectName: "webkit" }));
+    if (index === 4)
+      tests.push(
+        trendTest({
+          testId: "prefix-collision",
+          title: "e2eExampleTC010 - another workflow",
+        }),
+      );
+    if (index === 5 || index === 6) {
+      for (const repeat of [undefined, 1, 2])
+        tests.push(
+          trendTest({
+            testId: `repeat-${index}-${repeat ?? 0}`,
+            title: "repeatCase - three executions",
+            repeatEachIndex: repeat,
+            path: ["Repeated suite"],
+            duration: 30,
+            outcome: "flaky",
+            results: [
+              { retry: 0, startTime, duration: 10, status: "failed" },
+              { retry: 1, startTime, duration: 20, status: "passed" },
+            ],
+          }),
+        );
+      if (index === 6) tests.push({ ...tests.at(-1), testId: "copied-repeat" });
+    }
     if (index !== 10)
       tests.push(
         trendTest({

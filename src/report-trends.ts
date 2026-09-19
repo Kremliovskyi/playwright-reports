@@ -123,9 +123,34 @@ export function parseTrendReport(
         Math.abs(item.duration - total) > 0.01
       )
         throw new Error("Attempt timings do not match the report total.");
-      const repeat = test.repeatEachIndex ?? 0;
-      if (!Number.isInteger(repeat) || repeat < 0)
+      const rawRepeat = test.repeatEachIndex;
+      const repeat = rawRepeat ?? 0;
+      if (
+        !Number.isInteger(repeat) ||
+        repeat < 0 ||
+        rawRepeat === null ||
+        item.repeatEachIndex !== rawRepeat
+      )
         throw new Error("Invalid repeat index.");
+      const sourceFile = test.location.file.replace(/\\/g, "/");
+      const line =
+        Number.isInteger(test.location.line) && test.location.line > 0
+          ? test.location.line
+          : null;
+      const column =
+        Number.isInteger(test.location.column) && test.location.column > 0
+          ? test.location.column
+          : null;
+      const definition = hash(
+        JSON.stringify([
+          test.projectName,
+          sourceFile,
+          test.path,
+          test.title,
+          line,
+          column,
+        ]),
+      );
       const normalizedPath = test.path.map(normalizeSuiteTitle);
       const spec = relativeFile(test.location.file);
       const key = hash(
@@ -148,8 +173,16 @@ export function parseTrendReport(
         ambiguous: false,
         observations: [
           {
+            id: hash(JSON.stringify([report.uuid, test.testId])),
+            definition,
             reportUuid: report.uuid,
             testId: test.testId,
+            title: test.title,
+            file: sourceFile,
+            line,
+            column,
+            project: test.projectName,
+            repeat: rawRepeat ?? null,
             path: [...test.path],
             outcome: test.outcome,
             attempts,
@@ -252,7 +285,7 @@ export async function readTrendSource(
   if (directoryStat.birthtime.toISOString() !== record.dateCreated)
     throw new TrendSourceError(
       409,
-      "Report was replaced. Apply filters again.",
+      "Report was replaced. Search matches again.",
     );
   const before = await fs.stat(index);
   if (!before.isFile() || before.size > 128 * 1024 * 1024)
@@ -266,7 +299,7 @@ export async function readTrendSource(
   )
     throw new TrendSourceError(
       409,
-      "Report changed while reading. Apply filters again.",
+      "Report changed while reading. Search matches again.",
     );
   return html;
 }

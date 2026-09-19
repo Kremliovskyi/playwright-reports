@@ -10,6 +10,7 @@ function copyIfExists(src, dest) {
 
 copyIfExists("src/public/index.html", "dist/public/index.html");
 copyIfExists("src/public/runner.html", "dist/public/runner.html");
+copyIfExists("src/public/trends.html", "dist/public/trends.html");
 copyIfExists("src/public/style.css", "dist/public/style.css");
 copyIfExists("src/public/trends.css", "dist/public/trends.css");
 copyIfExists("config.json", "dist/config.json");

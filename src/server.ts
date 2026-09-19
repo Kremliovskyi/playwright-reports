@@ -81,7 +81,6 @@ import {
 } from "./report-artifacts";
 import {
   describeTrendReport,
-  mergeTrendSeries,
   parseTrendReport,
   readTrendSource,
   TrendSourceError,
@@ -754,7 +753,7 @@ const trendError = (error: unknown): { status: number; message: string } => {
   return {
     status: 422,
     message:
-      "Report timing data is unreadable or unsupported. Apply filters again after the report finishes writing.",
+      "Report timing data is unreadable or unsupported. Search matches again after the report finishes writing.",
   };
 };
 
@@ -762,6 +761,15 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
   refreshConfigCache();
   res.setHeader("Cache-Control", "no-store");
   const ids = req.body?.reportUuids;
+  const testQuery = req.body?.testQuery;
+  if (
+    typeof testQuery !== "string" ||
+    !testQuery.trim() ||
+    testQuery.trim().length > 256
+  )
+    return res.status(400).json({
+      error: "Enter a test title or fragment (1 to 256 characters).",
+    });
   if (
     !Array.isArray(ids) ||
     ids.length > 500 ||
@@ -772,7 +780,7 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
   )
     return res.status(400).json({ error: "Select up to 500 report UUIDs." });
   const reports: TrendData.Report[] = [];
-  const entries: TrendData.Series[] = [];
+  const candidates: TrendData.Observation[] = [];
   let closed = false;
   res.on("close", () => {
     closed = true;
@@ -796,7 +804,12 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
       const source = await loadTrendSource(uuid);
       report = source.record;
       descriptor = describeTrendReport(report);
-      entries.push(...parseTrendReport(source.html, descriptor));
+      const matches = parseTrendReport(source.html, descriptor)
+        .flatMap((entry) => entry.observations)
+        .filter((entry) =>
+          entry.title.toLowerCase().includes(testQuery.trim().toLowerCase()),
+        );
+      candidates.push(...matches);
     } catch (error) {
       descriptor.issue = trendError(error).message;
     }
@@ -804,11 +817,12 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
   }
   if (!closed)
     return res.json({
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: new Date().toISOString(),
+      testQuery: testQuery.trim(),
       reports,
-      series: mergeTrendSeries(entries),
-    } satisfies TrendData.Dataset);
+      candidates,
+    } satisfies TrendData.Preview);
 });
 
 app.get(
@@ -831,7 +845,7 @@ app.get(
       if (contentVersion(html) !== version)
         throw new TrendSourceError(
           409,
-          "Report has changed. Open Trends and apply filters again.",
+          "Report has changed. Open Trends and search matches again.",
         );
       const series = parseTrendReport(html, describeTrendReport(record));
       const observation = series

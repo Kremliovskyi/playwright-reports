@@ -23,8 +23,16 @@ declare global {
       status: Status;
     }
     interface Observation {
+      id: string;
+      definition: string;
       reportUuid: string;
       testId: string;
+      title: string;
+      file: string;
+      line: number | null;
+      column: number | null;
+      project: string;
+      repeat: number | null;
       path: string[];
       outcome: "expected" | "unexpected" | "flaky" | "skipped";
       attempts: Attempt[];
@@ -42,10 +50,18 @@ declare global {
       observations: Observation[];
     }
     interface Dataset {
-      schemaVersion: 1;
+      schemaVersion: 2;
       generatedAt: string;
       reports: Report[];
       series: Series[];
+      selection?: { excludedReports: number; excludedExecutions: number };
+    }
+    interface Preview {
+      schemaVersion: 2;
+      generatedAt: string;
+      testQuery: string;
+      reports: Report[];
+      candidates: Observation[];
     }
     interface Filters {
       query: string;
@@ -63,7 +79,7 @@ declare global {
       archive: CatalogReport[];
     }
     interface Snapshot {
-      schemaVersion: 1;
+      schemaVersion: 2;
       exportedAt: string;
       filters: Filters;
       metric: Metric;

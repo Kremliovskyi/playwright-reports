@@ -110,6 +110,7 @@ Current endpoints:
 
 - `GET /api/agent/reports/search` queries the persisted `reports` table and returns report descriptors plus an opaque `reportRef`. Each descriptor includes `analysisFiles`, an array of run names whose matching vault `.md` file exists for that report. New run names are `run-<timestamp>-<reportUuid>`; existing names are preserved. Files map through `analysis_runs.runName` (`<runName>.md`), not the recyclable report folder name. The array contract remains unchanged: normally zero or one file, but unresolved legacy records are not hidden. A run's `runDir` is cleared when its output directory is deleted or removed during archive, while the row and analysis-file mapping are retained.
 - `GET /api/agent/reports/prepare?reportRef=...` resolves a chosen descriptor into local filesystem paths such as `reportRootPath` and `reportDataPath`.
+- `GET /api/agent/trends/reports/:uuid/attempt?testId=...&version=...&run=...` resolves an exact historical result-array index into trace attachment paths without extracting or digesting them. It uses the same source identity and version checks as Trends links, rejects unsafe/symlink paths, and distinguishes absent traces from missing files. Discovery descriptors expose `uuid` for this handoff; path-based `reportRef` values are not stable across moves.
 - `GET /api/agent/vault/:filename` returns raw vault markdown content. This endpoint is used by the `vault-read` CLI command in `playwright-traces-reader` to let agents read vault analysis files that live outside the IDE workspace.
 
 Important contract rules:
@@ -123,6 +124,12 @@ This keeps responsibilities clean:
 
 - `playwright-reports` owns cataloging, metadata persistence, search, and path resolution.
 - `playwright-traces-reader` owns parsing and higher-level trace analysis.
+
+The reports package installs its discovery/vault and Trends skills from
+`templates/skills/` using `playwright-reports init-skills`. The reader installs
+its local trace-analysis skill separately. The reports CLI does not load the
+server or SQLite when installing skills. Existing files require `--force` to
+replace. See [docs/agent-api.md](docs/agent-api.md) for contracts and verification.
 
 If remote storage is added later, this boundary still holds. The `prepare` step can evolve to materialize or proxy the correct local analysis target without changing the parsing CLI contract.
 

@@ -484,6 +484,7 @@ p {
 }
 
 .modal-content {
+  --modal-padding-inline: clamp(var(--space-3), 5vw, var(--space-5));
   background: var(--bg-surface);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
@@ -502,11 +503,13 @@ p {
 }
 
 .modal-header {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--modal-padding-inline);
   border-bottom: 1px solid var(--border-color);
   display: flex;
+  flex-shrink: 0;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
 }
 
 .modal-header h2 {
@@ -538,13 +541,17 @@ p {
 }
 
 .modal-body-padded {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--modal-padding-inline);
+}
+
+.modal-body-padded > p + p {
+  margin-top: var(--space-3);
 }
 
 .modal-tabs {
   display: flex;
   border-bottom: 1px solid var(--border-color);
-  padding: 0 var(--space-5);
+  padding: 0 var(--modal-padding-inline);
   background: var(--bg-surface);
   position: sticky;
   top: 0;
@@ -575,7 +582,7 @@ p {
 
 .modal-tab-content {
   display: none;
-  padding: var(--space-5);
+  padding: var(--space-5) var(--modal-padding-inline);
 }
 
 .modal-tab-content.active {
@@ -600,9 +607,11 @@ p {
 }
 
 .modal-footer {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-4) var(--modal-padding-inline);
   border-top: 1px solid var(--border-color);
   display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: var(--space-3);
   background: var(--bg-surface-hover);
@@ -1419,15 +1428,35 @@ p {
 .confirm-delete-message {
   font-size: 0.88rem;
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
-.confirm-delete-path {
-  margin-top: 0.6rem;
+.digest-path-value.confirm-delete-path {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  max-height: 35vh;
+  overflow: auto;
 }
 
 .confirm-delete-path.hidden {
   display: none;
+}
+
+#confirm-delete-options {
+  margin-top: var(--space-4);
+}
+
+#confirm-delete-options label {
+  display: block;
+  margin-bottom: var(--space-2);
+}
+
+#confirm-delete-options p {
+  margin-top: var(--space-3);
 }
 
 /* Row progress overlay */

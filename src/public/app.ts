@@ -2115,8 +2115,26 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
+  const confirmArchive = (reportPaths: string[]): Promise<boolean> =>
+    openConfirm({
+      title:
+        reportPaths.length === 1 ? "Archive Report" : "Archive Selected Reports",
+      message:
+        reportPaths.length === 1
+          ? "Are you sure you want to archive this report?"
+          : `Are you sure you want to archive ${reportPaths.length} selected reports?`,
+      path: reportPaths.join("\n"),
+      confirmLabel:
+        reportPaths.length === 1
+          ? "Archive"
+          : `Archive ${reportPaths.length} Reports`,
+    });
+
   // Logic to handle moving current to archive
   const handleArchive = async (reportPath: string, row: HTMLElement) => {
+    if (!(await confirmArchive([reportPath]))) {
+      return;
+    }
     if (!(await ensureArchiveCapacity(1))) {
       return;
     }
@@ -2609,7 +2627,7 @@ document.addEventListener("DOMContentLoaded", () => {
   closeReportInfoModalBtn.addEventListener("click", closeReportInfoModal);
   closeReportInfoModalFooterBtn.addEventListener("click", closeReportInfoModal);
 
-  // Generic promise-based delete confirmation.
+  // Generic promise-based confirmation.
   let confirmResolve: ((value: boolean) => void) | null = null;
   let confirmPreviousFocus: HTMLElement | null = null;
   const confirmOptions = document.getElementById("confirm-delete-options")!;
@@ -3580,6 +3598,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (action === "archive") {
+          if (!(await confirmArchive(selectedPaths))) {
+            return;
+          }
           if (!(await ensureArchiveCapacity(selectedPaths.length))) {
             return;
           }

@@ -78,7 +78,7 @@ Each Current and Archived row has a checkbox. Use **Select All**, **Select None*
 
 ## Archive reports
 
-Click **Archive** for one report, or select current reports and choose **Actions > Archive selected**. The dashboard moves each report into the configured archive directory with a timestamped folder name that avoids collisions.
+Click **Archive** for one report, or select current reports and choose **Actions > Archive selected**. Review the report paths in the confirmation dialog, then confirm **Archive** (or **Archive N Reports** for a bulk selection). Canceling or dismissing the dialog leaves all reports untouched, including any archive-capacity cleanup. After confirmation, the dashboard moves each report into the configured archive directory with a timestamped folder name that avoids collisions.
 
 Mapped vault analysis files move into the archive's `analysis/` directory. Ephemeral analysis output and trace digest directories are removed, while the analysis-file mapping remains available from the archived report's Info dialog.
 

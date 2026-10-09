@@ -746,7 +746,7 @@
           <div
             id="modal-error"
             class="path-error static-error hidden"
-            style="padding: 0 var(--space-5, 1.25rem) var(--space-4, 1rem)"
+            style="padding: 0 var(--modal-padding-inline) var(--space-4)"
           ></div>
         </div>
 
@@ -793,7 +793,7 @@
           <p id="delete-modal-message">
             Are you sure that you want to delete this report?
           </p>
-          <p class="form-hint" style="margin-top: 0.5rem; color: #f85149">
+          <p class="form-hint" style="color: #f85149">
             This action will permanently remove the report directory from disk.
             This cannot be undone.
           </p>
@@ -845,14 +845,14 @@
           </button>
         </div>
 
-        <div class="modal-body">
+        <div class="modal-body modal-body-padded">
           <p id="archive-limit-modal-message">
             The archive already holds the maximum of 20 reports.
           </p>
           <p
             id="archive-limit-modal-hint"
             class="form-hint"
-            style="margin-top: 0.5rem; color: #f85149"
+            style="color: #f85149"
           >
             Deleting reports cannot be undone.
           </p>
@@ -1038,11 +1038,10 @@
           </button>
         </div>
         <div
-          class="modal-body"
+          class="modal-body modal-body-padded"
           style="
             max-height: 70vh;
             overflow-y: auto;
-            padding: var(--space-4) var(--space-5);
           "
         >
           <p class="form-hint" style="margin-bottom: 1.5rem">
@@ -1134,7 +1133,7 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <div class="digest-success-info" style="margin-top: 0">
             <div class="digest-status-title">
               <svg
@@ -1242,10 +1241,7 @@
             </div>
           </div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button id="close-failures-modal-footer-btn" class="btn primary-btn">
             Dismiss
           </button>
@@ -1280,13 +1276,10 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <div id="error-modal-message" class="error-modal-message"></div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button id="close-error-modal-footer-btn" class="btn primary-btn">
             Dismiss
           </button>
@@ -1321,7 +1314,7 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <div class="report-info-summary">
             <div class="report-info-summary-row">
               <span class="report-info-summary-label">Report</span>
@@ -1342,10 +1335,7 @@
           <h3 class="report-info-runs-title">Digests</h3>
           <div id="report-info-digests" class="report-info-runs"></div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button
             id="close-report-info-modal-footer-btn"
             class="btn primary-btn"
@@ -1356,7 +1346,7 @@
       </div>
     </div>
 
-    <!-- Generic Delete Confirmation Modal -->
+    <!-- Generic Confirmation Modal -->
     <div
       id="confirm-delete-modal"
       class="modal-backdrop hidden"
@@ -1390,26 +1380,17 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <p id="confirm-delete-message" class="confirm-delete-message">
             Are you sure?
           </p>
           <div
             id="confirm-delete-path"
             class="digest-path-value confirm-delete-path"
-            style="
-              white-space: pre-wrap;
-              overflow-wrap: anywhere;
-              max-height: 35vh;
-              overflow: auto;
-            "
           ></div>
           <div id="confirm-delete-options" class="hidden"></div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button id="confirm-delete-cancel-btn" class="btn">Cancel</button>
           <button id="confirm-delete-confirm-btn" class="btn danger-btn">
             Delete
@@ -1445,7 +1426,7 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <p
             id="copilot-models-hint"
             class="form-hint"
@@ -1460,10 +1441,7 @@
             aria-label="Available Copilot models"
           ></div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button
             id="close-copilot-models-footer-btn"
             class="btn secondary-btn"
@@ -1501,16 +1479,13 @@
             </svg>
           </button>
         </div>
-        <div class="modal-body" style="padding: var(--space-4) var(--space-5)">
+        <div class="modal-body modal-body-padded">
           <div
             id="copilot-model-warning-message"
             class="copilot-model-warning-message"
           ></div>
         </div>
-        <div
-          class="modal-footer"
-          style="padding: var(--space-3) var(--space-4)"
-        >
+        <div class="modal-footer">
           <button
             id="close-copilot-model-warning-footer-btn"
             class="btn primary-btn"

@@ -4,6 +4,7 @@ const {
   parseTrendReport,
   mergeTrendSeries,
   readTrendSource,
+  resolveTrendAttempt
 } = require("../dist/report-trends");
 const { trendTest, reportHtml } = require("./trends-fixture.cjs");
 const vm = require("node:vm");
@@ -13,9 +14,9 @@ const modelContext = vm.createContext({});
 vm.runInContext(
   fs.readFileSync(
     path.join(__dirname, "../dist/public/trends-model.js"),
-    "utf8",
+    "utf8"
   ),
-  modelContext,
+  modelContext
 );
 const model = modelContext.TrendModel;
 
@@ -27,7 +28,7 @@ const descriptor = (uuid = "report-1") => ({
   timestamp: "",
   timeSource: "catalog",
   version: "",
-  scope: "current",
+  scope: "current"
 });
 
 for (const style of ["window", "script", "template"]) {
@@ -44,7 +45,7 @@ for (const style of ["window", "script", "template"]) {
 test("separates failed retries, actual passes, expected failures, skipped and zero duration", () => {
   const attempts = [
     { retry: 0, duration: 258000, status: "failed" },
-    { retry: 1, duration: 234000, status: "failed" },
+    { retry: 1, duration: 234000, status: "failed" }
   ];
   const parse = (overrides) =>
     parseTrendReport(reportHtml([trendTest(overrides)]), descriptor())[0]
@@ -52,18 +53,18 @@ test("separates failed retries, actual passes, expected failures, skipped and ze
   const failed = parse({
     duration: 492000,
     results: attempts,
-    outcome: "unexpected",
+    outcome: "unexpected"
   });
   assert.equal(failed.total, 492000);
   assert.equal(failed.passed, null);
   assert.equal(
     parse({ duration: 492000, results: attempts, outcome: "expected" }).passed,
-    null,
+    null
   );
   const flaky = parse({
     duration: 492000,
     results: [attempts[0], { ...attempts[1], status: "passed" }],
-    outcome: "flaky",
+    outcome: "flaky"
   });
   assert.equal(flaky.passed, 234000);
   assert.equal(flaky.total, 492000);
@@ -72,16 +73,16 @@ test("separates failed retries, actual passes, expected failures, skipped and ze
     parse({
       duration: 0,
       results: [{ retry: 0, duration: 0, status: "skipped" }],
-      outcome: "skipped",
+      outcome: "skipped"
     }).total,
-    null,
+    null
   );
   assert.equal(
     parse({
       duration: 0,
-      results: [{ retry: 0, duration: 0, status: "passed" }],
+      results: [{ retry: 0, duration: 0, status: "passed" }]
     }).passed,
-    0,
+    0
   );
 });
 
@@ -89,9 +90,9 @@ test("matches stable titles across dated suites but separates environment, proje
   const first = parseTrendReport(reportHtml(), descriptor());
   const later = parseTrendReport(
     reportHtml([
-      trendTest({ testId: "different-hash", path: ["Orders [DEV NA - 6/2]"] }),
+      trendTest({ testId: "different-hash", path: ["Orders [DEV NA - 6/2]"] })
     ]),
-    descriptor("report-2"),
+    descriptor("report-2")
   );
   assert.equal(mergeTrendSeries([...first, ...later]).length, 1);
   for (const overrides of [
@@ -99,32 +100,32 @@ test("matches stable titles across dated suites but separates environment, proje
     { path: ["Orders [UAT NA - 6/2]"] },
     { title: "e2eExampleTC01 - parameter 2" },
     { repeatEachIndex: 1 },
-    { location: { file: "other.spec.ts" } },
+    { location: { file: "other.spec.ts" } }
   ]) {
     const different = parseTrendReport(
       reportHtml([trendTest(overrides)]),
-      descriptor("report-2"),
+      descriptor("report-2")
     );
     assert.equal(mergeTrendSeries([...first, ...different]).length, 2);
   }
   const collisions = parseTrendReport(
     reportHtml([
       trendTest(),
-      trendTest({ testId: "second", path: ["Orders [DEV NA - 6/2]"] }),
+      trendTest({ testId: "second", path: ["Orders [DEV NA - 6/2]"] })
     ]),
-    descriptor(),
+    descriptor()
   );
   assert.ok(
     mergeTrendSeries([...collisions, ...later]).every(
-      (series) => series.ambiguous,
-    ),
+      (series) => series.ambiguous
+    )
   );
   const absolute = ["/first/order.spec.ts", "/second/order.spec.ts"].flatMap(
     (file, index) =>
       parseTrendReport(
         reportHtml([trendTest({ location: { file } })]),
-        descriptor(`absolute-${index}`),
-      ),
+        descriptor(`absolute-${index}`)
+      )
   );
   assert.equal(mergeTrendSeries(absolute).length, 2);
 });
@@ -137,16 +138,16 @@ test("query review resolves moves, candidate exclusions, retries and verified re
       trendTest({
         title: "e2eExampleTC01 - renamed",
         location: { file: "moved.spec.ts", line: 4, column: 1 },
-        path: ["New suite"],
-      }),
+        path: ["New suite"]
+      })
     ]),
-    reports[1],
+    reports[1]
   );
   const extra = parseTrendReport(
     reportHtml([
-      trendTest({ testId: "duplicate", title: "e2eExampleTC010 - other" }),
+      trendTest({ testId: "duplicate", title: "e2eExampleTC010 - other" })
     ]),
-    reports[1],
+    reports[1]
   );
   const preview = {
     schemaVersion: 2,
@@ -154,18 +155,18 @@ test("query review resolves moves, candidate exclusions, retries and verified re
     generatedAt: "now",
     reports,
     candidates: [...old, ...moved, ...extra].flatMap(
-      (entry) => entry.observations,
-    ),
+      (entry) => entry.observations
+    )
   };
   const selected = new Set(reports.map((report) => report.uuid));
   const excluded = new Set();
   assert.equal(
     model.review(preview, "all-falcons", selected, excluded).rows[1].state,
-    "conflict",
+    "conflict"
   );
   assert.throws(
     () => model.generate(preview, "all-falcons", selected, excluded),
-    /conflicts/,
+    /conflicts/
   );
   excluded.add(extra[0].observations[0].id);
   const generated = model.generate(preview, "all-falcons", selected, excluded);
@@ -174,11 +175,11 @@ test("query review resolves moves, candidate exclusions, retries and verified re
   excluded.add(moved[0].observations[0].id);
   assert.equal(
     model.generate(preview, "all-falcons", selected, excluded).reports.length,
-    2,
+    2
   );
   assert.equal(
     model.review(preview, null, selected, excluded).canGenerate,
-    false,
+    false
   );
 
   const repetitions = [undefined, 1, 2].flatMap((repeatEachIndex, index) =>
@@ -190,40 +191,40 @@ test("query review resolves moves, candidate exclusions, retries and verified re
           duration: 30,
           results: [
             { retry: 0, duration: 10, status: "failed" },
-            { retry: 1, duration: 20, status: "passed" },
+            { retry: 1, duration: 20, status: "passed" }
           ],
-          outcome: "flaky",
-        }),
+          outcome: "flaky"
+        })
       ]),
-      reports[0],
-    ),
+      reports[0]
+    )
   );
   preview.candidates = repetitions.flatMap((entry) => entry.observations);
   assert.equal(
     model.review(preview, "all-falcons", selected, new Set()).canGenerate,
-    true,
+    true
   );
   assert.equal(
     model.generate(preview, "all-falcons", selected, new Set()).series[0]
       .observations.length,
-    3,
+    3
   );
   preview.candidates.push({ ...preview.candidates[1], id: "copied-repeat" });
   assert.equal(
     model.review(preview, "all-falcons", selected, new Set()).canGenerate,
-    false,
+    false
   );
   assert.equal(
     model.review(preview, "all-falcons", selected, new Set(["copied-repeat"]))
       .canGenerate,
-    true,
+    true
   );
   preview.candidates = preview.candidates
     .slice(0, 3)
     .map((entry) => ({ ...entry, repeat: null }));
   assert.equal(
     model.review(preview, "all-falcons", selected, new Set()).canGenerate,
-    false,
+    false
   );
   assert.equal(model.validateTestQuery("  ") !== null, true);
   assert.equal(model.validateTestQuery("[literal] (title)"), null);
@@ -231,7 +232,7 @@ test("query review resolves moves, candidate exclusions, retries and verified re
 
 test("repetition points preserve retries, report-balanced baselines and offline tie order", () => {
   const reports = Array.from({ length: 6 }, (_, index) =>
-    descriptor(`run-${index}`),
+    descriptor(`run-${index}`)
   );
   const candidates = reports.flatMap((report, index) => {
     const values =
@@ -251,13 +252,13 @@ test("repetition points preserve retries, report-balanced baselines and offline 
             duration: duration + 5,
             results: [
               { retry: 0, duration: 5, status: "failed", startTime },
-              { retry: 1, duration, status: "passed", startTime },
-            ],
-          }),
+              { retry: 1, duration, status: "passed", startTime }
+            ]
+          })
         ),
-        { startTime: Date.parse(startTime) },
+        { startTime: Date.parse(startTime) }
       ),
-      report,
+      report
     ).flatMap((series) => series.observations);
   });
   const preview = {
@@ -265,13 +266,13 @@ test("repetition points preserve retries, report-balanced baselines and offline 
     testQuery: "e2eExampleTC01",
     generatedAt: "now",
     reports,
-    candidates,
+    candidates
   };
   const data = model.generate(
     preview,
     "all-falcons",
     new Set(reports.map((report) => report.uuid)),
-    new Set(),
+    new Set()
   );
   const stats = model.statistics(data.series[0], reports, "passed");
   assert.equal(stats.runs.length, 15);
@@ -281,7 +282,7 @@ test("repetition points preserve retries, report-balanced baselines and offline 
   assert.equal(stats.reportCount, 6);
   assert.equal(
     stats.runs.reduce((sum, run) => sum + run.observation.attempts.length, 0),
-    30,
+    30
   );
   assert.equal(model.statistics(data.series[0], reports, "total").baseline, 35);
   assert.equal(model.statistics(data.series[0], reports, "total").latest, 305);
@@ -290,23 +291,23 @@ test("repetition points preserve retries, report-balanced baselines and offline 
     data.series[0],
     reports,
     { query: "", rangeStart: "", rangeEnd: "" },
-    "passed",
+    "passed"
   );
   const offline = model.statistics(
     snapshot.data.series[0],
     snapshot.data.reports,
-    "passed",
+    "passed"
   );
   assert.equal(offline.latest, stats.latest);
   assert.equal(offline.baseline, stats.baseline);
   assert.deepEqual(
     Array.from(offline.runs, (run) => run.observation.passed),
-    Array.from(stats.runs, (run) => run.observation.passed),
+    Array.from(stats.runs, (run) => run.observation.passed)
   );
   assert.ok(
     snapshot.data.series[0].observations.every(
-      (record) => record.testId === "" && record.definition === "selected-test",
-    ),
+      (record) => record.testId === "" && record.definition === "selected-test"
+    )
   );
 });
 
@@ -315,55 +316,55 @@ test("review separates projects, same-line parameters and unavailable reports", 
   const candidates = reports.flatMap((report, index) =>
     parseTrendReport(
       reportHtml([trendTest({ projectName: index ? "" : "chromium" })]),
-      report,
-    ).flatMap((series) => series.observations),
+      report
+    ).flatMap((series) => series.observations)
   );
   const preview = {
     schemaVersion: 2,
     testQuery: "TC01",
     reports,
     candidates,
-    generatedAt: "now",
+    generatedAt: "now"
   };
   const selected = new Set(reports.map((report) => report.uuid));
   assert.equal(
     model.review(preview, null, selected, new Set()).canGenerate,
-    false,
+    false
   );
   assert.equal(
     model.generate(preview, "", selected, new Set()).series[0].observations
       .length,
-    1,
+    1
   );
   assert.equal(
     model.review(preview, "chromium", selected, new Set()).rows[1].state,
-    "missing",
+    "missing"
   );
   candidates.push({
     ...candidates[0],
     id: "parameter",
     definition: "other-title-same-line",
-    title: "TC01 - GB",
+    title: "TC01 - GB"
   });
   assert.equal(
     model.review(preview, "chromium", selected, new Set()).rows[0].state,
-    "conflict",
+    "conflict"
   );
   const excluded = new Set(["parameter"]);
   reports[1].issue = "Report unavailable";
   assert.equal(
     model.review(preview, "chromium", selected, excluded).canGenerate,
-    false,
+    false
   );
   selected.delete("second");
   assert.equal(
     model.generate(preview, "chromium", selected, excluded).reports.length,
-    1,
+    1
   );
   excluded.add(candidates[0].id);
   assert.equal(
     model.review(preview, "chromium", selected, excluded).canGenerate,
-    false,
+    false
   );
 });
 
@@ -374,21 +375,21 @@ test("source reads reject traversal, symlinks and recycled folder instances", as
   fs.mkdirSync(directory);
   fs.writeFileSync(path.join(directory, "index.html"), reportHtml());
   const record = {
-    dateCreated: fs.statSync(directory).birthtime.toISOString(),
+    dateCreated: fs.statSync(directory).birthtime.toISOString()
   };
   assert.ok(
     (await readTrendSource(root, "report", record)).includes(
-      "Playwright Test Report",
-    ),
+      "Playwright Test Report"
+    )
   );
   await assert.rejects(readTrendSource(root, "../outside", record), /outside/);
   fs.symlinkSync(directory, path.join(root, "link"), "dir");
   await assert.rejects(readTrendSource(root, "link", record), /Symbolic links/);
   await assert.rejects(
     readTrendSource(root, "report", {
-      dateCreated: "2000-01-01T00:00:00.000Z",
+      dateCreated: "2000-01-01T00:00:00.000Z"
     }),
-    /replaced/,
+    /replaced/
   );
 });
 
@@ -400,24 +401,144 @@ test("uses explicit timestamp fallbacks and rejects incomplete or corrupt timing
     reportHtml(
       [
         trendTest({
-          results: [{ retry: 0, duration: 120000, status: "passed" }],
-        }),
+          results: [{ retry: 0, duration: 120000, status: "passed" }]
+        })
       ],
-      { startTime: null },
+      { startTime: null }
     ),
-    report,
+    report
   );
   assert.equal(report.timeSource, "catalog");
   assert.equal(report.timestamp, report.createdAt);
   assert.throws(
     () =>
       parseTrendReport(reportHtml([trendTest({ duration: 1 })]), descriptor()),
-    /do not match/,
+    /do not match/
   );
   assert.throws(
     () => parseTrendReport("no embedded data", descriptor()),
-    /missing/,
+    /missing/
   );
+});
+
+test("attempt resolution matches exact test and result index, preserves missing traces and rejects unsafe paths", async (context) => {
+  const root = fs.mkdtempSync(path.join(__dirname, ".trends-attempt-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "data", "extracted"), { recursive: true });
+  fs.writeFileSync(path.join(root, "data", "first.zip"), "trace");
+  const html = reportHtml([
+    trendTest({ testId: "same-title-other-test" }),
+    trendTest({
+      testId: "chosen",
+      duration: 30,
+      outcome: "flaky",
+      results: [
+        {
+          retry: 0,
+          status: "failed",
+          duration: 10,
+          attachments: [{ name: "trace", path: "data/first.zip" }]
+        },
+        {
+          retry: 3,
+          status: "passed",
+          duration: 20,
+          attachments: [
+            { name: "trace", path: "data/extracted.zip" },
+            { name: "trace", path: "data/missing.zip" }
+          ]
+        }
+      ]
+    })
+  ]);
+  const report = descriptor();
+  parseTrendReport(html, report);
+  const resolve = (testId, run, version = report.version) =>
+    resolveTrendAttempt(html, report, root, testId, version, run);
+  const first = await resolve("chosen", 0);
+  assert.equal(first.attempt.status, "failed");
+  assert.equal(first.traces[0].tracePath, path.join(root, "data/first.zip"));
+  const second = await resolve("chosen", 1);
+  assert.equal(second.attempt.retry, 3);
+  assert.equal(second.traces[0].tracePath, path.join(root, "data/extracted"));
+  assert.equal(second.traces[1].tracePath, null);
+  assert.equal(second.traceAvailability, "missing");
+  assert.equal(
+    (await resolve("same-title-other-test", 0)).traceAvailability,
+    "not-recorded"
+  );
+  for (const [testId, run] of [
+    ["absent", 0],
+    ["chosen", 3],
+    ["chosen", -1]
+  ])
+    await assert.rejects(resolve(testId, run), (error) => error.status === 404);
+  await assert.rejects(
+    resolve("chosen", 0, "0".repeat(64)),
+    (error) => error.status === 409
+  );
+  for (const attachments of [null, "invalid", [null]]) {
+    const malformed = reportHtml([
+      trendTest({
+        results: [
+          {
+            retry: 0,
+            status: "passed",
+            duration: 120000,
+            attachments
+          }
+        ]
+      })
+    ]);
+    const malformedReport = descriptor();
+    parseTrendReport(malformed, malformedReport);
+    await assert.rejects(
+      resolveTrendAttempt(
+        malformed,
+        malformedReport,
+        root,
+        "test-id",
+        malformedReport.version,
+        0
+      ),
+      (error) => error.status === 422
+    );
+  }
+  fs.symlinkSync(
+    path.join(root, "data/first.zip"),
+    path.join(root, "data/link.zip")
+  );
+  for (const attachmentPath of [
+    "data/../../outside.zip",
+    "data/link.zip",
+    "/outside.zip",
+    "https://example.com/trace.zip"
+  ]) {
+    const unsafe = reportHtml([
+      trendTest({
+        results: [
+          {
+            retry: 0,
+            status: "passed",
+            duration: 120000,
+            attachments: [{ name: "trace", path: attachmentPath }]
+          }
+        ]
+      })
+    ]);
+    const unsafeReport = descriptor();
+    parseTrendReport(unsafe, unsafeReport);
+    await assert.rejects(
+      resolveTrendAttempt(
+        unsafe,
+        unsafeReport,
+        root,
+        "test-id",
+        unsafeReport.version,
+        0
+      )
+    );
+  }
 });
 
 test("on-demand API is read-only and live links survive moves but reject replacement", async (context) => {
@@ -433,8 +554,8 @@ test("on-demand API is read-only and live links survive moves but reject replace
       ...process.env,
       ARTIFACT_TEST_ROOT: root,
       ARTIFACT_TEST_SEED: "trends",
-      PLAYWRIGHT_REPORTS_DB_PATH: path.join(root, "app.db"),
-    },
+      PLAYWRIGHT_REPORTS_DB_PATH: path.join(root, "app.db")
+    }
   });
   context.after(async () => {
     const exit = once(child, "exit");
@@ -447,10 +568,17 @@ test("on-demand API is read-only and live links survive moves but reject replace
     fetch(url + route, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(body)
     });
   const catalog = await (await fetch(url + "/api/reports")).json();
   assert.ok(catalog.current.every((report) => report.uuid));
+  const discovery = await (
+    await fetch(url + "/api/agent/reports/search?query=DEV%20NA")
+  ).json();
+  assert.ok(discovery.reports.length > 0);
+  assert.ok(
+    discovery.reports.every((report) => report.uuid && report.reportRef)
+  );
   const Database = require("better-sqlite3");
   const database = new Database(path.join(root, "app.db"), { readonly: true });
   context.after(() => database.close());
@@ -458,31 +586,31 @@ test("on-demand API is read-only and live links survive moves but reject replace
   const data = await (
     await post("/api/trends", {
       testQuery: "e2eExampleTC01",
-      reportUuids: ["daily-uuid-11", "daily-uuid-8", "fixture-uuid", "missing"],
+      reportUuids: ["daily-uuid-11", "daily-uuid-8", "fixture-uuid", "missing"]
     })
   ).json();
   assert.equal(data.reports.filter((report) => report.issue).length, 2);
   assert.equal(data.candidates.length, 2);
   assert.ok(
     data.candidates.every((candidate) =>
-      candidate.title.includes("e2eExampleTC01"),
-    ),
+      candidate.title.includes("e2eExampleTC01")
+    )
   );
   assert.equal(
     (await post("/api/trends", { reportUuids: [], testQuery: " " })).status,
-    400,
+    400
   );
   const noMatches = await (
     await post("/api/trends", {
       reportUuids: ["daily-uuid-11"],
-      testQuery: "[literal].*",
+      testQuery: "[literal].*"
     })
   ).json();
   assert.equal(noMatches.reports.length, 1);
   assert.equal(noMatches.candidates.length, 0);
   assert.deepEqual(
     database.prepare("SELECT * FROM reports ORDER BY id").all(),
-    before,
+    before
   );
   assert.equal(fs.existsSync(path.join(root, "commands.log")), false);
   const report = data.reports.find((entry) => entry.uuid === "daily-uuid-11");
@@ -491,51 +619,86 @@ test("on-demand API is read-only and live links survive moves but reject replace
     new URLSearchParams({
       testId: "daily-test-11",
       version: report.version,
-      run: "0",
+      run: "0"
     });
   const navigate = () => fetch(url + link, { redirect: "manual" });
+  const attemptLink = link
+    .replace("/api/trends/", "/api/agent/trends/")
+    .replace("/test?", "/attempt?");
+  const resolve = () => fetch(url + attemptLink);
+  const resolved = await (await resolve()).json();
+  assert.equal(resolved.command, "resolve-trend-attempt");
+  assert.equal(resolved.observation.testId, "daily-test-11");
+  assert.equal(resolved.attempt.status, "passed");
+  assert.equal(resolved.traceAvailability, "not-recorded");
+  assert.equal(
+    (await fetch(url + attemptLink.replace("run=0", "run=1"))).status,
+    404
+  );
+  assert.equal(
+    (await fetch(url + attemptLink.replace("run=0", "run=-1"))).status,
+    400
+  );
+  assert.equal(
+    (await fetch(url + attemptLink.replace("run=0", ""))).status,
+    400
+  );
+  assert.deepEqual(
+    database.prepare("SELECT * FROM reports ORDER BY id").all(),
+    before
+  );
+  assert.equal(fs.existsSync(path.join(root, "commands.log")), false);
   assert.equal((await navigate()).status, 302);
   assert.equal(
     (
       await post("/api/report-rename", {
         reportId: "daily-12",
-        newName: "renamed report",
+        newName: "renamed report"
       })
     ).status,
-    200,
+    200
   );
   const renamed = await navigate();
   assert.match(
     renamed.headers.get("location"),
-    /renamed%20report\/index.html#\?testId=daily-test-11&run=0$/,
+    /renamed%20report\/index.html#\?testId=daily-test-11&run=0$/
   );
   assert.equal(
     (
       await post("/api/archive", {
-        reportPath: "/reports/current/renamed report/index.html",
+        reportPath: "/reports/current/renamed report/index.html"
       })
     ).status,
-    200,
+    200
   );
   const archived = await navigate();
   assert.equal(archived.status, 302);
   assert.match(archived.headers.get("location"), /^\/reports\/archive\//);
+  const archivedAttempt = await (await resolve()).json();
+  assert.match(archivedAttempt.reportUrl, /^\/reports\/archive\//);
+  assert.ok(
+    archivedAttempt.analysisTarget.reportRootPath.includes(
+      path.join(root, "archive")
+    )
+  );
   const archivedRecord = database
     .prepare("SELECT * FROM reports WHERE uuid = ?")
     .get(report.uuid);
   const file = path.join(root, "archive", archivedRecord.id, "index.html");
   fs.appendFileSync(file, "\nchanged");
   assert.equal((await navigate()).status, 409);
+  assert.equal((await resolve()).status, 409);
   fs.unlinkSync(file);
   assert.equal((await navigate()).status, 404);
+  assert.equal((await resolve()).status, 404);
   assert.equal((await post("/api/trends", { reportUuids: [123] })).status, 400);
   assert.equal(
     (await fetch(url + "/api/report-search?rangeStart=2026-02-30")).status,
-    400,
+    400
   );
   assert.equal(
     (await fetch(url + link.replace("run=0", "run=-1"))).status,
-    400,
+    400
   );
 });
 
@@ -543,35 +706,35 @@ test("date bounds use both unsorted scopes and reject impossible dates", () => {
   const bounds = model.dateBounds([
     { createdAt: "2026-06-10T22:00:00-05:00" },
     { createdAt: "2026-06-02T00:00:00Z" },
-    { createdAt: "2026-06-09T00:00:00Z" },
+    { createdAt: "2026-06-09T00:00:00Z" }
   ]);
   assert.equal(bounds.rangeStart, "2026-06-02");
   assert.equal(bounds.rangeEnd, "2026-06-11");
   assert.equal(model.dateBounds([]).rangeStart, "");
   assert.equal(
     model.dateBounds([{ createdAt: "2026-06-02" }]).rangeEnd,
-    "2026-06-02",
+    "2026-06-02"
   );
   assert.ok(
     model.validateFilters({
       rangeStart: "2026-02-30",
       rangeEnd: "",
-      query: "",
-    }),
+      query: ""
+    })
   );
   assert.ok(
     model.validateFilters({
       rangeStart: "2026-06-03",
       rangeEnd: "2026-06-02",
-      query: "",
-    }),
+      query: ""
+    })
   );
 });
 
 test("baseline excludes latest and never carries earlier duration into missing or failed latest", () => {
   const reports = Array.from({ length: 6 }, (_, index) => ({
     ...descriptor(`report-${index}`),
-    timestamp: `2026-06-0${index + 1}T07:00:00Z`,
+    timestamp: `2026-06-0${index + 1}T07:00:00Z`
   }));
   const entries = reports.flatMap((report, index) =>
     parseTrendReport(
@@ -579,12 +742,12 @@ test("baseline excludes latest and never carries earlier duration into missing o
         trendTest({
           duration: (index + 1) * 1000,
           results: [
-            { retry: 0, duration: (index + 1) * 1000, status: "passed" },
-          ],
-        }),
+            { retry: 0, duration: (index + 1) * 1000, status: "passed" }
+          ]
+        })
       ]),
-      report,
-    ),
+      report
+    )
   );
   reports.forEach((report, index) => {
     report.timestamp = `2026-06-0${index + 1}T07:00:00Z`;
@@ -595,7 +758,7 @@ test("baseline excludes latest and never carries earlier duration into missing o
   assert.equal(stats.change, 100);
   assert.equal(
     model.statistics(series, reports.slice(0, 1), "passed").baseline,
-    null,
+    null
   );
   const missing = { ...series, observations: series.observations.slice(0, -1) };
   assert.equal(model.statistics(missing, reports, "passed").latest, null);
@@ -617,12 +780,12 @@ test("export is an allowlisted single-test snapshot with inert report text", () 
       schemaVersion: 1,
       generatedAt: "now",
       reports: [report],
-      series: [series, other],
+      series: [series, other]
     },
     series,
     [report],
     { query: "DEV NA", rangeStart: "", rangeEnd: "" },
-    "passed",
+    "passed"
   );
   assert.equal(snapshot.data.series.length, 1);
   assert.equal(snapshot.data.series[0].file, "order.spec.ts");
@@ -632,7 +795,7 @@ test("export is an allowlisted single-test snapshot with inert report text", () 
     "must-not-export",
     "/private/secret",
     "test-id",
-    "<script>globalThis.compromised",
+    "<script>globalThis.compromised"
   ])
     assert.equal(output.includes(forbidden), false);
   assert.ok(output.includes("connect-src 'none'"));

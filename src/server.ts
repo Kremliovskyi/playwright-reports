@@ -32,7 +32,7 @@ import {
   getDigests,
   deleteDigestsByReport,
   deleteDigest,
-  pruneOrphanDigests,
+  pruneOrphanDigests
 } from "./db";
 import { spawn, execFile, ChildProcess } from "child_process";
 import { promisify } from "node:util";
@@ -41,14 +41,14 @@ import MarkdownIt from "markdown-it";
 import { randomUUID } from "node:crypto";
 import {
   discoverRunnerConfigs,
-  resolveDiscoveredConfig,
+  resolveDiscoveredConfig
 } from "./runner-configs";
 import {
   buildPodmanArgs,
   formatRunnerArgs,
   prepareRunnerArgs,
   resolvePodmanImage,
-  resolvePodmanExecutable,
+  resolvePodmanExecutable
 } from "./runner-command";
 import { loadPlaywrightConfigProjection } from "./playwright-config-loader";
 import {
@@ -59,13 +59,13 @@ import {
   withCopilotAnalysisClient,
   CopilotAnalysisError,
   AnalyzeRunSummary,
-  FailureManifest,
+  FailureManifest
 } from "./copilot-analyzer";
 import {
   groupRun,
   GROUPED_ANALYSIS_FILENAME,
   GroupingDiagnostics,
-  GroupingRunError,
+  GroupingRunError
 } from "./copilot-grouper";
 import {
   analysisInventory,
@@ -77,13 +77,14 @@ import {
   publishDigest,
   contentVersion,
   legacyDigestLocation,
-  moveLegacyDigest,
+  moveLegacyDigest
 } from "./report-artifacts";
 import {
   describeTrendReport,
   parseTrendReport,
   readTrendSource,
-  TrendSourceError,
+  resolveTrendAttempt,
+  TrendSourceError
 } from "./report-trends";
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
@@ -135,7 +136,7 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
     "/api/analysis-run/output-dir",
     "/api/analysis-run/analysis-file",
     "/api/digest",
-    "/api/analysis-run/grouped-analysis",
+    "/api/analysis-run/grouped-analysis"
   ];
   if (req.method !== "GET" && mutationPaths.includes(req.path)) {
     const reportId =
@@ -147,7 +148,7 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
     if (report && reportIsBusy(report.uuid))
       return res.status(409).json({
         code: "REPORT_ARTIFACTS_BUSY",
-        error: "Wait for this report's analysis or digest to finish.",
+        error: "Wait for this report's analysis or digest to finish."
       });
   }
   if (
@@ -159,12 +160,12 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
       ["currentPath", "archivePath", "vaultPath"].some(
         (key) =>
           req.body?.[key] !== undefined &&
-          req.body[key] !== appConfig[key as keyof AppConfig],
+          req.body[key] !== appConfig[key as keyof AppConfig]
       )
     )
       return res.status(409).json({
         error:
-          "Storage paths cannot change while analysis or digest jobs are running.",
+          "Storage paths cannot change while analysis or digest jobs are running."
       });
   }
   next();
@@ -179,7 +180,7 @@ app.use(
     } else {
       next();
     }
-  },
+  }
 );
 
 app.use(
@@ -190,7 +191,7 @@ app.use(
     } else {
       next();
     }
-  },
+  }
 );
 
 // Helper to validate a path
@@ -221,7 +222,7 @@ app.post("/api/config", (req: Request, res: Response): any => {
     copilotModel,
     copilotBigModel,
     runnerOptions,
-    selectedProjects,
+    selectedProjects
   } = req.body;
 
   try {
@@ -270,7 +271,7 @@ app.post("/api/config", (req: Request, res: Response): any => {
       selectedProjects:
         selectedProjects !== undefined && Array.isArray(selectedProjects)
           ? selectedProjects
-          : appConfig.selectedProjects,
+          : appConfig.selectedProjects
     };
 
     updateConfig(newConfig);
@@ -300,7 +301,7 @@ app.post("/api/presets", (req: Request, res: Response): any => {
       id: Date.now().toString(),
       configId: "default",
       name: name.trim(),
-      projects: projects,
+      projects: projects
     };
     addPreset(newPreset);
     res.json({ success: true, preset: newPreset });
@@ -341,6 +342,7 @@ type AgentAnalysisType =
 
 interface AgentReportDescriptor {
   reportRef: string;
+  uuid: string;
   id: string;
   name: string;
   metadata: string;
@@ -365,7 +367,7 @@ const DASHBOARD_REPORT_PATH_PATTERN =
 const getConfigStatus = () => ({
   hasCurrent: !!appConfig.currentPath,
   hasArchive: !!appConfig.archivePath,
-  hasProject: !!appConfig.projectPath,
+  hasProject: !!appConfig.projectPath
 });
 
 const toReportInfo = (record: ReportRecord): ReportInfo => ({
@@ -375,7 +377,7 @@ const toReportInfo = (record: ReportRecord): ReportInfo => ({
   path: record.reportPath,
   createdAt: new Date(record.dateCreated),
   modifiedAt: new Date(record.dateCreated),
-  metadata: record.metadata,
+  metadata: record.metadata
 });
 
 const getQueryString = (value: unknown): string | undefined => {
@@ -425,13 +427,13 @@ const decodeReportRef = (reportRef: string): string | null => {
 };
 
 const parseDashboardReportPath = (
-  reportPath: string,
+  reportPath: string
 ): { scope: ReportScope; folderName: string } | null => {
   const match = reportPath.match(DASHBOARD_REPORT_PATH_PATTERN);
   if (!match) return null;
   return {
     scope: match[1] as ReportScope,
-    folderName: match[2],
+    folderName: match[2]
   };
 };
 
@@ -442,7 +444,7 @@ const getBasePathForScope = (scope: ReportScope): string | null => {
 };
 
 const toAgentReportDescriptor = (
-  record: ReportRecord,
+  record: ReportRecord
 ): AgentReportDescriptor => {
   const parsed = parseDashboardReportPath(record.reportPath);
   const basePath = parsed ? getBasePathForScope(parsed.scope) : null;
@@ -457,6 +459,7 @@ const toAgentReportDescriptor = (
 
   return {
     reportRef: encodeReportRef(record.reportPath),
+    uuid: record.uuid,
     id: record.id,
     name: record.id,
     metadata: record.metadata,
@@ -470,8 +473,8 @@ const toAgentReportDescriptor = (
     exists: {
       reportRoot: Boolean(reportRootPath && fs.existsSync(reportRootPath)),
       dataDir: Boolean(reportDataPath && fs.existsSync(reportDataPath)),
-      indexHtml: Boolean(reportIndexPath && fs.existsSync(reportIndexPath)),
-    },
+      indexHtml: Boolean(reportIndexPath && fs.existsSync(reportIndexPath))
+    }
   };
 };
 
@@ -488,7 +491,7 @@ const getReportFromRef = (reportRef: string): ReportRecord | null => {
 };
 
 const getPreparedReportDescriptor = (
-  reportRef: string,
+  reportRef: string
 ): AgentReportDescriptor => {
   const record = getReportFromRef(reportRef);
   if (!record) {
@@ -498,7 +501,7 @@ const getPreparedReportDescriptor = (
   const descriptor = toAgentReportDescriptor(record);
   if (!descriptor.reportRootPath || !descriptor.reportDataPath) {
     throw new Error(
-      "Report could not be prepared because its storage path is not configured",
+      "Report could not be prepared because its storage path is not configured"
     );
   }
 
@@ -530,7 +533,7 @@ const purgeReportRuns = (reportUuid: string): void => {
       } catch (rmErr) {
         console.warn(
           "Failed to remove output directory during scan cleanup:",
-          rmErr,
+          rmErr
         );
       }
     }
@@ -555,7 +558,7 @@ const purgeReportDigests = (reportUuid: string): void => {
       } catch (rmErr) {
         console.warn(
           "Failed to remove digest directory during cleanup:",
-          rmErr,
+          rmErr
         );
       }
     }
@@ -620,7 +623,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           uuid,
           dateCreated: birthIso,
           metadata,
-          reportPath,
+          reportPath
         });
 
         return {
@@ -630,7 +633,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           path: reportPath,
           createdAt: stat.birthtime,
           modifiedAt: stat.mtime,
-          metadata,
+          metadata
         };
       } catch (err) {
         // If permission denied or other read error, skip safely
@@ -640,7 +643,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
     .filter((item): item is ReportInfo => item !== null)
     .sort(
       (a, b) =>
-        new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
+        new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime()
     );
 
   // Clean up stale DB entries: remove records for reports no longer on disk
@@ -673,7 +676,7 @@ app.get("/api/reports", (req, res) => {
     archive: appConfig.archivePath
       ? scanDirectory(appConfig.archivePath, "archive")
       : [],
-    configStatus: getConfigStatus(),
+    configStatus: getConfigStatus()
   });
 });
 
@@ -688,7 +691,7 @@ app.get("/api/report-search", (req: Request, res: Response): any => {
       query,
       selectedDates,
       rangeStart,
-      rangeEnd,
+      rangeEnd
     });
 
     const current = matchingReports
@@ -701,7 +704,7 @@ app.get("/api/report-search", (req: Request, res: Response): any => {
     return res.json({
       current,
       archive,
-      configStatus: getConfigStatus(),
+      configStatus: getConfigStatus()
     });
   } catch (error: any) {
     console.error("Search error:", error);
@@ -736,7 +739,7 @@ const loadTrendSource = async (uuid: string) => {
   }
   throw new TrendSourceError(
     409,
-    "Report moved while reading. Apply filters again.",
+    "Report moved while reading. Apply filters again."
   );
 };
 
@@ -746,14 +749,14 @@ const trendError = (error: unknown): { status: number; message: string } => {
   if (error instanceof ArtifactError)
     return {
       status: 400,
-      message: "Report is outside its managed storage or uses a symbolic link.",
+      message: "Report is outside its managed storage or uses a symbolic link."
     };
   if ((error as NodeJS.ErrnoException)?.code === "ENOENT")
     return { status: 404, message: "Report is no longer available." };
   return {
     status: 422,
     message:
-      "Report timing data is unreadable or unsupported. Search matches again after the report finishes writing.",
+      "Report timing data is unreadable or unsupported. Search matches again after the report finishes writing."
   };
 };
 
@@ -768,14 +771,14 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
     testQuery.trim().length > 256
   )
     return res.status(400).json({
-      error: "Enter a test title or fragment (1 to 256 characters).",
+      error: "Enter a test title or fragment (1 to 256 characters)."
     });
   if (
     !Array.isArray(ids) ||
     ids.length > 500 ||
     !ids.every(
       (uuid) =>
-        typeof uuid === "string" && uuid.length > 0 && uuid.length <= 128,
+        typeof uuid === "string" && uuid.length > 0 && uuid.length <= 128
     )
   )
     return res.status(400).json({ error: "Select up to 500 report UUIDs." });
@@ -798,7 +801,7 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
           timestamp: "",
           timeSource: "catalog" as const,
           scope: "current" as const,
-          version: "",
+          version: ""
         };
     try {
       const source = await loadTrendSource(uuid);
@@ -807,7 +810,7 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
       const matches = parseTrendReport(source.html, descriptor)
         .flatMap((entry) => entry.observations)
         .filter((entry) =>
-          entry.title.toLowerCase().includes(testQuery.trim().toLowerCase()),
+          entry.title.toLowerCase().includes(testQuery.trim().toLowerCase())
         );
       candidates.push(...matches);
     } catch (error) {
@@ -821,7 +824,7 @@ app.post("/api/trends", async (req: Request, res: Response): Promise<any> => {
       generatedAt: new Date().toISOString(),
       testQuery: testQuery.trim(),
       reports,
-      candidates,
+      candidates
     } satisfies TrendData.Preview);
 });
 
@@ -845,7 +848,7 @@ app.get(
       if (contentVersion(html) !== version)
         throw new TrendSourceError(
           409,
-          "Report has changed. Open Trends and search matches again.",
+          "Report has changed. Open Trends and search matches again."
         );
       const series = parseTrendReport(html, describeTrendReport(record));
       const observation = series
@@ -862,13 +865,67 @@ app.get(
       const query = new URLSearchParams({ testId, run: String(run) });
       return res.redirect(
         302,
-        `/reports/${parsed.scope}/${encodeURIComponent(parsed.folderName)}/index.html#?${query}`,
+        `/reports/${parsed.scope}/${encodeURIComponent(parsed.folderName)}/index.html#?${query}`
       );
     } catch (error) {
       const failure = trendError(error);
       return res.status(failure.status).type("text").send(failure.message);
     }
-  },
+  }
+);
+
+app.get(
+  "/api/agent/trends/reports/:uuid/attempt",
+  async (req: Request, res: Response): Promise<any> => {
+    refreshConfigCache();
+    res.setHeader("Cache-Control", "no-store");
+    const testId = getQueryString(req.query.testId);
+    const version = getQueryString(req.query.version);
+    const runText = getQueryString(req.query.run);
+    if (
+      !testId ||
+      !version ||
+      !/^[a-f0-9]{64}$/.test(version) ||
+      !runText ||
+      !/^\d+$/.test(runText)
+    )
+      return res
+        .status(400)
+        .json({
+          error: "testId, version and a non-negative run index are required."
+        });
+    try {
+      const { record, html } = await loadTrendSource(String(req.params.uuid));
+      const parsed = parseDashboardReportPath(record.reportPath)!;
+      const reportRootPath = path.resolve(
+        getBasePathForScope(parsed.scope)!,
+        parsed.folderName
+      );
+      const result = await resolveTrendAttempt(
+        html,
+        describeTrendReport(record),
+        reportRootPath,
+        testId,
+        version,
+        Number(runText)
+      );
+      if (getReportByUuid(record.uuid)?.reportPath !== record.reportPath)
+        throw new TrendSourceError(
+          409,
+          "Report moved while resolving. Search matches again."
+        );
+      const query = new URLSearchParams({ testId, run: runText });
+      return res.json({
+        schemaVersion: 1,
+        command: "resolve-trend-attempt",
+        ...result,
+        reportUrl: `/reports/${parsed.scope}/${encodeURIComponent(parsed.folderName)}/index.html#?${query}`
+      });
+    } catch (error) {
+      const failure = trendError(error);
+      return res.status(failure.status).json({ error: failure.message });
+    }
+  }
 );
 
 app.get("/api/agent/reports/search", (req: Request, res: Response): any => {
@@ -886,12 +943,12 @@ app.get("/api/agent/reports/search", (req: Request, res: Response): any => {
       query,
       selectedDates,
       rangeStart,
-      rangeEnd,
+      rangeEnd
     });
 
     if (scope) {
       matches = matches.filter((report) =>
-        report.reportPath.startsWith(`/reports/${scope}/`),
+        report.reportPath.startsWith(`/reports/${scope}/`)
       );
     }
 
@@ -905,12 +962,12 @@ app.get("/api/agent/reports/search", (req: Request, res: Response): any => {
       schemaVersion: AGENT_API_SCHEMA_VERSION,
       command: "search-reports",
       totalCount: reports.length,
-      reports,
+      reports
     });
   } catch (error: any) {
     console.error("Agent search error:", error);
     return res.status(400).json({
-      error: error.message || "Failed to search reports for agent workflow",
+      error: error.message || "Failed to search reports for agent workflow"
     });
   }
 });
@@ -932,13 +989,13 @@ app.get("/api/agent/reports/prepare", (req: Request, res: Response): any => {
       report,
       analysisTarget: {
         reportRootPath: report.reportRootPath,
-        reportDataPath: report.reportDataPath,
-      },
+        reportDataPath: report.reportDataPath
+      }
     });
   } catch (error: any) {
     console.error("Agent prepare error:", error);
     return res.status(404).json({
-      error: error.message || "Failed to prepare report for analysis",
+      error: error.message || "Failed to prepare report for analysis"
     });
   }
 });
@@ -957,7 +1014,7 @@ app.get(
       console.error("Error discovering runner configs:", error);
       return res.status(500).json({ error: error.message });
     }
-  },
+  }
 );
 
 app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
@@ -968,7 +1025,7 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
 
   try {
     const { playwrightConfigs } = await discoverRunnerConfigs(
-      appConfig.projectPath,
+      appConfig.projectPath
     );
     const requestedConfig =
       typeof req.query.config === "string" ? req.query.config : "";
@@ -978,15 +1035,15 @@ app.get("/api/projects", async (req: Request, res: Response): Promise<any> => {
       appConfig.projectPath,
       selectedConfig,
       playwrightConfigs,
-      "Playwright config",
+      "Playwright config"
     );
 
     const projection = await loadPlaywrightConfigProjection(configPath, {
-      cwd: appConfig.projectPath,
+      cwd: appConfig.projectPath
     });
     return res.json({
       projects: projection.projectNames,
-      config: selectedConfig,
+      config: selectedConfig
     });
   } catch (error: any) {
     console.error("Error parsing config:", error);
@@ -1008,7 +1065,7 @@ const removeHeadlessConfigOverride = (configPath: string | null): void => {
   } catch (error) {
     console.error(
       `Failed to remove headless config override: ${configPath}`,
-      error,
+      error
     );
   } finally {
     if (activeHeadlessConfigPath === configPath)
@@ -1019,7 +1076,7 @@ const removeHeadlessConfigOverride = (configPath: string | null): void => {
 const createHeadlessConfigOverride = (configPath: string): string => {
   const overridePath = path.join(
     path.dirname(configPath),
-    `.pw-reports-headless-${randomUUID()}.ts`,
+    `.pw-reports-headless-${randomUUID()}.ts`
   );
   const importPath = `./${path.basename(configPath)}`;
   const source = [
@@ -1033,7 +1090,7 @@ const createHeadlessConfigOverride = (configPath: string): string => {
     "    use: { ...project.use, headless: true },",
     "  })),",
     "};",
-    "",
+    ""
   ].join("\n");
 
   fs.writeFileSync(overridePath, source, { flag: "wx" });
@@ -1057,7 +1114,7 @@ app.get("/api/logs", (req: Request, res: Response) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
-    Connection: "keep-alive",
+    Connection: "keep-alive"
   });
 
   sseClients.push(res);
@@ -1074,12 +1131,12 @@ const stopTests = async (): Promise<void> => {
       await execFileAsync(
         podmanExecutable,
         ["rm", "--force", "--ignore", containerName],
-        { timeout: 120000 },
+        { timeout: 120000 }
       );
       if (activeContainerName === containerName) activeContainerName = null;
     } catch (error: any) {
       throw new Error(
-        `Could not stop Podman container ${containerName}: ${error.message}`,
+        `Could not stop Podman container ${containerName}: ${error.message}`
       );
     }
   }
@@ -1123,7 +1180,7 @@ app.post(
       usePodman = false,
       headless = false,
       playwrightConfig = "",
-      browserstackConfig = "",
+      browserstackConfig = ""
     } = req.body;
     if (!appConfig.projectPath) {
       return res.status(400).json({ error: "Project path is not configured" });
@@ -1144,30 +1201,30 @@ app.post(
       usePodman &&
       (useBrowserstack ||
         args.some((arg: string) =>
-          /^(--headed|--debug|--ui(?:-host|-port)?)(=|$)/.test(arg),
+          /^(--headed|--debug|--ui(?:-host|-port)?)(=|$)/.test(arg)
         ))
     ) {
       return res.status(400).json({
         error:
-          "Podman runs are headless and cannot use BrowserStack, Headed, UI Mode or Debug",
+          "Podman runs are headless and cannot use BrowserStack, Headed, UI Mode or Debug"
       });
     }
     if (headless && useBrowserstack) {
       return res.status(400).json({
-        error: "Headless override is not available for BrowserStack runs",
+        error: "Headless override is not available for BrowserStack runs"
       });
     }
 
     let selectedPlaywrightConfigPath: string;
     try {
       const discoveredConfigs = await discoverRunnerConfigs(
-        appConfig.projectPath,
+        appConfig.projectPath
       );
       selectedPlaywrightConfigPath = resolveDiscoveredConfig(
         appConfig.projectPath,
         playwrightConfig,
         discoveredConfigs.playwrightConfigs,
-        "Playwright config",
+        "Playwright config"
       );
       if (useBrowserstack) {
         if (!appConfig.browserstackUsername || !appConfig.browserstackAccessKey)
@@ -1176,7 +1233,7 @@ app.post(
           appConfig.projectPath,
           browserstackConfig,
           discoveredConfigs.browserstackConfigs,
-          "BrowserStack config",
+          "BrowserStack config"
         );
       }
     } catch (error: any) {
@@ -1188,24 +1245,24 @@ app.post(
       try {
         podmanImage = resolvePodmanImage(appConfig.projectPath);
         await execFileAsync(podmanExecutable, ["info", "--format", "json"], {
-          timeout: 120000,
+          timeout: 120000
         });
       } catch (error: any) {
         return res.status(400).json({
           error: podmanImage
             ? "Podman is unavailable. Install Podman on the reports server and start its machine (podman machine start on Windows/macOS), then retry."
-            : error.message,
+            : error.message
         });
       }
       try {
         await execFileAsync(
           podmanExecutable,
           ["image", "inspect", podmanImage],
-          { timeout: 120000 },
+          { timeout: 120000 }
         );
       } catch {
         return res.status(400).json({
-          error: `Prepare the matching image first: podman pull ${podmanImage}`,
+          error: `Prepare the matching image first: podman pull ${podmanImage}`
         });
       }
     }
@@ -1224,7 +1281,7 @@ app.post(
 
     const finalArgs = prepareRunnerArgs(
       args,
-      usePodman ? "linux" : process.platform,
+      usePodman ? "linux" : process.platform
     );
 
     let headlessConfigPath: string | null = null;
@@ -1233,7 +1290,7 @@ app.post(
       let runConfig = playwrightConfig;
       if (headless || usePodman) {
         headlessConfigPath = createHeadlessConfigOverride(
-          selectedPlaywrightConfigPath,
+          selectedPlaywrightConfigPath
         );
         activeHeadlessConfigPath = headlessConfigPath;
         runConfig = path.relative(appConfig.projectPath, headlessConfigPath);
@@ -1250,7 +1307,7 @@ app.post(
             process.platform === "win32"
               ? `"${browserstackConfig}"`
               : browserstackConfig
-          }`,
+          }`
         );
 
       const spawnArgs = usePodman
@@ -1259,7 +1316,7 @@ app.post(
             image: podmanImage,
             containerName: containerName!,
             args: finalArgs,
-            env: { FORCE_COLOR: "1", ...env },
+            env: { FORCE_COLOR: "1", ...env }
           })
         : useBrowserstack
           ? ["browserstack-node-sdk", "playwright", "test", ...finalArgs]
@@ -1273,21 +1330,21 @@ app.post(
       const child = spawn(command, spawnArgs, {
         cwd: appConfig.projectPath,
         env: customEnv,
-        shell: !usePodman && process.platform === "win32", // On Windows we usually need shell for npx
+        shell: !usePodman && process.platform === "win32" // On Windows we usually need shell for npx
       });
 
       activeProcess = child;
       activeContainerName = containerName;
       broadcastLog(
         "start",
-        `Running ${logPrefix} ${formatRunnerArgs(finalArgs)}\n`,
+        `Running ${logPrefix} ${formatRunnerArgs(finalArgs)}\n`
       );
 
       child.stdout?.on("data", (data) =>
-        broadcastLog("output", data.toString()),
+        broadcastLog("output", data.toString())
       );
       child.stderr?.on("data", (data) =>
-        broadcastLog("output", data.toString()),
+        broadcastLog("output", data.toString())
       );
 
       child.on("close", (code) => {
@@ -1310,7 +1367,7 @@ app.post(
       removeHeadlessConfigOverride(headlessConfigPath);
       res.status(500).json({ error: error.message });
     }
-  },
+  }
 );
 
 // Auto-extract traces endpoint
@@ -1343,7 +1400,7 @@ app.post("/api/extract", (req: Request, res: Response): any => {
       return res.json({
         success: true,
         extractedCount: 0,
-        message: "No data folder found, nothing to extract.",
+        message: "No data folder found, nothing to extract."
       });
     }
 
@@ -1359,7 +1416,7 @@ app.post("/api/extract", (req: Request, res: Response): any => {
         const targetFolderName = dirent.name.replace(".zip", "");
         const targetExtractionPath = path.join(
           physicalDataFolder,
-          targetFolderName,
+          targetFolderName
         );
 
         // Idempotency check: Skip if the unzipped folder already exists!
@@ -1394,17 +1451,17 @@ app.get(
     refreshConfigCache();
     try {
       const status = await copilotAccessCheck(
-        appConfig.copilotToken || undefined,
+        appConfig.copilotToken || undefined
       );
       res.json(status);
     } catch (error: any) {
       res.json({
         ok: false,
         authenticated: false,
-        error: error?.message || String(error),
+        error: error?.message || String(error)
       });
     }
-  },
+  }
 );
 
 app.get(
@@ -1415,9 +1472,9 @@ app.get(
     res.json({
       ...result,
       smallModel: appConfig.copilotModel,
-      bigModel: appConfig.copilotBigModel,
+      bigModel: appConfig.copilotBigModel
     });
-  },
+  }
 );
 
 // Failure digest endpoint — runs the playwright-traces-reader `failures` command
@@ -1460,7 +1517,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
   if (activeFailureAnalyses.has(analysisKey)) {
     return res.status(409).json({
       code: "FAILURE_ANALYSIS_IN_PROGRESS",
-      error: "Failure analysis is already running for this report.",
+      error: "Failure analysis is already running for this report."
     });
   }
   const config = appConfig;
@@ -1472,7 +1529,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
       error:
         "Review the existing analysis data in Report Info before rerunning.",
       inventory,
-      reportId: report.id,
+      reportId: report.id
     });
   if (
     previousRuns.length &&
@@ -1483,12 +1540,12 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
       code: "ANALYSIS_REPLACEMENT_REQUIRED",
       error: "Confirm deletion of the previous analysis before rerunning.",
       inventory,
-      runId: previousRuns[0].id,
+      runId: previousRuns[0].id
     });
   if (!previousRuns.length && replaceRunId)
     return res.status(409).json({
       code: "ANALYSIS_CHANGED",
-      error: "The previous analysis changed. Refresh and try again.",
+      error: "The previous analysis changed. Refresh and try again."
     });
   activeFailureAnalyses.add(analysisKey);
   let generationRoot = "";
@@ -1497,14 +1554,14 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
     const result = await withCopilotAnalysisClient(
       {
         smallModel: config.copilotModel,
-        bigModel: config.copilotBigModel,
+        bigModel: config.copilotBigModel
       },
       config.copilotToken || undefined,
       async (client) => {
         const outputDir = reportArtifactRoot(
           config.currentPath,
           report.uuid,
-          "analysis",
+          "analysis"
         );
         const allowedChildren = previousRuns
           .filter((run) => path.dirname(run.runDir) === outputDir)
@@ -1517,12 +1574,12 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
         )
           throw new ArtifactError(
             "ANALYSIS_REVIEW_REQUIRED",
-            `Untracked analysis output requires review: ${outputDir}`,
+            `Untracked analysis output requires review: ${outputDir}`
           );
         if (getReport(report.id)?.uuid !== report.uuid)
           throw new ArtifactError(
             "ANALYSIS_CHANGED",
-            "The report changed while preparing analysis.",
+            "The report changed while preparing analysis."
           );
         if (previousRuns.length) {
           const removed = removeAnalysisArtifacts(
@@ -1530,14 +1587,14 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
             getAnalysisRuns(report.uuid),
             analysisVersion,
             undefined,
-            getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid),
+            getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid)
           );
           deleteAnalysisRunIds(report.uuid, removed);
         }
         if (fs.existsSync(outputDir) && fs.readdirSync(outputDir).length)
           throw new ArtifactError(
             "ANALYSIS_REVIEW_REQUIRED",
-            `Unexpected files remain in ${outputDir}`,
+            `Unexpected files remain in ${outputDir}`
           );
         fs.mkdirSync(outputDir, { recursive: true });
         generationRoot = outputDir;
@@ -1555,11 +1612,11 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
               reportRootPath,
               outputDir,
               "--format",
-              "json",
+              "json"
             ],
             {
-              cwd: config.currentPath,
-            },
+              cwd: config.currentPath
+            }
           );
           let commandStdout = "";
           let commandStderr = "";
@@ -1571,8 +1628,8 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           });
           child.on("error", (error) =>
             reject(
-              new Error("Failed to start failures command: " + error.message),
-            ),
+              new Error("Failed to start failures command: " + error.message)
+            )
           );
           child.on("close", (code) => {
             if (code === 0) {
@@ -1583,8 +1640,8 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
                   "Failures command failed: " +
                     (commandStderr.trim() ||
                       commandStdout.trim() ||
-                      `exit code ${code}`),
-                ),
+                      `exit code ${code}`)
+                )
               );
             }
           });
@@ -1597,28 +1654,28 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           !fs.existsSync(path.join(manifest.runDir, "index.json"))
         )
           throw new Error(
-            "The failures command did not produce a valid analysis manifest.",
+            "The failures command did not produce a valid analysis manifest."
           );
         if (getReport(report.id)?.uuid !== report.uuid)
           throw new ArtifactError(
             "ANALYSIS_CHANGED",
-            "The report changed during analysis.",
+            "The report changed during analysis."
           );
 
         const uniqueRunDir = path.join(
           outputDir,
-          `${path.basename(manifest.runDir)}-${report.uuid}`,
+          `${path.basename(manifest.runDir)}-${report.uuid}`
         );
         fs.renameSync(manifest.runDir, uniqueRunDir);
         manifest.runDir = uniqueRunDir;
         fs.writeFileSync(
           path.join(uniqueRunDir, "index.json"),
-          JSON.stringify(manifest, null, 2) + "\n",
+          JSON.stringify(manifest, null, 2) + "\n"
         );
 
         const relativeRunDir = path.relative(
           config.currentPath,
-          manifest.runDir,
+          manifest.runDir
         );
         const failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join("/")}/index.json`;
         addAnalysisRun({
@@ -1626,7 +1683,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           reportId: report.uuid,
           runDir: manifest.runDir,
           runName: path.basename(manifest.runDir),
-          createdAt: new Date().toISOString(),
+          createdAt: new Date().toISOString()
         });
         persisted = true;
 
@@ -1645,11 +1702,11 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           [];
         try {
           const analyzableTotal = (manifest.failures || []).filter(
-            isAnalyzableEntry,
+            isAnalyzableEntry
           ).length;
           broadcastJson("failure-analysis", {
             phase: "start",
-            total: analyzableTotal,
+            total: analyzableTotal
           });
           const analysisResult = await analyzeRun(
             client,
@@ -1658,26 +1715,26 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
             config.copilotModel,
             (p) => {
               broadcastJson("failure-analysis", { phase: "progress", ...p });
-            },
+            }
           );
           const { records, ...summary } = analysisResult;
           analysisRecords = records;
           aiSummary = summary;
           broadcastJson("failure-analysis", {
             phase: "complete",
-            ...aiSummary,
+            ...aiSummary
           });
         } catch (err: any) {
           aiError = err?.message || String(err);
           console.error("AI analysis failed:", err);
           broadcastJson("failure-analysis", {
             phase: "failed",
-            error: aiError,
+            error: aiError
           });
         }
 
         const analyzableTotal = (manifest.failures || []).filter(
-          isAnalyzableEntry,
+          isAnalyzableEntry
         ).length;
         if (analyzableTotal > 1 && analysisRecords.length > 0) {
           try {
@@ -1688,7 +1745,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
               manifest,
               analysisRecords,
               config.copilotModel,
-              config.copilotBigModel,
+              config.copilotBigModel
             );
             const relativePath = path
               .relative(config.currentPath, result.filePath)
@@ -1699,11 +1756,11 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
               problemCount: result.problemCount,
               fileName: result.fileName,
               relativePath,
-              url: `/reports/current/${relativePath}`,
+              url: `/reports/current/${relativePath}`
             };
             broadcastJson("failure-analysis", {
               phase: "grouping-complete",
-              problemCount: result.problemCount,
+              problemCount: result.problemCount
             });
           } catch (err: any) {
             if (err instanceof GroupingRunError)
@@ -1712,7 +1769,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
             console.error("AI problem grouping failed:", err);
             broadcastJson("failure-analysis", {
               phase: "grouping-failed",
-              error: groupingError,
+              error: groupingError
             });
           }
         }
@@ -1728,9 +1785,9 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
           aiError,
           grouping,
           groupingDiagnostics,
-          groupingError,
+          groupingError
         };
-      },
+      }
     );
     res.json(result);
   } catch (error: any) {
@@ -1743,7 +1800,7 @@ app.post("/api/failures", async (req: Request, res: Response): Promise<any> => {
         code: error.code,
         error: error.message,
         model: error.model,
-        modelRole: error.modelRole,
+        modelRole: error.modelRole
       });
     }
     res
@@ -1780,7 +1837,7 @@ app.post("/api/analysis/consolidate", (req: Request, res: Response): any => {
       getAnalysisRuns(report.uuid),
       version,
       keepRunId,
-      getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid),
+      getAllAnalysisRuns().filter((run) => run.reportId !== report.uuid)
     );
     deleteAnalysisRunIds(report.uuid, removed);
     return res.json({ success: true });
@@ -1823,8 +1880,8 @@ app.post("/api/report-tests", (req: Request, res: Response): any => {
       process.execPath,
       [cliPath, "find-traces", reportRootPath, "", "--format", "json"],
       {
-        cwd: basePath,
-      },
+        cwd: basePath
+      }
     );
 
     let stdout = "";
@@ -1849,7 +1906,7 @@ app.post("/api/report-tests", (req: Request, res: Response): any => {
         return res.status(500).json({
           error:
             "find-traces command failed: " +
-            (stderr.trim() || `exit code ${code}`),
+            (stderr.trim() || `exit code ${code}`)
         });
       }
       try {
@@ -1872,21 +1929,21 @@ app.post("/api/report-tests", (req: Request, res: Response): any => {
 
 const digestRecordKey = (
   digest: ReturnType<typeof getDigests>[number],
-  root: string,
+  root: string
 ): string => {
   if (digest.traceKey) return digest.traceKey;
   const metadata = JSON.parse(
     fs.readFileSync(
       path.join(legacyDigestLocation(root, digest), "digest.json"),
-      "utf8",
-    ),
+      "utf8"
+    )
   );
   const identity = metadata.tracePath
     ? path.basename(metadata.tracePath).replace(/\.zip$/i, "")
     : metadata.traceSha1;
   if (!identity || typeof identity !== "string")
     throw new Error(
-      "A legacy digest has no trace identity. Review it in Report Info.",
+      "A legacy digest has no trace identity. Review it in Report Info."
     );
   return contentVersion(identity);
 };
@@ -1921,18 +1978,18 @@ app.post(
       if (activeDigests.has(key))
         return res.status(409).json({
           code: "DIGEST_IN_PROGRESS",
-          error: "This trace is already being digested.",
+          error: "This trace is already being digested."
         });
       const root = reportArtifactRoot(
         config.currentPath,
         report.uuid,
-        "digests",
+        "digests"
       );
       const records = getDigests(report.uuid);
       const previous = records.filter((digest) => {
         assertOwnedPath(
           path.join(config.currentPath, "tmp"),
-          path.join(digest.runDir, digest.folder),
+          path.join(digest.runDir, digest.folder)
         );
         return digestRecordKey(digest, root) === traceKey;
       });
@@ -1944,8 +2001,8 @@ app.post(
             "Multiple digests exist for this trace. Confirm replacing these copies with one digest.",
           version: replacementVersion,
           paths: previous.map((digest) =>
-            path.join(digest.runDir, digest.folder),
-          ),
+            path.join(digest.runDir, digest.folder)
+          )
         });
       activeDigests.add(key);
       jobKey = key;
@@ -1953,7 +2010,7 @@ app.post(
       for (const digest of records) {
         if (path.resolve(digest.runDir) === path.resolve(root)) continue;
         moveLegacyDigest(root, digest, (folder) =>
-          relocateDigest(digest.id, root, folder, digest.traceKey || ""),
+          relocateDigest(digest.id, root, folder, digest.traceKey || "")
         );
         digest.runDir = root;
         digest.folder = `legacy-${digest.id}`;
@@ -1972,9 +2029,9 @@ app.post(
             "--report",
             reportRoot,
             "--format",
-            "json",
+            "json"
           ],
-          { cwd: config.currentPath },
+          { cwd: config.currentPath }
         );
         let output = "";
         let errors = "";
@@ -1989,10 +2046,8 @@ app.post(
           code === 0
             ? resolve(output)
             : reject(
-                new Error(
-                  errors.trim() || `Digest command exited with ${code}`,
-                ),
-              ),
+                new Error(errors.trim() || `Digest command exited with ${code}`)
+              )
         );
       });
       const manifest = JSON.parse(stdout);
@@ -2000,7 +2055,7 @@ app.post(
       const source = path.join(manifest.runDir, manifest.folder);
       assertOwnedPath(manifest.runDir, source);
       const metadata = JSON.parse(
-        fs.readFileSync(path.join(source, "digest.json"), "utf8"),
+        fs.readFileSync(path.join(source, "digest.json"), "utf8")
       );
       if (
         typeof metadata.tracePath !== "string" ||
@@ -2013,11 +2068,11 @@ app.post(
       if (
         fs.existsSync(canonical) &&
         !previous.some(
-          (digest) => path.join(digest.runDir, digest.folder) === canonical,
+          (digest) => path.join(digest.runDir, digest.folder) === canonical
         )
       )
         throw new Error(
-          `Untracked digest output requires review: ${canonical}`,
+          `Untracked digest output requires review: ${canonical}`
         );
       publishDigest(root, traceKey, source, () =>
         replaceDigests(
@@ -2028,10 +2083,10 @@ app.post(
             runDir: root,
             folder: traceKey,
             testTitle: manifest.testTitle || manifest.title || "",
-            createdAt: new Date().toISOString(),
+            createdAt: new Date().toISOString()
           },
-          previous.map((digest) => digest.id),
-        ),
+          previous.map((digest) => digest.id)
+        )
       );
       for (const digest of previous) {
         const obsolete = path.join(digest.runDir, digest.folder);
@@ -2050,13 +2105,13 @@ app.post(
           ...manifest,
           outputDir: root,
           runDir: root,
-          folder: traceKey,
-        },
+          folder: traceKey
+        }
       });
     } catch (error: any) {
       return res.status(error instanceof ArtifactError ? 409 : 500).json({
         code: error.code,
-        error: "Failed to digest test: " + error.message,
+        error: "Failed to digest test: " + error.message
       });
     } finally {
       if (staging) {
@@ -2068,7 +2123,7 @@ app.post(
       }
       if (jobKey) activeDigests.delete(jobKey);
     }
-  },
+  }
 );
 
 // Auto-archive report endpoint
@@ -2080,7 +2135,7 @@ app.post("/api/archive", (req: Request, res: Response): any => {
   if (!appConfig.archivePath)
     return res.status(400).json({
       error:
-        "Archive directory is not configured! Please open Preferences and set an archive path first.",
+        "Archive directory is not configured! Please open Preferences and set an archive path first."
     });
 
   try {
@@ -2114,7 +2169,7 @@ app.post("/api/archive", (req: Request, res: Response): any => {
     const uniqueArchivedName = `playwright-report-${Date.now()}`;
     const destinationPhysicalFolder = path.join(
       appConfig.archivePath,
-      uniqueArchivedName,
+      uniqueArchivedName
     );
 
     try {
@@ -2124,7 +2179,7 @@ app.post("/api/archive", (req: Request, res: Response): any => {
       if (renameErr.code === "EXDEV") {
         // Slow path: cross drive move (copy then delete)
         fs.cpSync(sourcePhysicalFolder, destinationPhysicalFolder, {
-          recursive: true,
+          recursive: true
         });
         fs.rmSync(sourcePhysicalFolder, { recursive: true, force: true });
       } else {
@@ -2151,7 +2206,7 @@ app.post("/api/archive", (req: Request, res: Response): any => {
         if (appConfig.vaultPath) {
           const oldVaultFile = path.join(
             appConfig.vaultPath,
-            run.runName + ".md",
+            run.runName + ".md"
           );
           if (fs.existsSync(oldVaultFile)) {
             fs.mkdirSync(analysisDir, { recursive: true });
@@ -2180,7 +2235,7 @@ app.post("/api/archive", (req: Request, res: Response): any => {
         } catch (rmErr) {
           console.warn(
             "Failed to remove output directory during archive:",
-            rmErr,
+            rmErr
           );
         }
         clearAnalysisRunDir(reportUuid, run.runName);
@@ -2258,7 +2313,7 @@ app.post("/api/delete", (req: Request, res: Response): any => {
         } catch (rmErr) {
           console.warn(
             "Failed to remove output directory during delete:",
-            rmErr,
+            rmErr
           );
         }
       }
@@ -2379,10 +2434,10 @@ app.post(
     let ariaSnapshotPathTemplate: string | undefined;
     try {
       const { playwrightConfigs } = await discoverRunnerConfigs(
-        appConfig.projectPath,
+        appConfig.projectPath
       );
       const selectedConfig = playwrightConfigs.includes(
-        appConfig.runnerOptions.playwrightConfig,
+        appConfig.runnerOptions.playwrightConfig
       )
         ? appConfig.runnerOptions.playwrightConfig
         : playwrightConfigs[0];
@@ -2391,10 +2446,10 @@ app.post(
           appConfig.projectPath,
           selectedConfig,
           playwrightConfigs,
-          "Playwright config",
+          "Playwright config"
         );
         const projection = await loadPlaywrightConfigProjection(configPath, {
-          cwd: appConfig.projectPath,
+          cwd: appConfig.projectPath
         });
         ariaSnapshotPathTemplate = projection.ariaSnapshotPathTemplate;
       }
@@ -2425,21 +2480,21 @@ app.post(
 
       // Check old format window.playwrightReportBase64
       const zipMatch = indexHtml.match(
-        /window\.playwrightReportBase64\s*=\s*"([^"]+)"/,
+        /window\.playwrightReportBase64\s*=\s*"([^"]+)"/
       );
       if (zipMatch) {
         base64Data = zipMatch[1];
       } else {
         // Check new format <script id="playwrightReportBase64" type="application/zip">data:application/zip;base64,...</script>
         const scriptMatch = indexHtml.match(
-          /<script id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/script>/,
+          /<script id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/script>/
         );
         if (scriptMatch) {
           base64Data = scriptMatch[1];
         } else {
           // Check template format <template id="playwrightReportBase64">data:application/zip;base64,...</template>
           const templateMatch = indexHtml.match(
-            /<template id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/template>/,
+            /<template id="playwrightReportBase64"[^>]*>data:application\/zip;base64,([^<]+)<\/template>/
           );
           if (templateMatch) {
             base64Data = templateMatch[1];
@@ -2492,7 +2547,7 @@ app.post(
                 if (codeframe) {
                   const codeLines = codeframe.split("\n");
                   const errorLineIdx = codeLines.findIndex(
-                    (l: string) => l.includes("^ Error:") || l.startsWith(">"),
+                    (l: string) => l.includes("^ Error:") || l.startsWith(">")
                   );
                   if (errorLineIdx > -1) {
                     const searchScope = codeLines
@@ -2502,7 +2557,7 @@ app.post(
                     if (match) expectedFilename = match[1];
                   } else {
                     const matches = [
-                      ...codeframe.matchAll(new RegExp(nameRegex.source, "g")),
+                      ...codeframe.matchAll(new RegExp(nameRegex.source, "g"))
                     ];
                     if (matches.length > 0)
                       expectedFilename = matches[matches.length - 1][1];
@@ -2558,7 +2613,7 @@ app.post(
                     const diffString = cleanMsg
                       .substring(
                         diffStart,
-                        diffEnd > -1 ? diffEnd : cleanMsg.length,
+                        diffEnd > -1 ? diffEnd : cleanMsg.length
                       )
                       .trim();
                     const lines = diffString.split("\n");
@@ -2609,7 +2664,7 @@ app.post(
                   const diffString = cleanMsg
                     .substring(
                       diffStart,
-                      diffEnd > -1 ? diffEnd : cleanMsg.length,
+                      diffEnd > -1 ? diffEnd : cleanMsg.length
                     )
                     .trim();
                   const lines = diffString.split("\n");
@@ -2659,7 +2714,7 @@ app.post(
                     .replace(/\{(.)?testFileDir\}/g, parsedRelPath.dir);
                   testAriaDir = resolvedDirTemplate.substring(
                     0,
-                    resolvedDirTemplate.lastIndexOf("/"),
+                    resolvedDirTemplate.lastIndexOf("/")
                   );
                 }
 
@@ -2670,12 +2725,12 @@ app.post(
                 // Content-based matching logic
                 const isContentMatch = (
                   filePath: string,
-                  expectedContentStr: string,
+                  expectedContentStr: string
                 ) => {
                   try {
                     const content = fs.readFileSync(
                       path.join(appConfig.projectPath!, filePath),
-                      "utf8",
+                      "utf8"
                     );
                     // Use a softer trim since aria snapshots often have specific whitespace but trailing space can differ
                     return content.trim() === expectedContentStr.trim();
@@ -2693,7 +2748,7 @@ app.post(
                 } else {
                   const absoluteAriaDir = path.join(
                     appConfig.projectPath!,
-                    testAriaDir,
+                    testAriaDir
                   );
                   if (fs.existsSync(absoluteAriaDir)) {
                     const files = fs.readdirSync(absoluteAriaDir);
@@ -2719,14 +2774,14 @@ app.post(
                     expectedSnapshotText = fs
                       .readFileSync(
                         path.join(appConfig.projectPath!, expectedPath),
-                        "utf8",
+                        "utf8"
                       )
                       .replace(/\r\n/g, "\n")
                       .replace(/\r/g, "\n");
                   } catch (e) {
                     console.error(
                       "Failed to read expected snapshot from disk",
-                      e,
+                      e
                     );
                   }
                 }
@@ -2737,7 +2792,7 @@ app.post(
                   snapshotsToFix.push({
                     expectedPath,
                     expectedSnapshot: expectedSnapshotText,
-                    newSnapshot,
+                    newSnapshot
                   });
                 }
                 foundErrors = true;
@@ -2751,7 +2806,7 @@ app.post(
               testTitle: test.title,
               projectName: test.projectName,
               file: test.location.file,
-              snapshots: snapshotsToFix,
+              snapshots: snapshotsToFix
             });
           }
         }
@@ -2764,7 +2819,7 @@ app.post(
         .status(500)
         .json({ error: "Failed to extract aria snapshots: " + error.message });
     }
-  },
+  }
 );
 
 // Aria Snapshot Fixing Endpoint
@@ -2831,7 +2886,7 @@ const resolveVaultFile = (filename: string): string | null => {
 
 // Resolve the persisted failure-analysis runs for a report into existing vault files (newest first).
 const getReportAnalysisFiles = (
-  reportId: string,
+  reportId: string
 ): { runName: string; mtime: string; runDir: string }[] => {
   const files: { runName: string; mtime: string; runDir: string }[] = [];
   const reportUuid = getReport(reportId)?.uuid;
@@ -2844,7 +2899,7 @@ const getReportAnalysisFiles = (
       files.push({
         runName: run.runName,
         mtime: stat.mtime.toISOString(),
-        runDir: run.runDir,
+        runDir: run.runDir
       });
     } catch {
       // Skip runs whose vault file became unreadable.
@@ -2910,12 +2965,12 @@ const isWithin = (base: string, target: string): boolean => {
 
 const resolveGroupedAnalysisFile = (
   reportId: string,
-  runName: string,
+  runName: string
 ): string | null => {
   const report = getReport(reportId);
   if (!report) return null;
   const run = getAnalysisRuns(report.uuid).find(
-    (candidate) => candidate.runName === runName,
+    (candidate) => candidate.runName === runName
   );
   if (
     !run?.runDir ||
@@ -2962,7 +3017,7 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
       const analysisFile = resolveVaultFile(run.runName);
       const groupedAnalysisFile = resolveGroupedAnalysisFile(
         reportId,
-        run.runName,
+        run.runName
       );
       const groupedAnalysisExists = !!groupedAnalysisFile;
       let failuresUrl: string | null = null;
@@ -2987,7 +3042,7 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
           ? `/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(run.runName)}`
           : null,
         failuresUrl,
-        vaultUrl: `/vault/${encodeURIComponent(run.runName)}`,
+        vaultUrl: `/vault/${encodeURIComponent(run.runName)}`
       };
     });
 
@@ -3004,7 +3059,7 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
       ) {
         const relativeDigestDir = path.relative(
           appConfig.currentPath,
-          digestDir,
+          digestDir
         );
         digestUrl = `/reports/current/${relativeDigestDir.split(path.sep).join("/")}/digest.json`;
       }
@@ -3014,7 +3069,7 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
         createdAt: digest.createdAt,
         digestDir,
         digestDirExists,
-        digestUrl,
+        digestUrl
       };
     });
 
@@ -3026,8 +3081,8 @@ app.get("/api/report-info", (req: Request, res: Response): any => {
       digests,
       analysisInventory: analysisInventory(
         appConfig,
-        getAnalysisRuns(report.uuid),
-      ),
+        getAnalysisRuns(report.uuid)
+      )
     });
   } catch (error: any) {
     console.error("Report info error:", error.message);
@@ -3057,7 +3112,7 @@ app.get(
           reportId,
           folderExists: false,
           sizeBytes: 0,
-          cached: false,
+          cached: false
         });
       }
 
@@ -3067,7 +3122,7 @@ app.get(
           reportId,
           folderExists: true,
           sizeBytes: reportSizeCache.get(reportId),
-          cached: true,
+          cached: true
         });
       }
 
@@ -3077,13 +3132,13 @@ app.get(
         reportId,
         folderExists: true,
         sizeBytes,
-        cached: false,
+        cached: false
       });
     } catch (error: any) {
       console.error("Report size error:", error.message);
       return res.status(500).json({ error: "Failed to calculate report size" });
     }
-  },
+  }
 );
 
 // Delete the (ephemeral) output directory of a run, detaching its DB reference while keeping the
@@ -3104,7 +3159,7 @@ app.delete(
       if (!report) return res.status(404).json({ error: "Report not found" });
 
       const run = getAnalysisRuns(report.uuid).find(
-        (r) => r.runName === runName,
+        (r) => r.runName === runName
       );
       if (!run)
         return res.status(404).json({ error: "Analysis run not found" });
@@ -3115,7 +3170,7 @@ app.delete(
           !isWithin(appConfig.currentPath, run.runDir)
         ) {
           return res.status(400).json({
-            error: "Output directory is outside the configured current path",
+            error: "Output directory is outside the configured current path"
           });
         }
         if (fs.existsSync(run.runDir))
@@ -3129,7 +3184,7 @@ app.delete(
         .status(500)
         .json({ error: "Failed to delete output directory: " + error.message });
     }
-  },
+  }
 );
 
 // Delete a run's analysis (vault) file. If the output dir reference is already gone, prune the row.
@@ -3149,7 +3204,7 @@ app.delete(
       if (!report) return res.status(404).json({ error: "Report not found" });
 
       const run = getAnalysisRuns(report.uuid).find(
-        (r) => r.runName === runName,
+        (r) => r.runName === runName
       );
       if (!run)
         return res.status(404).json({ error: "Analysis run not found" });
@@ -3160,11 +3215,11 @@ app.delete(
           appConfig.vaultPath,
           appConfig.archivePath
             ? path.join(appConfig.archivePath, "analysis")
-            : null,
+            : null
         ].filter((p): p is string => !!p);
         if (!vaultRoots.some((root) => isWithin(root, resolved))) {
           return res.status(400).json({
-            error: "Analysis file is outside the configured vault paths",
+            error: "Analysis file is outside the configured vault paths"
           });
         }
         fs.unlinkSync(resolved);
@@ -3181,7 +3236,7 @@ app.delete(
         .status(500)
         .json({ error: "Failed to delete analysis file: " + error.message });
     }
-  },
+  }
 );
 
 // Delete a single trace digest: removes its directory from disk (guarded to currentPath) and the DB row.
@@ -3210,7 +3265,7 @@ app.delete("/api/digest", (req: Request, res: Response): any => {
         !isWithin(appConfig.currentPath, digestDir)
       ) {
         return res.status(400).json({
-          error: "Digest directory is outside the configured current path",
+          error: "Digest directory is outside the configured current path"
         });
       }
       if (fs.existsSync(digestDir))
@@ -3245,7 +3300,7 @@ app.get("/api/vault/list", (req: Request, res: Response): any => {
     // Scan vaultPath (current reports)
     if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
       const entries = fs.readdirSync(appConfig.vaultPath, {
-        withFileTypes: true,
+        withFileTypes: true
       });
       for (const e of entries) {
         if (e.isFile() && e.name.endsWith(".md")) {
@@ -3253,7 +3308,7 @@ app.get("/api/vault/list", (req: Request, res: Response): any => {
           const stat = fs.statSync(filePath);
           files.push({
             filename: e.name.replace(/\.md$/, ""),
-            mtime: stat.mtime.toISOString(),
+            mtime: stat.mtime.toISOString()
           });
         }
       }
@@ -3269,14 +3324,14 @@ app.get("/api/vault/list", (req: Request, res: Response): any => {
             const stat = fs.statSync(filePath);
             files.push({
               filename: e.name.replace(/\.md$/, ""),
-              mtime: stat.mtime.toISOString(),
+              mtime: stat.mtime.toISOString()
             });
           }
         }
       }
     }
     files.sort(
-      (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime(),
+      (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
     );
     return res.json({ files });
   } catch (error: any) {
@@ -3315,15 +3370,15 @@ app.put("/api/vault/:filename", (req: Request, res: Response): any => {
         req.body.expectedVersion
     )
       return res.status(409).json({
-        error: "This analysis was changed or deleted. Reload before saving.",
+        error: "This analysis was changed or deleted. Reload before saving."
       });
   }
   const owningRun = getAllAnalysisRuns().find(
-    (run) => run.runName === safeName.replace(/\.md$/, ""),
+    (run) => run.runName === safeName.replace(/\.md$/, "")
   );
   if (owningRun && reportIsBusy(owningRun.reportId))
     return res.status(409).json({
-      error: "Wait for this report's active operation before saving.",
+      error: "Wait for this report's active operation before saving."
     });
   if (existing) {
     try {
@@ -3355,7 +3410,7 @@ app.put("/api/vault/:filename", (req: Request, res: Response): any => {
 const renderVaultPage = (
   filename: string,
   rawContent: string,
-  saveUrl: string,
+  saveUrl: string
 ): string => {
   const rendered = md.render(rawContent);
   const escapedRaw = rawContent
@@ -3529,7 +3584,7 @@ app.get("/vault/:filename", (req: Request, res: Response): any => {
     const html = renderVaultPage(
       filename,
       content,
-      `/api/vault/${encodeURIComponent(filename)}`,
+      `/api/vault/${encodeURIComponent(filename)}`
     );
     res.type("text/html").send(html);
   } catch (error: any) {
@@ -3593,7 +3648,7 @@ app.put(
         .status(500)
         .json({ error: "Failed to save grouped analysis file" });
     }
-  },
+  }
 );
 
 // Agent vault endpoints
@@ -3603,7 +3658,7 @@ app.get("/api/agent/vault/list", (req: Request, res: Response): any => {
     const files: { filename: string; mtime: string }[] = [];
     if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
       const entries = fs.readdirSync(appConfig.vaultPath, {
-        withFileTypes: true,
+        withFileTypes: true
       });
       for (const e of entries) {
         if (e.isFile() && e.name.endsWith(".md")) {
@@ -3611,7 +3666,7 @@ app.get("/api/agent/vault/list", (req: Request, res: Response): any => {
           const stat = fs.statSync(filePath);
           files.push({
             filename: e.name.replace(/\.md$/, ""),
-            mtime: stat.mtime.toISOString(),
+            mtime: stat.mtime.toISOString()
           });
         }
       }
@@ -3626,7 +3681,7 @@ app.get("/api/agent/vault/list", (req: Request, res: Response): any => {
             const stat = fs.statSync(filePath);
             files.push({
               filename: e.name.replace(/\.md$/, ""),
-              mtime: stat.mtime.toISOString(),
+              mtime: stat.mtime.toISOString()
             });
           }
         }
@@ -3663,6 +3718,6 @@ app.use((req: Request, res: Response) => {
 if (require.main === module)
   app.listen(PORT, () => {
     console.log(
-      `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`,
+      `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`
     );
   });

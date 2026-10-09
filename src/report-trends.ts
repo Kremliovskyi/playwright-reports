@@ -11,7 +11,7 @@ const statuses = new Set([
   "failed",
   "timedOut",
   "skipped",
-  "interrupted",
+  "interrupted"
 ]);
 const outcomes = new Set(["expected", "unexpected", "flaky", "skipped"]);
 const hash = (value: string | Buffer): string =>
@@ -33,35 +33,39 @@ const relativeFile = (value: string): string => {
 export function normalizeSuiteTitle(title: string): string {
   return title.replace(
     /\[([A-Z][A-Z0-9_-]* [A-Z][A-Z0-9_-]*) - \d{1,2}\/\d{1,2}(?:\/\d{2,4})?\]$/,
-    "[$1]",
+    "[$1]"
   );
 }
 
-export function parseTrendReport(
-  html: string,
-  report: TrendData.Report,
-): TrendData.Series[] {
+function readTrendArchive(html: string): (name: string) => any {
   const encoded =
     html.match(/window\.playwrightReportBase64\s*=\s*["']([^"']+)["']/)?.[1] ??
     html.match(
-      /<(?:script|template)\b[^>]*\bid=["']playwrightReportBase64["'][^>]*>([^<]+)<\/(?:script|template)>/,
+      /<(?:script|template)\b[^>]*\bid=["']playwrightReportBase64["'][^>]*>([^<]+)<\/(?:script|template)>/
     )?.[1];
   if (!encoded)
     throw new Error("Unsupported report: embedded report data is missing.");
   const zip = new AdmZip(
     Buffer.from(
       encoded.trim().replace(/^data:application\/zip;base64,/, ""),
-      "base64",
-    ),
+      "base64"
+    )
   );
-  const readJson = (name: string): any => {
+  return (name: string): any => {
     const entry = zip.getEntry(name);
     if (!entry || entry.header.size > 64 * 1024 * 1024)
       throw new Error(
-        "Report detail is missing or exceeds the 64 MB entry limit.",
+        "Report detail is missing or exceeds the 64 MB entry limit."
       );
     return JSON.parse(zip.readAsText(entry));
   };
+}
+
+export function parseTrendReport(
+  html: string,
+  report: TrendData.Report
+): TrendData.Series[] {
+  const readJson = readTrendArchive(html);
   const summary = readJson("report.json");
   if (!Array.isArray(summary.files))
     throw new Error("Unsupported report summary.");
@@ -108,13 +112,13 @@ export function parseTrendReport(
             retry: result.retry,
             startTime: timestamp(result.startTime),
             duration: result.duration,
-            status: result.status,
+            status: result.status
           };
-        },
+        }
       );
       const total = attempts.reduce(
         (sum, attempt) => sum + attempt.duration,
-        0,
+        0
       );
       if (
         !validDuration(test.duration) ||
@@ -148,8 +152,8 @@ export function parseTrendReport(
           test.path,
           test.title,
           line,
-          column,
-        ]),
+          column
+        ])
       );
       const normalizedPath = test.path.map(normalizeSuiteTitle);
       const spec = relativeFile(test.location.file);
@@ -160,8 +164,8 @@ export function parseTrendReport(
           test.location.file.replace(/\\/g, "/"),
           normalizedPath,
           test.title,
-          repeat,
-        ]),
+          repeat
+        ])
       );
       series.push({
         key,
@@ -193,9 +197,9 @@ export function parseTrendReport(
               null,
             total: attempts.some((attempt) => attempt.status !== "skipped")
               ? total
-              : null,
-          },
-        ],
+              : null
+          }
+        ]
       });
     }
   }
@@ -203,7 +207,7 @@ export function parseTrendReport(
     typeof summary.startTime === "number" ? timestamp(summary.startTime) : null;
   const attemptTimes = series
     .flatMap((test) =>
-      test.observations[0].attempts.map((attempt) => attempt.startTime),
+      test.observations[0].attempts.map((attempt) => attempt.startTime)
     )
     .filter((value): value is string => !!value)
     .sort();
@@ -218,7 +222,7 @@ export function parseTrendReport(
 }
 
 export function mergeTrendSeries(
-  entries: TrendData.Series[],
+  entries: TrendData.Series[]
 ): TrendData.Series[] {
   const groups = new Map<string, TrendData.Series[]>();
   for (const series of entries) {
@@ -235,16 +239,16 @@ export function mergeTrendSeries(
           JSON.stringify([
             series.key,
             series.observations[0].reportUuid,
-            series.observations[0].testId,
-          ]),
+            series.observations[0].testId
+          ])
         ),
-        ambiguous: true,
+        ambiguous: true
       }));
     return [
       {
         ...group[0],
-        observations: group.flatMap((series) => series.observations),
-      },
+        observations: group.flatMap((series) => series.observations)
+      }
     ];
   });
 }
@@ -260,23 +264,106 @@ export function describeTrendReport(record: ReportRecord): TrendData.Report {
     scope: record.reportPath.startsWith("/reports/archive/")
       ? "archive"
       : "current",
-    version: "",
+    version: ""
   };
 }
 
 export class TrendSourceError extends Error {
   constructor(
     public status: number,
-    message: string,
+    message: string
   ) {
     super(message);
   }
 }
 
+export async function resolveTrendAttempt(
+  html: string,
+  report: TrendData.Report,
+  reportRootPath: string,
+  testId: string,
+  version: string,
+  run: number
+) {
+  if (hash(html) !== version)
+    throw new TrendSourceError(
+      409,
+      "Report has changed. Search matches again."
+    );
+  const observation = parseTrendReport(html, report)
+    .flatMap((series) => series.observations)
+    .find((candidate) => candidate.testId === testId);
+  if (
+    !observation ||
+    !Number.isSafeInteger(run) ||
+    run < 0 ||
+    !observation.attempts[run]
+  )
+    throw new TrendSourceError(404, "Test attempt is no longer available.");
+  const readJson = readTrendArchive(html);
+  const file = readJson("report.json").files.find((entry: any) =>
+    entry.tests.some((test: any) => test.testId === testId)
+  );
+  const result = readJson(`${file.fileId}.json`).tests.find(
+    (test: any) => test.testId === testId
+  ).results[run];
+  const reportDataPath = path.join(reportRootPath, "data");
+  const traces: {
+    attachmentPath: string;
+    tracePath: string | null;
+    issue: string | null;
+  }[] = [];
+  if (result.attachments !== undefined && !Array.isArray(result.attachments))
+    throw new TrendSourceError(422, "Unsupported trace attachments.");
+  for (const attachment of result.attachments ?? []) {
+    if (!attachment || typeof attachment !== "object")
+      throw new TrendSourceError(422, "Unsupported trace attachment.");
+    if (attachment.name !== "trace") continue;
+    const relative =
+      typeof attachment.path === "string"
+        ? attachment.path.replace(/\\/g, "/")
+        : "";
+    if (!relative.startsWith("data/") || !relative.endsWith(".zip"))
+      throw new TrendSourceError(422, "Unsupported trace attachment path.");
+    const tracePath = path.resolve(reportRootPath, relative);
+    assertOwnedPath(reportDataPath, tracePath);
+    let resolved: string | null = null;
+    for (const candidate of [tracePath, tracePath.slice(0, -4)]) {
+      assertOwnedPath(reportDataPath, candidate);
+      try {
+        const stat = await fs.stat(candidate);
+        if (candidate === tracePath ? stat.isFile() : stat.isDirectory()) {
+          resolved = candidate;
+          break;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    traces.push({
+      attachmentPath: attachment.path,
+      tracePath: resolved,
+      issue: resolved ? null : "Trace attachment is missing from local storage."
+    });
+  }
+  return {
+    report,
+    observation,
+    attempt: observation.attempts[run],
+    analysisTarget: { reportRootPath, reportDataPath },
+    traces,
+    traceAvailability: !traces.length
+      ? "not-recorded"
+      : traces.some((trace) => !trace.tracePath)
+        ? "missing"
+        : "available"
+  };
+}
+
 export async function readTrendSource(
   root: string,
   folder: string,
-  record: ReportRecord,
+  record: ReportRecord
 ): Promise<string> {
   const directory = path.join(root, folder);
   const index = path.join(directory, "index.html");
@@ -285,7 +372,7 @@ export async function readTrendSource(
   if (directoryStat.birthtime.toISOString() !== record.dateCreated)
     throw new TrendSourceError(
       409,
-      "Report was replaced. Search matches again.",
+      "Report was replaced. Search matches again."
     );
   const before = await fs.stat(index);
   if (!before.isFile() || before.size > 128 * 1024 * 1024)
@@ -299,7 +386,7 @@ export async function readTrendSource(
   )
     throw new TrendSourceError(
       409,
-      "Report changed while reading. Search matches again.",
+      "Report changed while reading. Search matches again."
     );
   return html;
 }

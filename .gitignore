@@ -133,3 +133,4 @@ dist/
 tests/.artifacts-*/
 tests/.browser-*/
 tests/.browser-results/
+tmp/

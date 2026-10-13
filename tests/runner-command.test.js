@@ -50,6 +50,27 @@ test("formats whitespace for display without changing execution arguments", () =
   ]);
 });
 
+test("preserves grep alternatives as one argument and quotes them for display", () => {
+  const args = ["--grep", "login|checkout"];
+  assert.deepEqual(prepareRunnerArgs(args, "linux"), args);
+  assert.deepEqual(prepareRunnerArgs(args, "darwin"), args);
+  assert.deepEqual(prepareRunnerArgs(args, "win32"), [
+    "--grep", '"login|checkout"',
+  ]);
+  assert.equal(formatRunnerArgs(args), '--grep "login|checkout"');
+  assert.equal(
+    formatRunnerArgs(prepareRunnerArgs(args, "win32")),
+    '--grep "login|checkout"',
+  );
+});
+
+test("keeps literal quote escapes and alternatives intact for Windows", () => {
+  const grep = "login \\x22admin\\x22|checkout";
+  const args = ["--grep", grep];
+  assert.deepEqual(prepareRunnerArgs(args, "win32"), ["--grep", `"${grep}"`]);
+  assert.equal(args[1], grep);
+});
+
 test("Podman isolates dependencies and preserves Windows paths and test arguments", () => {
   const args = ["--grep", "a multiword test", "--config", "configs/test config.ts", "--update-snapshots"];
   const result = buildPodmanArgs({

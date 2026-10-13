@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 
-const hasWhitespace = /\s/;
+const needsQuotes = /[\s|]/;
 
 export const resolvePodmanExecutable = (
   platform: NodeJS.Platform = process.platform,
@@ -52,7 +52,7 @@ export const prepareRunnerArgs = (
 };
 
 const formatRunnerArg = (arg: string): string => {
-  if (!hasWhitespace.test(arg) || (arg.startsWith('"') && arg.endsWith('"')))
+  if (!needsQuotes.test(arg) || (arg.startsWith('"') && arg.endsWith('"')))
     return arg;
   return `"${arg.replaceAll('"', '\\"')}"`;
 };

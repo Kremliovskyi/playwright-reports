@@ -1,5 +1,16 @@
 declare const Terminal: any;
 
+const normalizeRunnerTitles = (titles: string[]): string[] =>
+  [...new Set(titles.flatMap((title) => title.split(/\r\n?|\n/))
+    .map((title) => title.trim()).filter(Boolean))];
+
+const buildRunnerGrep = (titles: string[]): string =>
+  normalizeRunnerTitles(titles).map((title) =>
+    title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      // Match quotes literally without placing them in the Windows shell argument.
+      .replace(/"/g, "\\x22"),
+  ).join("|");
+
 document.addEventListener("DOMContentLoaded", () => {
   // Broadcast Channel for "Run Tests" button state
   const channel = new BroadcastChannel("runner_state");
@@ -68,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const podmanInfoBtn = document.getElementById("podman-info-btn") as HTMLButtonElement;
 
   const optGrep = document.getElementById("opt-grep") as HTMLInputElement;
+  const titleChips = document.getElementById("title-chips") as HTMLUListElement;
   const optRepeat = document.getElementById("opt-repeat") as HTMLInputElement;
   const optWorkers = document.getElementById("opt-workers") as HTMLInputElement;
   const optEnv = document.getElementById("opt-env") as HTMLInputElement;
@@ -215,6 +227,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let selectedBrowserstackConfig = "";
   let projectLoadId = 0;
   let isRunning = false;
+  let grepTitles: string[] = [];
 
   let saveTimeout: any = null;
 
@@ -335,7 +348,8 @@ document.addEventListener("DOMContentLoaded", () => {
           config.runnerOptions.updateSnapshots || false;
         optPodman.checked = config.runnerOptions.usePodman || false;
         updatePodmanOptions();
-        optGrep.value = config.runnerOptions.grep || "";
+        grepTitles = normalizeRunnerTitles([config.runnerOptions.grep || ""]);
+        renderGrepTitles();
         optRepeat.value = config.runnerOptions.repeatEach || "";
         optWorkers.value = config.runnerOptions.workers || "";
         optEnv.value = config.runnerOptions.envVariables || "";
@@ -367,7 +381,7 @@ document.addEventListener("DOMContentLoaded", () => {
         debug: optDebug.checked,
         updateSnapshots: optUpdateSnapshots.checked,
         usePodman: optPodman.checked,
-        grep: optGrep.value,
+        grep: getGrepTitles().join("\n"),
         repeatEach: optRepeat.value,
         workers: optWorkers.value,
         envVariables: optEnv.value,
@@ -386,6 +400,80 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }, 500); // 500ms debounce
   };
+
+  const getGrepTitles = () =>
+    normalizeRunnerTitles([...grepTitles, optGrep.value]);
+
+  const editGrepTitle = (title: string) => {
+    grepTitles = getGrepTitles().filter((entry) => entry !== title);
+    optGrep.value = title;
+    renderGrepTitles();
+    optGrep.focus();
+    optGrep.select();
+    saveState();
+  };
+
+  const renderGrepTitles = () => {
+    titleChips.replaceChildren();
+    titleChips.hidden = grepTitles.length === 0;
+    for (const title of grepTitles) {
+      const chip = document.createElement("li");
+      chip.className = "title-chip";
+
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "title-chip-edit";
+      editButton.textContent = title;
+      editButton.setAttribute("aria-label", `Edit title filter: ${title}`);
+      editButton.title = "Edit title filter";
+      editButton.addEventListener("click", () => editGrepTitle(title));
+
+      const removeButton = document.createElement("button");
+      removeButton.type = "button";
+      removeButton.className = "title-chip-remove";
+      removeButton.textContent = "\u00d7";
+      removeButton.setAttribute("aria-label", `Remove title filter: ${title}`);
+      removeButton.title = "Remove title filter";
+      removeButton.addEventListener("click", () => {
+        grepTitles = grepTitles.filter((entry) => entry !== title);
+        renderGrepTitles();
+        optGrep.focus();
+        saveState();
+      });
+
+      chip.append(editButton, removeButton);
+      titleChips.appendChild(chip);
+    }
+  };
+
+  const commitGrepTitles = (value = optGrep.value) => {
+    grepTitles = normalizeRunnerTitles([...grepTitles, value]);
+    optGrep.value = "";
+    renderGrepTitles();
+    saveState();
+  };
+
+  optGrep.addEventListener("keydown", (event) => {
+    if (event.isComposing) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitGrepTitles();
+    } else if (event.key === "Backspace" && !optGrep.value && grepTitles.length) {
+      event.preventDefault();
+      editGrepTitle(grepTitles[grepTitles.length - 1]);
+    }
+  });
+
+  optGrep.addEventListener("paste", (event) => {
+    const text = event.clipboardData?.getData("text/plain");
+    if (!text || !/[\r\n]/.test(text)) return;
+    event.preventDefault();
+    const start = optGrep.selectionStart ?? optGrep.value.length;
+    const end = optGrep.selectionEnd ?? start;
+    commitGrepTitles(
+      optGrep.value.slice(0, start) + text + optGrep.value.slice(end),
+    );
+  });
 
   optHeaded.addEventListener("change", () => {
     if (optHeaded.checked) optHeadless.checked = false;
@@ -853,14 +941,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (optDebug.checked) args.push("--debug");
     if (optUpdateSnapshots.checked) args.push("--update-snapshots");
 
-    if (optGrep.value) {
-      // First escape regex special characters, then replace double quotes with a dot wildcard (.)
-      // This completely sidesteps shell quoting nightmares by matching the quote via a regex dot instead.
-      const escapedGrep = optGrep.value
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-        .replace(/"/g, ".");
-      args.push("--grep", escapedGrep);
-    }
+    commitGrepTitles();
+    const grep = buildRunnerGrep(grepTitles);
+    if (grep) args.push("--grep", grep);
 
     if (optRepeat.value) args.push(`--repeat-each=${optRepeat.value}`);
     if (optWorkers.value) args.push(`--workers=${optWorkers.value}`);

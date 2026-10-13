@@ -278,7 +278,7 @@ Playwright outputs a folder (e.g. `playwright-report-4`) with an `index.html` in
 The execution engine runs Playwright tests on the host machine by default, or inside a temporary Linux container when **Run in Podman** is enabled. Both execution paths stream output live to the dashboard browser window through the same SSE connection.
 
 - **Process Spawning:** Tests are launched via standard Node `child_process.spawn` inside the configured `projectPath`. On macOS and Linux, options remain separate argv entries with `shell: false`; multiword grep values therefore require no literal quote characters. Command logging formats those arguments separately for readability.
-- **Windows Polish:** Native Windows runs execute `npx.cmd` with `shell: true` and retain the `cmd.exe` quoting required around multiword grep values. POSIX platforms and Podman launches on every platform use `shell: false`.
+- **Windows Polish:** Native Windows runs execute `npx.cmd` with `shell: true`; `prepareRunnerArgs()` in [src/runner-command.ts](src/runner-command.ts) quotes the entire grep argument, preserving both spaces and OR pipes. POSIX platforms and Podman launches on every platform use `shell: false`. Command logging also quotes arguments containing whitespace or pipes, without changing the execution arguments.
 - **Server-Sent Events (SSE):** The frontend opens an EventSource connection to `/api/logs`. The backend captures stdout/stderr buffers from the spawn output and pushes them down instantly. The UI layer (`xterm.js`) renders these buffers preserving their original ANSI color codes for a perfect native terminal replica.
 - **Zombie Process Protection:** Standard `child.kill()` fails to wipe out deep nested browser threads spawned by Playwright, leaving zombie Chromium processes hanging in the background. We imported `tree-kill` to aggressively trace the process PID tree and issue a clean `SIGKILL` when the user clicks 'Stop Tests'.
 
@@ -287,6 +287,20 @@ The execution engine runs Playwright tests on the host machine by default, or in
 The `src/runner-configs.ts` helper uses `glob` within `projectPath` to discover `**/*playwright*.config.{ts,js,mts,mjs,cts,cjs}` and `**/*browserstack*.{yml,yaml}` while ignoring `node_modules`, `test-results`, and temporary Headless overrides. Results are sorted by path depth, basename length, and lexical order so a conventional root `playwright.config.ts` is preferred. The runner persists selected paths relative to `projectPath`; the server accepts a selection only when it is present in the current discovered set and resolves inside the project root.
 
 Each Playwright config is evaluated in a short-lived child process. The child loads one config with Jiti and returns only the serializable fields the dashboard needs: project names and the ARIA snapshot path template. This prevents different projects or Playwright versions from sharing module and process-global state in the long-running dashboard server.
+
+### Multi-title Filtering
+
+The **Test titles** field in [src/public/runner.html](src/public/runner.html) presents literal title fragments as editable, removable chips rather than requiring users to write a regular expression. Its state and argument construction live in [src/public/runner.ts](src/public/runner.ts).
+
+- **Input lifecycle:** Enter commits the draft as a chip; multiline paste splits on LF, CRLF or CR and respects the input's current selection. Clicking a chip moves it into the input for editing while preserving any existing draft as an entry. Backspace in an empty input edits the last chip. Run commits any unfinished input before building arguments. Enter during IME composition does not commit.
+- **Normalization:** `normalizeRunnerTitles()` trims entries, drops blank lines and removes exact duplicates while preserving first-occurrence order and case. Spaces, commas and pipes inside an entry are literal content, not separators.
+- **Persistence contract:** The existing `runnerOptions.grep` remains a string in the config JSON; entries are stored as newline-separated literal text, not as the compiled regex. The existing 500 ms debounced save includes both chips and unfinished input. Reload normalizes the saved string into chips, so legacy single-title filters still work without a database migration. An old value containing `|` remains one literal entry.
+- **Matching contract:** `buildRunnerGrep()` escapes regex metacharacters in each normalized entry **before** joining entries with `|`. For example, `login (admin)` and `checkout` become `login \(admin\)|checkout`. This produces case-sensitive, unanchored OR matching against Playwright's full test title, including project, file, describe blocks and tags. No regex mode is exposed.
+- **Literal quotes:** Double quotes are encoded as the regex escape `\x22`, keeping literal quote characters out of the Windows shell argument without broadening matching. They must not be replaced with `.` wildcards.
+- **Execution contract:** The frontend sends one `--grep` argument and one combined pattern value in the `args` array to `POST /api/run-tests`. Local, BrowserStack and Podman runs share this construction. Empty input omits `--grep` entirely; project selection and other run options still apply.
+- **Presentation:** Chip labels are rendered with `textContent`. Edit and remove controls are native buttons with explicit accessible names; editing or removal restores focus to the input. Long chips wrap within the field on narrow screens.
+
+User-facing instructions are in [Running Tests: Filter by test titles](docs/running-tests.md#filter-by-test-titles).
 
 ### Run Tests Button Guard
 
@@ -323,6 +337,12 @@ The runner persists `runnerOptions.usePodman` (default `false`) through the exis
 - **Environment and output:** Only explicitly entered environment variables and runner defaults are forwarded, not the server's full environment. Variable names are validated and passed with `--env NAME`, keeping their values out of command arguments. Defaults include `FORCE_COLOR=1`, `PLAYWRIGHT_HTML_OPEN=never`, and `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`. Reports and snapshots written inside the mounted project persist on the host; screenshots use Linux baselines. External host paths are not mounted, and host services should be addressed through `host.containers.internal` rather than container `localhost`.
 - **Lifecycle and Stop:** The server tracks the attached child process, temporary config, and container name. Normal completion uses Podman's `--rm` to remove the container and anonymous dependency volume. Stop calls `podman rm --force --ignore <name>` before terminating the remaining local process tree; container-removal failures are surfaced to the caller. Temporary config cleanup runs on process completion, Stop, and startup failure.
 - **Trust boundary:** This mode is intended for trusted tests and sites. The official image runs as root with Chromium sandboxing disabled, and the read/write project mount allows test code to modify host project files. It is not a sandbox for untrusted code.
+
+### Title Filter Verification
+
+[tests/runner-titles.test.js](tests/runner-titles.test.js) loads the compiled frontend helpers in a Node VM and checks normalization, persistence round-trips, literal punctuation and quotes, OR matching, and empty inputs. [tests/runner-command.test.js](tests/runner-command.test.js) covers platform-specific argument preparation, quoted command display and Podman argument preservation. Run the focused suite with `npm run build && node --test tests/runner-titles.test.js tests/runner-command.test.js`.
+
+[tests/runner-titles-browser.js](tests/runner-titles-browser.js) runs through `playwright-cli run-code --filename=tests/runner-titles-browser.js` after opening a page on an isolated static server serving the built frontend. It opens a disposable tab, mocks API requests and terminal/SSE dependencies, and verifies draft submission, multiline paste, editing, keyboard controls, IME handling, reload persistence, literal rendering, and long-chip layout at 390 px and 1280 px. It also checks local, BrowserStack and Podman run-request payloads. These browser checks do not launch real test runs or access the working database.
 
 ---
 

@@ -25,7 +25,7 @@ The runner parses the selected Playwright config and lists its projects. Select 
 - Debug mode
 - Update snapshots
 - Run in Podman (headless container execution)
-- Grep filters
+- Test title filters
 - Worker count
 - Repeat count
 - Environment variables
@@ -33,6 +33,27 @@ The runner parses the selected Playwright config and lists its projects. Select 
 Runner options are persisted across dashboard restarts.
 
 **Headed** and **Headless** are mutually exclusive overrides. Select neither to use the `use.headless` value from `playwright.config.ts`; select either mode to override that value for the run. Debug mode opens a headed browser, so selecting Debug clears Headless.
+
+### Filter by test titles
+
+Use **Test titles** to enter one or more full titles or title fragments:
+
+- For one title, type it and click **Run Tests**; pressing Enter first is optional.
+- Press **Enter** to add an entry as a chip, or paste multiple titles on separate lines.
+- Click a chip's title to edit it or its remove button to delete it. Backspace in an empty input edits the last chip.
+- Entries are trimmed and duplicates and blank lines are ignored. Spaces, commas and `|` within an entry remain part of that title.
+- Tests matching **any** entry are included (OR), using case-sensitive literal substring matching. Regex punctuation and quotes are treated literally.
+- Leave the field empty to apply no title filter; project selection and other run options still apply.
+
+The runner includes unfinished input when you click Run and remembers all entries on reload. Previously saved single-title filters also load as chips.
+
+Internally, each entry is regex-escaped before joining with `|` into one Playwright `--grep` argument. For example, entries `login (admin)` and `checkout` produce:
+
+```bash
+npx playwright test --grep "login \(admin\)|checkout"
+```
+
+You do not need to type regex syntax or shell quotes in the field. Playwright matches against the full test title, including its project, file, describe blocks and tags, rather than only the leaf test title.
 
 ## Save project presets
 

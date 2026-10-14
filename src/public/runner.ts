@@ -80,6 +80,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const optGrep = document.getElementById("opt-grep") as HTMLInputElement;
   const titleChips = document.getElementById("title-chips") as HTMLUListElement;
+  const clearTitlesBtn = document.getElementById(
+    "clear-titles-btn",
+  ) as HTMLButtonElement;
   const optRepeat = document.getElementById("opt-repeat") as HTMLInputElement;
   const optWorkers = document.getElementById("opt-workers") as HTMLInputElement;
   const optEnv = document.getElementById("opt-env") as HTMLInputElement;
@@ -413,9 +416,15 @@ document.addEventListener("DOMContentLoaded", () => {
     saveState();
   };
 
+  const updateClearTitlesButton = () => {
+    clearTitlesBtn.hidden =
+      grepTitles.length === 0 && optGrep.value.length === 0;
+  };
+
   const renderGrepTitles = () => {
     titleChips.replaceChildren();
     titleChips.hidden = grepTitles.length === 0;
+    updateClearTitlesButton();
     for (const title of grepTitles) {
       const chip = document.createElement("li");
       chip.className = "title-chip";
@@ -452,6 +461,16 @@ document.addEventListener("DOMContentLoaded", () => {
     renderGrepTitles();
     saveState();
   };
+
+  clearTitlesBtn.addEventListener("click", () => {
+    grepTitles = [];
+    optGrep.value = "";
+    renderGrepTitles();
+    optGrep.focus();
+    saveState();
+  });
+
+  optGrep.addEventListener("input", updateClearTitlesButton);
 
   optGrep.addEventListener("keydown", (event) => {
     if (event.isComposing) return;

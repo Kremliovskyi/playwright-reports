@@ -72,6 +72,8 @@ async (page) => {
     const input = page.getByRole("textbox", { name: "Test titles", exact: true });
     const chips = page.locator(".title-chip-edit");
     const removeButtons = page.locator(".title-chip-remove");
+    const clearAllButton = page.getByRole("button", { name: "Clear all", exact: true });
+    const labelRow = page.locator(".input-label-row");
     const checkChips = async (expected) => verify(
       JSON.stringify(await chips.allTextContents()) === JSON.stringify(expected),
       `Expected chips: ${JSON.stringify(expected)}`,
@@ -101,6 +103,7 @@ async (page) => {
       await input.fill("");
       while (await removeButtons.count()) await removeButtons.first().click();
       await checkChips([]);
+      verify(!(await clearAllButton.isVisible()), "Clear all must hide when field is empty");
     };
     const paste = (text) => input.evaluate((element, value) => {
       const clipboardData = new DataTransfer();
@@ -113,12 +116,22 @@ async (page) => {
     await page.goto(`${origin}/runner.html`);
     await ready();
     await checkChips(["legacy, admin | guest"]);
+    verify(await clearAllButton.isVisible(), "Clear all must be visible when chips exist");
+    const visibleLabelRowHeight = (await labelRow.boundingBox()).height;
     verify(
       grepFrom(await run()) === "legacy, admin \\| guest",
       "Legacy filters must remain a single literal entry",
     );
 
     await clear();
+    verify(
+      (await labelRow.boundingBox()).height === visibleLabelRowHeight,
+      "Showing or hiding Clear all must not shift the label row height",
+    );
+    await input.fill("draft only");
+    verify(await clearAllButton.isVisible(), "Clear all must appear when typing in input");
+    await input.fill("");
+    verify(!(await clearAllButton.isVisible()), "Clear all must hide when input text is cleared");
     const unfiltered = await run();
     verify(!unfiltered.args.includes("--grep"), "No entries must omit grep");
     verify(
@@ -230,11 +243,21 @@ async (page) => {
       }), `Filter and long chips must fit at ${width}px without horizontal overflow`);
     }
 
-    await clear();
+    await input.fill("extra draft");
+    verify(await clearAllButton.isVisible(), "Clear all must be visible with chips and draft");
+    await clearAllButton.click();
+    await checkChips([]);
+    verify(await input.inputValue() === "", "Clear all must clear uncommitted input text");
+    verify(!(await clearAllButton.isVisible()), "Clear all must hide after clearing");
+    verify(
+      await input.evaluate((element) => element === document.activeElement),
+      "Clear all must return focus to the input",
+    );
     await saved("");
     await page.reload();
     await ready();
     await checkChips([]);
+    verify(!(await clearAllButton.isVisible()), "Clear all must stay hidden after reload with empty filter");
     verify(!((await run()).args.includes("--grep")), "Removing all entries must persist no filter");
     verify(errors.length === 0, `Browser errors: ${errors.join("; ")}`);
     return {
@@ -245,7 +268,7 @@ async (page) => {
         "multiline paste", "deduplication", "literal OR pattern", "editing with draft",
         "keyboard removal", "Backspace editing", "reload persistence", "paste selection",
         "IME input", "literal quotes and pipes", "text-only rendering",
-        "BrowserStack", "Podman", "responsive long chips", "persisted clearing",
+        "BrowserStack", "Podman", "responsive long chips", "clear all button", "persisted clearing",
       ],
     };
   } finally {

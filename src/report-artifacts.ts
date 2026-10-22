@@ -83,10 +83,23 @@ function inspectArtifact(root: string, target: string, directory: boolean) {
   }
 }
 
+export function archivedGroupedAnalysisPath(
+  roots: ArtifactRoots,
+  runName: string,
+): string | null {
+  if (!roots.archivePath) return null;
+  if (!runName || path.basename(runName) !== runName)
+    throw new ArtifactError("UNSAFE_ARTIFACT_PATH", "Invalid analysis name.");
+  const target = path.join(roots.archivePath, "analysis", "grouped-analysis", runName + ".md");
+  assertOwnedPath(roots.archivePath, target);
+  return target;
+}
+
 export function analysisInventory(roots: ArtifactRoots, runs: AnalysisRun[]) {
   const issues: string[] = [];
   const entries = runs.map((run) => {
     let output: ReturnType<typeof inspectArtifact> = null;
+    let grouped: ReturnType<typeof inspectArtifact> = null;
     const notes: NonNullable<ReturnType<typeof inspectArtifact>>[] = [];
     try {
       if (run.runDir)
@@ -110,6 +123,9 @@ export function analysisInventory(roots: ArtifactRoots, runs: AnalysisRun[]) {
         if (note && !notes.some((existing) => existing.path === note.path))
           notes.push(note);
       }
+      const groupedPath = archivedGroupedAnalysisPath(roots, run.runName);
+      if (groupedPath)
+        grouped = inspectArtifact(roots.archivePath, groupedPath, false);
     } catch (error: any) {
       issues.push(error.message);
     }
@@ -119,6 +135,7 @@ export function analysisInventory(roots: ArtifactRoots, runs: AnalysisRun[]) {
       createdAt: run.createdAt,
       output,
       notes,
+      grouped,
     };
   });
   const outputs = new Set(
@@ -127,13 +144,21 @@ export function analysisInventory(roots: ArtifactRoots, runs: AnalysisRun[]) {
   const notes = new Set(
     entries.flatMap((entry) => entry.notes.map((note) => note.path)),
   );
-  const duplicated = outputs.size > 1 || notes.size > 1;
+  const grouped = new Set(entries.flatMap((entry) => entry.grouped ? [entry.grouped.path] : []));
+  const savedAnalyses = new Set(entries
+    .filter((entry) => entry.notes.length || entry.grouped)
+    .map((entry) => JSON.stringify([
+      ...entry.notes.map((note) => note.path),
+      ...(entry.grouped ? [entry.grouped.path] : []),
+    ].sort())));
+  const duplicated = outputs.size > 1 || notes.size > 1 || savedAnalyses.size > 1;
   const choices = entries.map((entry) => {
     const keepPaths = [
       ...(entry.output ? [entry.output.path] : []),
       ...entry.notes.map((note) => note.path),
+      ...(entry.grouped ? [entry.grouped.path] : []),
     ];
-    const removePaths = [...outputs, ...notes].filter(
+    const removePaths = [...outputs, ...notes, ...grouped].filter(
       (target) => !keepPaths.includes(target),
     );
     let blockedReason = issues.join("\n");
@@ -145,6 +170,8 @@ export function analysisInventory(roots: ArtifactRoots, runs: AnalysisRun[]) {
     if (notes.size && !entry.notes.length)
       blockedReason ||=
         "This selection would remove every saved analysis file.";
+    if (grouped.size && !entry.grouped && !entry.notes.length)
+      blockedReason ||= "This selection would remove every saved grouped analysis.";
     if (entry.notes.length > 1)
       blockedReason ||=
         "This analysis has multiple saved notes. Review them individually before consolidation.";
@@ -200,13 +227,17 @@ export function removeAnalysisArtifacts(
     : inventory.entries.flatMap((entry) => [
         ...(entry.output ? [entry.output.path] : []),
         ...entry.notes.map((note) => note.path),
+        ...(entry.grouped ? [entry.grouped.path] : []),
       ]);
   const others = analysisInventory(roots, otherRuns);
   const sharedPaths = otherRuns.flatMap((run) =>
     run.runDir ? [path.resolve(run.runDir)] : [],
   );
   sharedPaths.push(
-    ...others.entries.flatMap((entry) => entry.notes.map((note) => note.path)),
+    ...others.entries.flatMap((entry) => [
+      ...entry.notes.map((note) => note.path),
+      ...(entry.grouped ? [entry.grouped.path] : []),
+    ]),
   );
   for (const target of targets) {
     if (
@@ -225,6 +256,75 @@ export function removeAnalysisArtifacts(
   for (const target of targets)
     fs.rmSync(target, { recursive: true, force: true });
   return runs.filter((run) => run.id !== keepRunId).map((run) => run.id);
+}
+
+export function preserveArchiveAnalyses(
+  roots: ArtifactRoots,
+  runs: AnalysisRun[],
+  otherRuns: AnalysisRun[],
+) {
+  const inventory = analysisInventory(roots, runs);
+  if (inventory.issues.length)
+    throw new ArtifactError("ANALYSIS_REVIEW_REQUIRED", inventory.issues.join("\n"));
+  const artifacts: { source: string; destination: string; kind: "final" | "grouped" }[] = [];
+  for (const [index, entry] of inventory.entries.entries()) {
+    const run = runs[index];
+    if (entry.notes.length > 1)
+      throw new ArtifactError("ANALYSIS_REVIEW_REQUIRED", `Multiple final notes exist for ${run.runName}. Review them before archiving.`);
+    if (otherRuns.some((other) =>
+      other.runName === run.runName ||
+      (other.runDir && run.runDir && (
+        path.resolve(other.runDir) === path.resolve(run.runDir) ||
+        path.resolve(other.runDir).startsWith(path.resolve(run.runDir) + path.sep) ||
+        path.resolve(run.runDir).startsWith(path.resolve(other.runDir) + path.sep)
+      ))
+    ))
+      throw new ArtifactError("SHARED_ARTIFACT", `Another report references analysis ${run.runName}.`);
+    const final = entry.notes[0];
+    const grouped = !final && entry.output
+      ? inspectArtifact(roots.currentPath, path.join(entry.output.path, "grouped-analysis.md"), false)
+      : null;
+    const source = final?.path || grouped?.path || entry.grouped?.path;
+    if (!source) continue;
+    const destination = final
+      ? path.join(roots.archivePath, "analysis", run.runName + ".md")
+      : archivedGroupedAnalysisPath(roots, run.runName)!;
+    assertOwnedPath(roots.archivePath, destination);
+    if (path.resolve(source) !== path.resolve(destination) && fs.existsSync(destination))
+      throw new ArtifactError("ARCHIVE_ARTIFACT_CONFLICT", `Archive analysis already exists: ${destination}`);
+    const previous = artifacts.find((artifact) => artifact.destination === destination);
+    if (previous && previous.source !== source)
+      throw new ArtifactError("ARCHIVE_ARTIFACT_CONFLICT", `Multiple analyses target ${destination}`);
+    if (!previous) artifacts.push({ source, destination, kind: final ? "final" : "grouped" });
+  }
+  const created: string[] = [];
+  const rollback = () => {
+    const errors: string[] = [];
+    for (const target of created.splice(0).reverse()) {
+      try {
+        fs.unlinkSync(target);
+      } catch (error) {
+        errors.push(`${target}: ${String(error)}`);
+      }
+    }
+    if (errors.length) throw new Error(`Failed to roll back preserved analysis:\n${errors.join("\n")}`);
+  };
+  try {
+    for (const artifact of artifacts) {
+      if (path.resolve(artifact.source) === path.resolve(artifact.destination)) continue;
+      fs.mkdirSync(path.dirname(artifact.destination), { recursive: true });
+      fs.copyFileSync(artifact.source, artifact.destination, fs.constants.COPYFILE_EXCL);
+      created.push(artifact.destination);
+    }
+  } catch (error) {
+    try {
+      rollback();
+    } catch (rollbackError) {
+      throw new Error(`${String(error)}\n${String(rollbackError)}`);
+    }
+    throw error;
+  }
+  return { artifacts, rollback };
 }
 
 export function reportArtifactRoot(

@@ -369,7 +369,7 @@ export async function readTrendSource(
   const index = path.join(directory, "index.html");
   assertOwnedPath(root, index);
   const directoryStat = await fs.stat(directory);
-  if (directoryStat.birthtime.toISOString() !== record.dateCreated)
+  if (directoryStat.birthtime.toISOString() !== record.folderBirthtime)
     throw new TrendSourceError(
       409,
       "Report was replaced. Search matches again."

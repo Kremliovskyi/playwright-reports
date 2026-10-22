@@ -201,17 +201,17 @@ Depending on the available trace data, each failure folder can contain:
 
 ## Manage analysis
 
-The retained analysis is stored against the report's stable identity and appears under **Analysis** in the report's **Info** dialog. Partial results remain inspectable when AI analysis or grouping fails; the completion dialog reports the warning. An analysis can have two independently managed artifacts:
+The retained analysis is stored against the report's stable identity and appears under **Analysis** in the report's **Info** dialog. Partial results remain inspectable when AI analysis or grouping fails; the completion dialog reports the warning. Current analyses have these components; archive may retain grouped Markdown separately as described below:
 
 - **Output directory:** The ephemeral run directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `evidence.json`, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
 - **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
 
 The artifacts follow this lifecycle:
 
-- **Report rename:** The analysis runs remain attached because they are keyed by the report's stable internal identity rather than its folder name.
+- **Report rename:** The analysis runs remain attached because they are keyed by the report's stable internal identity rather than its folder name. The server updates the separate filesystem identity timestamp after the move; the original dashboard creation date and date filters stay unchanged.
 - **Delete output directory:** The generated `tmp/run-*` directory and all files inside it, including `grouped-analysis.md`, are removed. The run entry and any mapped vault analysis file remain available in the Info dialog.
-- **Delete analysis file:** The vault Markdown file is removed. The generated output directory remains available when it still exists. If both artifacts are gone, the empty run entry is removed as well.
-- **Archive report:** The ephemeral output directory and its grouped analysis are removed because they do not follow the report into the archive. An existing vault analysis file is moved to `<archivePath>/analysis/`, and its mapping remains attached to the archived report.
+- **Delete analysis file:** The vault Markdown file is removed. The generated output directory and any preserved archived grouped file remain available. The run entry is removed only when no output or grouped artifact remains.
+- **Archive report:** A final vault note is preserved at `<archivePath>/analysis/<runName>.md` when available. Otherwise, grouped analysis is preserved at `<archivePath>/analysis/grouped-analysis/<runName>.md`. Preservation must succeed before the report is moved or its ephemeral output is deleted. The mapping remains attached; archived grouped fallback supports copy/open/edit in Info but is not a final vault/agent note. Directory creation and cross-drive copying are automatic; conflicts or copy errors are surfaced without deleting the source analysis.
 - **Delete report:** The output directories, mapped analysis files, and database run records associated with that report are removed.
 - **Report removed or replaced outside the dashboard:** The next directory scan removes run records belonging to the missing report instance and prevents them from being attached to a new report that reuses the same folder name.
 

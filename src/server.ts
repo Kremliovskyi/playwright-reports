@@ -77,7 +77,9 @@ import {
   publishDigest,
   contentVersion,
   legacyDigestLocation,
-  moveLegacyDigest
+  moveLegacyDigest,
+  archivedGroupedAnalysisPath,
+  preserveArchiveAnalyses
 } from "./report-artifacts";
 import {
   describeTrendReport,
@@ -612,16 +614,18 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
         // deleted report recreated as the same folder) has a new birth time, so it gets a
         // fresh uuid and the old run mapping is dropped — no stale "(missing on disk)" rows.
         let uuid = existing?.uuid;
-        if (!uuid || existing!.dateCreated !== birthIso) {
+        if (!uuid || existing!.folderBirthtime !== birthIso) {
           uuid = randomUUID();
           if (existing?.uuid) purgeReportRuns(existing.uuid);
         }
+        const dateCreated = existing?.uuid === uuid ? existing.dateCreated : birthIso;
 
         // Upsert into DB (preserves metadata via ON CONFLICT)
         upsertReport({
           id: dirent.name,
           uuid,
-          dateCreated: birthIso,
+          dateCreated,
+          folderBirthtime: birthIso,
           metadata,
           reportPath
         });
@@ -631,7 +635,7 @@ const scanDirectory = (dirPath: string, prefix: string): ReportInfo[] => {
           uuid,
           name: dirent.name,
           path: reportPath,
-          createdAt: stat.birthtime,
+          createdAt: new Date(dateCreated),
           modifiedAt: stat.mtime,
           metadata
         };
@@ -2127,10 +2131,66 @@ app.post(
 );
 
 // Auto-archive report endpoint
+const assertCurrentReportSource = (report: ReportRecord): string => {
+  const source = path.resolve(appConfig.currentPath, report.id);
+  assertOwnedPath(appConfig.currentPath, source);
+  if (fs.statSync(source).birthtime.toISOString() !== report.folderBirthtime)
+    throw new ArtifactError("REPORT_CHANGED", "The report folder was replaced. Refresh before moving it.");
+  return source;
+};
+
+const moveReportFolder = (
+  report: ReportRecord,
+  newId: string,
+  destinationRoot: string,
+  scope: "current" | "archive"
+): string => {
+  const source = assertCurrentReportSource(report);
+  const destination = path.resolve(destinationRoot, newId);
+  assertOwnedPath(destinationRoot, destination);
+  if (fs.existsSync(destination) || getReport(newId))
+    throw new ArtifactError("REPORT_MOVE_CONFLICT", `A report named "${newId}" already exists.`);
+  const newPath = `/reports/${scope}/${newId}/index.html`;
+  let moved = false;
+  let copied = false;
+  let removingSource = false;
+  try {
+    try {
+      fs.renameSync(source, destination);
+      moved = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+      copied = true;
+      fs.cpSync(source, destination, { recursive: true, force: false, errorOnExist: true });
+      removingSource = true;
+      fs.rmSync(source, { recursive: true });
+    }
+    updateReportId(report.id, newId, newPath, fs.statSync(destination).birthtime.toISOString());
+  } catch (error) {
+    try {
+      if (copied) {
+        if (removingSource) fs.cpSync(destination, source, { recursive: true });
+        fs.rmSync(destination, { recursive: true, force: true });
+      } else if (moved) {
+        fs.renameSync(destination, source);
+      }
+      if (copied || moved)
+        updateReportId(report.id, report.id, report.reportPath, fs.statSync(source).birthtime.toISOString());
+    } catch (rollbackError) {
+      throw new Error(`${String(error)}\nReport move rollback failed: ${String(rollbackError)}`);
+    }
+    throw error;
+  }
+  invalidateReportSize(report.id);
+  invalidateReportSize(newId);
+  return newPath;
+};
+
 app.post("/api/archive", (req: Request, res: Response): any => {
+  refreshConfigCache();
   const { reportPath } = req.body;
 
-  if (!reportPath)
+  if (typeof reportPath !== "string" || !reportPath)
     return res.status(400).json({ error: "reportPath is required" });
   if (!appConfig.archivePath)
     return res.status(400).json({
@@ -2165,65 +2225,45 @@ app.post("/api/archive", (req: Request, res: Response): any => {
       return res.status(404).json({ error: "Report folder not found on disk" });
     }
 
-    // Construct unique destination physical path
-    const uniqueArchivedName = `playwright-report-${Date.now()}`;
-    const destinationPhysicalFolder = path.join(
-      appConfig.archivePath,
-      uniqueArchivedName
+    const report = getReport(folderName);
+    if (!report || report.reportPath !== reportPath)
+      return res.status(404).json({ error: "Report not found in the report index." });
+    assertCurrentReportSource(report);
+    let timestamp = Date.now();
+    let uniqueArchivedName: string;
+    do {
+      uniqueArchivedName = `playwright-report-${timestamp++}`;
+    } while (getReport(uniqueArchivedName) || fs.existsSync(path.join(appConfig.archivePath, uniqueArchivedName)));
+    const reportUuid = report.uuid;
+    const archivedRuns = getAnalysisRuns(reportUuid);
+    const preserved = preserveArchiveAnalyses(
+      appConfig,
+      archivedRuns,
+      getAllAnalysisRuns().filter((run) => run.reportId !== reportUuid)
     );
-
     try {
-      // Fast path: same drive move
-      fs.renameSync(sourcePhysicalFolder, destinationPhysicalFolder);
-    } catch (renameErr: any) {
-      if (renameErr.code === "EXDEV") {
-        // Slow path: cross drive move (copy then delete)
-        fs.cpSync(sourcePhysicalFolder, destinationPhysicalFolder, {
-          recursive: true
-        });
-        fs.rmSync(sourcePhysicalFolder, { recursive: true, force: true });
-      } else {
-        throw renameErr; // Bubble up other I/O errors
+      moveReportFolder(report, uniqueArchivedName, appConfig.archivePath, "archive");
+    } catch (error) {
+      try {
+        preserved.rollback();
+      } catch (rollbackError) {
+        throw new Error(`${String(error)}\n${String(rollbackError)}`);
       }
+      throw error;
     }
 
-    // Update DB record: transfer from old folder name to new archived folder name. The report
-    // uuid (and therefore its analysis-run mapping) is stable, so only the folder name/path move.
-    const newReportPath = `/reports/archive/${uniqueArchivedName}/index.html`;
-    const reportUuid = getReport(folderName)?.uuid || "";
-    const archivedRuns = getAnalysisRuns(reportUuid);
-    updateReportId(folderName, uniqueArchivedName, newReportPath);
-    invalidateReportSize(folderName);
-
-    // Move each run's analysis (vault) file into archivePath/analysis/, keeping the run-<timestamp> name
-    // so the run-based mapping (and the report's Analysis dropdown) keeps resolving after archival.
-    // The output directory is ephemeral, so it is removed and its DB reference cleared on archive.
-    // The physical move and record rename above already completed, so the archive itself succeeded —
-    // cleanup failures here are logged but must not surface as an archive error to the client.
-    try {
-      const analysisDir = path.join(appConfig.archivePath, "analysis");
-      for (const run of archivedRuns) {
-        if (appConfig.vaultPath) {
-          const oldVaultFile = path.join(
-            appConfig.vaultPath,
-            run.runName + ".md"
-          );
-          if (fs.existsSync(oldVaultFile)) {
-            fs.mkdirSync(analysisDir, { recursive: true });
-            const newVaultFile = path.join(analysisDir, run.runName + ".md");
-            try {
-              fs.renameSync(oldVaultFile, newVaultFile);
-            } catch (moveErr: any) {
-              if (moveErr.code === "EXDEV") {
-                fs.copyFileSync(oldVaultFile, newVaultFile);
-                fs.unlinkSync(oldVaultFile);
-              } else {
-                console.warn("Failed to move vault file:", moveErr);
-              }
-            }
-          }
+    // Preservation is complete. Cleanup cannot undo the archived report.
+    for (const artifact of preserved.artifacts) {
+      if (artifact.kind === "final" && path.resolve(artifact.source) !== path.resolve(artifact.destination)) {
+        try {
+          fs.unlinkSync(artifact.source);
+        } catch (error) {
+          console.warn("Failed to remove the archived note's source copy:", error);
         }
-
+      }
+    }
+    try {
+      for (const run of archivedRuns) {
         // Remove the ephemeral output directory and detach its reference (keep the analysis mapping).
         // Detach the DB reference unconditionally: even if the physical removal fails (e.g. a locked
         // file on Windows), the output dir does not follow the report into the archive, so leaving a
@@ -2241,18 +2281,16 @@ app.post("/api/archive", (req: Request, res: Response): any => {
         clearAnalysisRunDir(reportUuid, run.runName);
       }
 
-      // Trace digests live under the ephemeral currentPath/tmp, so they cannot follow the report
-      // into the archive. Remove their directories and DB rows (same cleanup as a delete).
       purgeReportDigests(reportUuid);
-    } catch (cleanupErr) {
-      console.warn("Post-archive cleanup failed:", cleanupErr);
+    } catch (error) {
+      console.warn("Post-archive cleanup failed:", error);
     }
 
     res.json({ success: true, newName: uniqueArchivedName });
   } catch (error: any) {
     console.error("Archive error:", error);
     res
-      .status(500)
+      .status(error instanceof ArtifactError ? 409 : 500)
       .json({ error: "Failed to archive report: " + error.message });
   }
 });
@@ -2286,13 +2324,24 @@ app.post("/api/delete", (req: Request, res: Response): any => {
       return res.status(404).json({ error: "Report folder not found on disk" });
     }
 
+    const reportUuid = getReport(folderName)?.uuid || "";
+    const runs = getAnalysisRuns(reportUuid);
+    const otherRuns = getAllAnalysisRuns().filter((run) => run.reportId !== reportUuid);
+    const groupedFiles = runs.flatMap((run) => {
+      const grouped = archivedGroupedAnalysisPath(appConfig, run.runName);
+      if (!grouped || !fs.existsSync(grouped)) return [];
+      if (otherRuns.some((other) => other.runName === run.runName))
+        throw new ArtifactError("SHARED_ARTIFACT", `Another report references grouped analysis ${run.runName}.`);
+      return [grouped];
+    });
+    for (const grouped of new Set(groupedFiles)) fs.unlinkSync(grouped);
+
     // Delete the directory and its contents
     fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
 
     // Delete associated analysis (vault) files and ephemeral output directories for every
     // persisted run of this report.
-    const reportUuid = getReport(folderName)?.uuid || "";
-    for (const run of getAnalysisRuns(reportUuid)) {
+    for (const run of runs) {
       const runFile = resolveVaultFile(run.runName);
       if (runFile) {
         try {
@@ -2358,6 +2407,7 @@ app.post("/api/report-metadata", (req: Request, res: Response): any => {
 
 // Rename report endpoint (renames folder on disk + updates DB id/path)
 app.post("/api/report-rename", (req: Request, res: Response): any => {
+  refreshConfigCache();
   const { reportId, newName } = req.body;
   if (!reportId) return res.status(400).json({ error: "reportId is required" });
   if (!newName || typeof newName !== "string")
@@ -2405,16 +2455,13 @@ app.post("/api/report-rename", (req: Request, res: Response): any => {
         .status(409)
         .json({ error: `A report named "${trimmed}" already exists` });
 
-    fs.renameSync(oldFolder, newFolder);
-    const newReportPath = `/reports/current/${trimmed}/index.html`;
-    updateReportId(reportId, trimmed, newReportPath);
-    invalidateReportSize(reportId);
+    const newReportPath = moveReportFolder(existing, trimmed, appConfig.currentPath, "current");
 
     res.json({ success: true, newId: trimmed, newPath: newReportPath });
   } catch (error: any) {
     console.error("Rename error:", error);
     res
-      .status(500)
+      .status(error instanceof ArtifactError ? 409 : 500)
       .json({ error: "Failed to rename report: " + error.message });
   }
 });
@@ -2972,6 +3019,14 @@ const resolveGroupedAnalysisFile = (
   const run = getAnalysisRuns(report.uuid).find(
     (candidate) => candidate.runName === runName
   );
+  if (!run) return null;
+  if (report.reportPath.startsWith("/reports/archive/")) {
+    const archived = archivedGroupedAnalysisPath(appConfig, runName);
+    if (!archived || !fs.existsSync(archived)) return null;
+    if (getAllAnalysisRuns().some((other) => other.runName === runName && other.reportId !== report.uuid))
+      throw new ArtifactError("SHARED_ARTIFACT", "Another report references this grouped analysis.");
+    return fs.statSync(archived).isFile() ? archived : null;
+  }
   if (
     !run?.runDir ||
     !appConfig.currentPath ||
@@ -2979,7 +3034,8 @@ const resolveGroupedAnalysisFile = (
   )
     return null;
   const groupedAnalysisFile = path.join(run.runDir, GROUPED_ANALYSIS_FILENAME);
-  return fs.existsSync(groupedAnalysisFile) ? groupedAnalysisFile : null;
+  assertOwnedPath(appConfig.currentPath, groupedAnalysisFile);
+  return fs.existsSync(groupedAnalysisFile) && fs.statSync(groupedAnalysisFile).isFile() ? groupedAnalysisFile : null;
 };
 
 // Resolve a report's physical folder on disk from its DB record.
@@ -3226,7 +3282,7 @@ app.delete(
       }
 
       // Once the analysis file is gone and no output dir remains, the row has no purpose.
-      if (!run.runDir || !fs.existsSync(run.runDir)) {
+      if ((!run.runDir || !fs.existsSync(run.runDir)) && !resolveGroupedAnalysisFile(reportId, runName)) {
         deleteAnalysisRun(report.uuid, runName);
       }
       return res.json({ success: true });
@@ -3600,15 +3656,16 @@ app.get("/grouped-analysis", (req: Request, res: Response): any => {
     typeof req.query.runName === "string" ? req.query.runName : "";
   if (!reportId || !runName)
     return res.status(400).send("reportId and runName are required");
-  const resolved = resolveGroupedAnalysisFile(reportId, runName);
-  if (!resolved) return res.status(404).send("Grouped analysis file not found");
   try {
+    const resolved = resolveGroupedAnalysisFile(reportId, runName);
+    if (!resolved) return res.status(404).send("Grouped analysis file not found");
     const content = fs.readFileSync(resolved, "utf-8");
     const saveUrl = `/api/analysis-run/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(runName)}`;
     res
       .type("text/html")
       .send(renderVaultPage(GROUPED_ANALYSIS_FILENAME, content, saveUrl));
-  } catch {
+  } catch (error) {
+    console.error("Grouped analysis render error:", error);
     res.status(500).send("Failed to render grouped analysis file");
   }
 });
@@ -3628,10 +3685,10 @@ app.put(
         .json({ error: "reportId and runName are required" });
     if (typeof content !== "string")
       return res.status(400).json({ error: "content is required" });
-    const resolved = resolveGroupedAnalysisFile(reportId, runName);
-    if (!resolved)
-      return res.status(404).json({ error: "Grouped analysis file not found" });
     try {
+      const resolved = resolveGroupedAnalysisFile(reportId, runName);
+      if (!resolved)
+        return res.status(404).json({ error: "Grouped analysis file not found" });
       if (
         req.body.expectedVersion !== undefined &&
         contentVersion(fs.readFileSync(resolved, "utf8")) !==

@@ -220,6 +220,12 @@ test("database upgrade preserves legacy analyses and guards new writes", (contex
   const databasePath = path.join(root, "isolated.db");
   const Database = require("better-sqlite3");
   const database = new Database(databasePath);
+  database.exec(`
+    CREATE TABLE reports (id TEXT PRIMARY KEY, uuid TEXT NOT NULL, dateCreated TEXT NOT NULL,
+      metadata TEXT NOT NULL, reportPath TEXT NOT NULL);
+    INSERT INTO reports VALUES ('current', 'report-uuid', '2026-01-01T00:00:00.000Z', 'keep', '/reports/current/current/index.html');
+    INSERT INTO reports VALUES ('archived', 'archived-uuid', '2026-01-02T00:00:00.000Z', 'keep', '/reports/archive/archived/index.html');
+  `);
   database.exec(
     "CREATE TABLE analysis_runs (id TEXT PRIMARY KEY, reportId TEXT NOT NULL, runDir TEXT NOT NULL, runName TEXT NOT NULL, createdAt TEXT NOT NULL)",
   );
@@ -239,6 +245,12 @@ test("database upgrade preserves legacy analyses and guards new writes", (contex
   const script = `
     const assert = require('node:assert/strict');
     const store = require('./dist/db');
+    for (const report of store.getAllReports()) {
+      assert.equal(report.folderBirthtime, report.dateCreated);
+      assert.equal(report.metadata, 'keep');
+    }
+    assert.equal(store.getReport('current').dateCreated, '2026-01-01T00:00:00.000Z');
+    assert.equal(store.getReport('current').uuid, 'report-uuid');
     assert.equal(store.getAllAnalysisRuns().length, 2);
     assert.throws(() => store.addAnalysisRun({ id: 'new', reportId: 'report-uuid', runDir: '/unused', runName: 'new', createdAt: '' }), /already has/);
     store.addDigest({ id: 'original', reportId: 'report-uuid', traceKey: 'trace', runDir: '/tmp/digests', folder: 'trace', testTitle: 'test', createdAt: 'before' });
@@ -580,4 +592,234 @@ test("API confirmation, failed rerun and shared digest root use isolated synthet
   assert.equal(archiveInfo.runs.length, 1);
   assert.equal(archiveInfo.digests.length, 0);
   assert.equal(archiveInfo.analysisInventory.needsReview, false);
+});
+
+async function lifecycleServer(context) {
+  const root = fs.mkdtempSync(path.join(__dirname, ".artifacts-"));
+  const { fork } = require("node:child_process");
+  const { once } = require("node:events");
+  const databasePath = path.join(root, "lifecycle.db");
+  const child = fork(path.join(__dirname, "artifact-test-server.cjs"), [], {
+    cwd: path.join(__dirname, ".."),
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+    env: {
+      ...process.env,
+      ARTIFACT_TEST_ROOT: root,
+      PLAYWRIGHT_REPORTS_DB_PATH: databasePath,
+    },
+  });
+  let database;
+  context.after(async () => {
+    database?.close();
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const [{ url }] = await once(child, "message");
+  const Database = require("better-sqlite3");
+  database = new Database(databasePath);
+  const request = async (route, body, method = "POST") => {
+    const response = await fetch(url + route, {
+      method: body === undefined ? "GET" : method,
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, data: await response.json() };
+  };
+  const info = async (id = "fixture-report") =>
+    (await request("/api/report-info?reportId=" + encodeURIComponent(id))).data;
+  const report = () => database.prepare("SELECT * FROM reports WHERE uuid = ?").get("fixture-uuid");
+  const generated = await request("/api/failures", {
+    reportPath: "/reports/current/fixture-report/index.html",
+  });
+  assert.equal(generated.status, 200);
+  const run = (await info()).runs[0];
+  const grouped = path.join(run.runDir, "grouped-analysis.md");
+  fs.writeFileSync(grouped, "# Grouped evidence\n\nKeep exact bytes.\n");
+  return { root, url, database, request, info, report, run, grouped };
+}
+
+test("rename and cross-drive archive retain identity and catalog dates through scans", async (context) => {
+  const { root, request, info, report, run, database } = await lifecycleServer(context);
+  const original = report();
+  fs.writeFileSync(path.join(root, "move-birthtime"), "");
+  await request("/api/digest-test", {
+    reportPath: original.reportPath,
+    tracePath: path.join(root, "current", "fixture-report", "data", "first.zip"),
+  });
+  const renamed = await request("/api/report-rename", { reportId: original.id, newName: "renamed report" });
+  assert.equal(renamed.status, 200);
+  assert.notEqual(report().folderBirthtime, original.dateCreated);
+  assert.equal(report().dateCreated, original.dateCreated);
+  const catalog = (await request("/api/reports")).data;
+  assert.equal(catalog.current[0].createdAt, original.dateCreated);
+  assert.equal(catalog.current[0].uuid, original.uuid);
+  assert.equal((await info("renamed report")).runs[0].runName, run.runName);
+  assert.equal((await info("renamed report")).digests.length, 1);
+  const date = original.dateCreated.slice(0, 10);
+  assert.equal((await request(`/api/report-search?rangeStart=${date}&rangeEnd=${date}`)).data.current.length, 1);
+  fs.writeFileSync(path.join(root, "cross-drive"), "");
+  const archived = await request("/api/archive", { reportPath: renamed.data.newPath });
+  assert.equal(archived.status, 200, JSON.stringify(archived.data));
+  await request("/api/reports");
+  assert.equal(report().dateCreated, original.dateCreated);
+  assert.equal((await info(archived.data.newName)).runs[0].runName, run.runName);
+  assert.equal((await request(`/api/report-search?rangeStart=${date}&rangeEnd=${date}`)).data.archive.length, 1);
+  database.prepare("UPDATE reports SET folderBirthtime = ? WHERE uuid = ?").run("2000-01-01T00:00:00.000Z", original.uuid);
+  await request("/api/reports");
+  assert.equal(report(), undefined, "A genuinely mismatched instance must not inherit the UUID");
+});
+
+for (const mode of ["grouped", "final", "archived-final", "neither", "no-vault"]) {
+  test(`archive preserves the selected ${mode} artifact and its lifecycle`, async (context) => {
+    const { root, url, request, info, report, run, grouped } = await lifecycleServer(context);
+    const original = report();
+    const content = fs.readFileSync(grouped, "utf8");
+    if (mode === "neither") fs.unlinkSync(grouped);
+    if (mode === "final" || mode === "archived-final") {
+      const directory = mode === "final" ? path.join(root, "vault") : path.join(root, "archive", "analysis");
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(path.join(directory, run.runName + ".md"), "Final note");
+    }
+    if (mode === "no-vault") await request("/api/config", { vaultPath: "" });
+    const archived = await request("/api/archive", { reportPath: original.reportPath });
+    assert.equal(archived.status, 200, JSON.stringify(archived.data));
+    await request("/api/reports");
+    const current = await info(archived.data.newName);
+    assert.equal(current.runs.length, 1);
+    assert.equal(current.runs[0].runDir, "");
+    assert.equal(fs.existsSync(run.runDir), false);
+    assert.equal(current.analysisInventory.needsReview, false);
+    const final = mode === "final" || mode === "archived-final";
+    const fallback = mode === "grouped" || mode === "no-vault";
+    assert.equal(current.runs[0].analysisFileExists, final);
+    assert.equal(current.runs[0].groupedAnalysisExists, fallback);
+    const preserved = path.join(root, "archive", "analysis", "grouped-analysis", run.runName + ".md");
+    assert.equal(fs.existsSync(preserved), fallback);
+    const agent = (await request("/api/agent/reports/search?scope=archive")).data;
+    assert.deepEqual(agent.reports[0].analysisFiles, final ? [run.runName] : []);
+    assert.equal((await request("/api/agent/vault/list")).data.files.some(file => file.filename === run.runName), final);
+    if (fallback) {
+      assert.equal(fs.readFileSync(preserved, "utf8"), content);
+      assert.equal(current.runs[0].groupedAnalysisFile, preserved);
+      assert.equal((await fetch(url + current.runs[0].groupedAnalysisUrl)).status, 200);
+      const route = `/api/analysis-run/grouped-analysis?reportId=${archived.data.newName}&runName=${run.runName}`;
+      const { contentVersion } = require("../dist/report-artifacts");
+      assert.equal((await request(route, { content: "Edited", expectedVersion: contentVersion(content) }, "PUT")).status, 200);
+      assert.equal((await request(route, { content: "Stale", expectedVersion: contentVersion(content) }, "PUT")).status, 409);
+      assert.equal(fs.readFileSync(preserved, "utf8"), "Edited");
+      await request("/api/analysis-run/analysis-file", { reportId: archived.data.newName, runName: run.runName }, "DELETE");
+      assert.equal((await info(archived.data.newName)).runs.length, 1);
+    }
+    assert.equal((await request("/api/delete", { reportPath: report().reportPath })).status, 200);
+    assert.equal(fs.existsSync(preserved), false);
+  });
+}
+
+for (const failure of ["destination-conflict", "unwritable-directory", "move-db-fail", "cross-drive-db-fail"]) {
+  test(`archive ${failure} preserves the source and mappings`, async (context) => {
+    const { root, request, info, report, run, grouped } = await lifecycleServer(context);
+    const original = report();
+    const directory = path.join(root, "archive", "analysis", "grouped-analysis");
+    const destination = path.join(directory, run.runName + ".md");
+    if (failure === "destination-conflict") {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(destination, "Unrelated existing file");
+    } else if (failure === "unwritable-directory") {
+      fs.writeFileSync(path.join(root, "archive", "analysis"), "Not a directory");
+    } else {
+      fs.writeFileSync(path.join(root, "move-db-fail"), "");
+      if (failure === "cross-drive-db-fail") {
+        fs.writeFileSync(path.join(root, "cross-drive"), "");
+        fs.writeFileSync(path.join(root, "move-birthtime"), "");
+      }
+    }
+    const result = await request("/api/archive", { reportPath: original.reportPath });
+    assert.ok(result.status >= 400, JSON.stringify(result.data));
+    assert.equal(report().id, original.id);
+    assert.equal(report().uuid, original.uuid);
+    assert.equal(report().dateCreated, original.dateCreated);
+    assert.ok(fs.existsSync(grouped));
+    assert.ok(fs.existsSync(path.join(root, "current", original.id, "index.html")));
+    assert.equal((await info()).runs[0].runName, run.runName);
+    await request("/api/reports");
+    assert.equal(report().uuid, original.uuid);
+    if (failure === "destination-conflict")
+      assert.equal(fs.readFileSync(destination, "utf8"), "Unrelated existing file");
+    if (failure.endsWith("db-fail"))
+      assert.equal(fs.existsSync(destination), false);
+  });
+}
+
+test("archive preserves legacy mappings individually and rejects shared or unsafe artifacts", (context) => {
+  const { roots, run } = fixture(context);
+  const { preserveArchiveAnalyses } = require("../dist/report-artifacts");
+  const first = run("final-and-grouped");
+  const second = run("grouped-only", { note: false });
+  const records = [first, second];
+  const before = analysisInventory(roots, records);
+  assert.throws(() => preserveArchiveAnalyses(roots, records, [{ ...second, reportId: "other" }]), /Another report/);
+  const originalCopy = fs.copyFileSync;
+  fs.copyFileSync = (source, destination, flags) => {
+    if (source === path.join(second.runDir, "grouped-analysis.md"))
+      throw Object.assign(new Error("Synthetic file copy failure"), { code: "EPERM" });
+    return originalCopy(source, destination, flags);
+  };
+  try {
+    assert.throws(() => preserveArchiveAnalyses(roots, records, []), /Synthetic file copy failure/);
+    assert.deepEqual(analysisInventory(roots, records), before);
+  } finally {
+    fs.copyFileSync = originalCopy;
+  }
+  const saved = preserveArchiveAnalyses(roots, records, []);
+  assert.equal(saved.artifacts.length, 2);
+  assert.equal(fs.readFileSync(path.join(roots.archivePath, "analysis", first.runName + ".md"), "utf8"), "Saved final-and-grouped");
+  assert.equal(fs.readFileSync(path.join(roots.archivePath, "analysis", "grouped-analysis", second.runName + ".md"), "utf8"), "Grouped grouped-only");
+  assert.ok(fs.existsSync(second.runDir));
+  saved.rollback();
+  assert.deepEqual(analysisInventory(roots, records), before);
+  const outside = path.join(roots.vaultPath, "outside.md");
+  fs.writeFileSync(outside, "Not owned grouped output");
+  fs.unlinkSync(path.join(second.runDir, "grouped-analysis.md"));
+  fs.symlinkSync(outside, path.join(second.runDir, "grouped-analysis.md"));
+  assert.throws(() => preserveArchiveAnalyses(roots, [second], []), /Symbolic links/);
+  assert.equal(fs.readFileSync(outside, "utf8"), "Not owned grouped output");
+});
+
+test("archived grouped inventory versions and duplicate cleanup include preserved files", (context) => {
+  const { roots, run } = fixture(context);
+  const records = [run("older", { archived: true, note: false }), run("newer", { archived: true, note: false })];
+  const directory = path.join(roots.archivePath, "analysis", "grouped-analysis");
+  fs.mkdirSync(directory, { recursive: true });
+  for (const record of records) fs.writeFileSync(path.join(directory, record.runName + ".md"), record.runName);
+  const original = analysisInventory(roots, records);
+  assert.equal(original.duplicated, true);
+  fs.writeFileSync(path.join(directory, "older.md"), "changed");
+  assert.throws(() => removeAnalysisArtifacts(roots, records, original.version, "newer"), /changed/);
+  const current = analysisInventory(roots, records);
+  removeAnalysisArtifacts(roots, records, current.version, "newer");
+  assert.equal(fs.existsSync(path.join(directory, "older.md")), false);
+  assert.equal(fs.readFileSync(path.join(directory, "newer.md"), "utf8"), "newer");
+  fs.writeFileSync(path.join(roots.archivePath, "analysis", "newer.md"), "Final newer");
+  assert.equal(analysisInventory(roots, [records[1]]).needsReview, false);
+});
+
+test("rename failure rolls back while replaced sources reject moves without remapping", async (context) => {
+  const { root, database, request, info, report, grouped } = await lifecycleServer(context);
+  const original = report();
+  fs.writeFileSync(path.join(root, "move-db-fail"), "");
+  const failed = await request("/api/report-rename", { reportId: original.id, newName: "failed rename" });
+  assert.equal(failed.status, 500);
+  await request("/api/reports");
+  assert.equal(report().id, original.id);
+  assert.equal((await info()).runs.length, 1);
+  assert.ok(fs.existsSync(grouped));
+  database.prepare("UPDATE reports SET folderBirthtime = ? WHERE uuid = ?").run("2000-01-01T00:00:00.000Z", original.uuid);
+  assert.equal((await request("/api/report-rename", { reportId: original.id, newName: "replaced" })).status, 409);
+  assert.equal((await request("/api/archive", { reportPath: original.reportPath })).status, 409);
+  assert.equal(report().id, original.id);
+  assert.ok(fs.existsSync(grouped));
 });

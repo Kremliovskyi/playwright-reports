@@ -67,7 +67,7 @@ The export includes the query, chosen project, retained executions' original tit
 
 Click the **Metadata** column to add labels such as `UAT NA` or `Sprint 24`. Metadata survives refreshes, report renames, and archive moves.
 
-The dashboard captures each report directory's creation time and gives that physical report instance a stable internal `uuid`. If a deleted folder name is later reused for a new report, the changed creation time prevents old analysis runs from being attached to the new report.
+The dashboard captures each report directory's creation time and gives that physical report instance a stable internal `uuid`. Renaming a current report through its name field preserves its original displayed date, metadata, analysis links, and digests, including after refresh or page reload. Archiving also preserves the original displayed date and date-filter membership. A separate internal filesystem timestamp follows explicit folder moves; if a deleted folder name is reused for a new report, instance checks prevent old analysis runs from attaching to it.
 
 ## Select multiple reports
 
@@ -80,7 +80,11 @@ Each Current and Archived row has a checkbox. Use **Select All**, **Select None*
 
 Click **Archive** for one report, or select current reports and choose **Actions > Archive selected**. Review the report paths in the confirmation dialog, then confirm **Archive** (or **Archive N Reports** for a bulk selection). Canceling or dismissing the dialog leaves all reports untouched, including any archive-capacity cleanup. After confirmation, the dashboard moves each report into the configured archive directory with a timestamped folder name that avoids collisions.
 
-Mapped vault analysis files move into the archive's `analysis/` directory. Ephemeral analysis output and trace digest directories are removed, while the analysis-file mapping remains available from the archived report's Info dialog.
+Archive preserves a mapped final vault note at `<archivePath>/analysis/<runName>.md`. If no final note exists but grouped analysis does, it preserves that Markdown at `<archivePath>/analysis/grouped-analysis/<runName>.md`, creating the directories as needed. This rule applies to each existing legacy mapping without consolidating it. When neither file exists, the report can still be archived.
+
+Preservation completes before moving the report or deleting output. An unreadable source, destination conflict, or copy failure stops Archive and surfaces an error rather than discarding the only analysis. Ephemeral output and trace digest directories are cleaned up after the report move succeeds.
+
+The archived report's **Info** dialog retains copy/open/edit access under **Grouped analysis** for a grouped fallback. It remains distinct from a final **Analysis file**, is not listed by vault/agent APIs, and is removed when the archived report is deleted.
 
 ### Archive capacity
 

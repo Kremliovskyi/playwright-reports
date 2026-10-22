@@ -1583,12 +1583,14 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Wire up inline "Info" button — opens the Report Info dialog.
+    let pendingRename: Promise<void> | null = null;
     const infoBtn = tr.querySelector(".btn-info-inline") as HTMLButtonElement;
     if (infoBtn) {
-      infoBtn.addEventListener("click", (e) => {
+      infoBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         closeAllOverflowMenus();
         hideAnalysisContextMenu();
+        await pendingRename;
         openReportInfoModal(report.id);
       });
     }
@@ -1731,7 +1733,7 @@ document.addEventListener("DOMContentLoaded", () => {
           originInput.classList.toggle("input-error", !!err);
         });
 
-        const saveOriginName = async () => {
+        const performRename = async () => {
           const newVal = originInput.value.trim();
           const err = validateOrigin(newVal);
           if (err) {
@@ -1742,6 +1744,7 @@ document.addEventListener("DOMContentLoaded", () => {
           if (newVal === originalOriginValue) return;
           try {
             const previousPath = report.path;
+            const previousId = report.id;
             const res = await fetch("/api/report-rename", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1758,6 +1761,13 @@ document.addEventListener("DOMContentLoaded", () => {
             report.id = data.newId;
             report.name = newVal;
             report.path = data.newPath;
+            const analysisRuns = analysisRunsByReport.get(previousId);
+            analysisRunsByReport.delete(previousId);
+            analysisRunsByReport.delete(data.newId);
+            if (analysisRuns) analysisRunsByReport.set(data.newId, analysisRuns);
+            reportSizeCache.delete(previousId);
+            reportSizeCache.delete(data.newId);
+            if (infoBtn) infoBtn.dataset.reportId = data.newId;
             updateCachedRenamedReport(
               previousPath,
               data.newId,
@@ -1792,6 +1802,15 @@ document.addEventListener("DOMContentLoaded", () => {
             originInput.classList.add("input-error");
             originInput.value = originalOriginValue;
           }
+        };
+
+        const saveOriginName = () => {
+          if (pendingRename) return;
+          pendingRename = performRename().finally(() => {
+            pendingRename = null;
+            originInput.disabled = false;
+          });
+          originInput.disabled = true;
         };
 
         originInput.addEventListener("keydown", (e) => {
@@ -1950,6 +1969,7 @@ document.addEventListener("DOMContentLoaded", () => {
           (entry: AnalysisInventoryEntry) => [
             ...(entry.output ? [entry.output.path] : []),
             ...entry.notes.map((note) => note.path),
+            ...(entry.grouped ? [entry.grouped.path] : []),
           ],
         );
         const confirmed = await openConfirm({
@@ -2361,6 +2381,7 @@ document.addEventListener("DOMContentLoaded", () => {
     createdAt: string;
     output: { path: string } | null;
     notes: { path: string }[];
+    grouped?: { path: string } | null;
   }
   interface AnalysisInventory {
     version: string;

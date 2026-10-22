@@ -42,6 +42,7 @@ export interface ReportRecord {
   id: string;
   uuid: string;
   dateCreated: string;
+  folderBirthtime: string;
   metadata: string;
   reportPath: string;
 }
@@ -128,6 +129,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     uuid TEXT NOT NULL DEFAULT '',
     dateCreated TEXT NOT NULL,
+    folderBirthtime TEXT NOT NULL DEFAULT '',
     metadata TEXT NOT NULL DEFAULT '',
     reportPath TEXT NOT NULL DEFAULT ''
   );
@@ -140,6 +142,10 @@ const reportColumns = db.prepare("PRAGMA table_info(reports)").all() as {
 if (!reportColumns.some((c) => c.name === "uuid")) {
   db.exec("ALTER TABLE reports ADD COLUMN uuid TEXT NOT NULL DEFAULT ''");
 }
+if (!reportColumns.some((c) => c.name === "folderBirthtime")) {
+  db.exec("ALTER TABLE reports ADD COLUMN folderBirthtime TEXT NOT NULL DEFAULT ''");
+}
+db.exec("UPDATE reports SET folderBirthtime = dateCreated WHERE folderBirthtime = ''");
 for (const row of db
   .prepare("SELECT id FROM reports WHERE uuid = ''")
   .all() as { id: string }[]) {
@@ -362,18 +368,22 @@ export const deletePreset = (id: string): void => {
 };
 
 // --- Report Operations ---
-export const upsertReport = (report: ReportRecord): void => {
+export const upsertReport = (
+  report: Omit<ReportRecord, "folderBirthtime"> & { folderBirthtime?: string },
+): void => {
   db.prepare(
-    `INSERT INTO reports (id, uuid, dateCreated, metadata, reportPath)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO reports (id, uuid, dateCreated, folderBirthtime, metadata, reportPath)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        uuid = excluded.uuid,
        dateCreated = excluded.dateCreated,
+       folderBirthtime = excluded.folderBirthtime,
        reportPath = excluded.reportPath`,
   ).run(
     report.id,
     report.uuid,
     report.dateCreated,
+    report.folderBirthtime ?? report.dateCreated,
     report.metadata,
     report.reportPath,
   );
@@ -407,12 +417,15 @@ export const updateReportId = (
   oldId: string,
   newId: string,
   newPath: string,
+  folderBirthtime: string,
 ): void => {
-  db.prepare("UPDATE reports SET id = ?, reportPath = ? WHERE id = ?").run(
+  const result = db.prepare("UPDATE reports SET id = ?, reportPath = ?, folderBirthtime = ? WHERE id = ?").run(
     newId,
     newPath,
+    folderBirthtime,
     oldId,
   );
+  if (result.changes !== 1) throw new Error("Report identity changed during the move.");
 };
 
 // Drop analysis_runs whose reportId no longer maps to any report uuid (orphans from recycled names).

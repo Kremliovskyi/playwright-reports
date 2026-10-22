@@ -375,7 +375,8 @@ test("source reads reject traversal, symlinks and recycled folder instances", as
   fs.mkdirSync(directory);
   fs.writeFileSync(path.join(directory, "index.html"), reportHtml());
   const record = {
-    dateCreated: fs.statSync(directory).birthtime.toISOString()
+    dateCreated: fs.statSync(directory).birthtime.toISOString(),
+    folderBirthtime: fs.statSync(directory).birthtime.toISOString()
   };
   assert.ok(
     (await readTrendSource(root, "report", record)).includes(
@@ -387,7 +388,7 @@ test("source reads reject traversal, symlinks and recycled folder instances", as
   await assert.rejects(readTrendSource(root, "link", record), /Symbolic links/);
   await assert.rejects(
     readTrendSource(root, "report", {
-      dateCreated: "2000-01-01T00:00:00.000Z"
+      folderBirthtime: "2000-01-01T00:00:00.000Z"
     }),
     /replaced/
   );
@@ -649,6 +650,8 @@ test("on-demand API is read-only and live links survive moves but reject replace
   );
   assert.equal(fs.existsSync(path.join(root, "commands.log")), false);
   assert.equal((await navigate()).status, 302);
+  const originalRecord = database.prepare("SELECT * FROM reports WHERE uuid = ?").get(report.uuid);
+  fs.writeFileSync(path.join(root, "move-birthtime"), "");
   assert.equal(
     (
       await post("/api/report-rename", {
@@ -659,10 +662,15 @@ test("on-demand API is read-only and live links survive moves but reject replace
     200
   );
   const renamed = await navigate();
+  await fetch(url + "/api/reports");
+  const renamedRecord = database.prepare("SELECT * FROM reports WHERE uuid = ?").get(report.uuid);
+  assert.equal(renamedRecord.dateCreated, originalRecord.dateCreated);
+  assert.notEqual(renamedRecord.folderBirthtime, originalRecord.folderBirthtime);
   assert.match(
     renamed.headers.get("location"),
     /renamed%20report\/index.html#\?testId=daily-test-11&run=0$/
   );
+  fs.writeFileSync(path.join(root, "cross-drive"), "");
   assert.equal(
     (
       await post("/api/archive", {
@@ -673,6 +681,8 @@ test("on-demand API is read-only and live links survive moves but reject replace
   );
   const archived = await navigate();
   assert.equal(archived.status, 302);
+  await fetch(url + "/api/reports");
+  assert.equal(database.prepare("SELECT dateCreated FROM reports WHERE uuid = ?").get(report.uuid).dateCreated, originalRecord.dateCreated);
   assert.match(archived.headers.get("location"), /^\/reports\/archive\//);
   const archivedAttempt = await (await resolve()).json();
   assert.match(archivedAttempt.reportUrl, /^\/reports\/archive\//);

@@ -36,6 +36,40 @@ async (page) => {
     "Healthy reports must not show a duplicate warning",
   );
   await page.locator("#close-report-info-modal-footer-btn").click();
+  const originalDate = await row("fixture-report").locator(".col-date").innerText();
+  let releaseRename;
+  const renameGate = new Promise((resolve) => { releaseRename = resolve; });
+  await page.route("**/api/report-rename", async (route) => {
+    await renameGate;
+    await route.continue();
+  });
+  await row("fixture-report").locator(".origin-input").fill("renamed fixture");
+  const renameResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/report-rename"),
+  );
+  await row("fixture-report").getByRole("button", { name: "Report Info" }).click();
+  verify(!(await page.locator("#report-info-modal").isVisible()), "Info must wait for the pending rename");
+  releaseRename();
+  verify((await renameResponse).ok(), "Inline rename failed");
+  await page.locator("#report-info-runs .report-info-run").waitFor();
+  verify((await info("renamed fixture")).runs[0].runName === original.runs[0].runName, "Rename detached analysis");
+  verify(
+    (await row("renamed fixture").getByRole("button", { name: "Report Info" }).getAttribute("data-report-id")) === "renamed fixture",
+    "Info identity must follow rename",
+  );
+  await page.unroute("**/api/report-rename");
+  await page.reload();
+  await row("renamed fixture").waitFor();
+  verify((await row("renamed fixture").locator(".col-date").innerText()) === originalDate, "Rename changed the displayed date");
+  await row("renamed fixture").getByRole("button", { name: "Report Info" }).click();
+  await page.locator("#report-info-runs .report-info-run").waitFor();
+  verify((await page.locator("#report-info-runs").innerText()).includes(original.runs[0].runName), "Reload lost analysis links");
+  await page.locator("#close-report-info-modal-footer-btn").click();
+  const restoreName = page.waitForResponse((response) => response.url().endsWith("/api/report-rename"));
+  await row("renamed fixture").locator(".origin-input").fill("fixture-report");
+  await row("renamed fixture").locator(".origin-input").press("Enter");
+  verify((await restoreName).ok(), "Restoring fixture name failed");
+  await row("fixture-report").waitFor();
   await openRerun();
   verify(
     await dialog
@@ -130,11 +164,37 @@ async (page) => {
     "Duplicate cleanup removed the selected analysis",
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator("#close-report-info-modal-footer-btn").click();
+  await row("fixture-report").getByRole("button", { name: "Archive Report" }).click();
+  const archiveResponse = page.waitForResponse((response) => response.url().endsWith("/api/archive"));
+  await dialog.getByRole("button", { name: "Archive", exact: true }).click();
+  const archiveResult = await archiveResponse;
+  verify(archiveResult.ok(), "Grouped-only archive failed");
+  const { newName } = await archiveResult.json();
+  const archived = page.locator(`#archive-tbody .report-row[data-path="/reports/archive/${newName}/index.html"]`);
+  await archived.getByRole("button", { name: "Report Info" }).click();
+  await page.locator("#report-info-runs .report-info-run").waitFor();
+  const archivedInfo = await info(newName);
+  verify(archivedInfo.runs[0].groupedAnalysisExists && !archivedInfo.runs[0].analysisFileExists, "Grouped fallback must remain distinct from a final note");
+  const groupedRow = page.locator("#report-info-runs .report-info-path-row").filter({ hasText: "Grouped analysis" });
+  verify((await groupedRow.locator("[data-action=copy]").getAttribute("data-path")) === archivedInfo.runs[0].groupedAnalysisFile, "Copy must target the preserved grouped file");
+  const [editor] = await Promise.all([
+    page.waitForEvent("popup"),
+    groupedRow.getByTitle("Open", { exact: true }).click(),
+  ]);
+  await editor.getByRole("button", { name: "Edit", exact: true }).click();
+  await editor.locator("textarea").fill("# Edited archived grouped analysis");
+  const saved = editor.waitForResponse((response) => response.request().method() === "PUT");
+  await editor.getByRole("button", { name: "Save", exact: true }).click();
+  verify((await saved).ok(), "Archived grouped edit failed");
+  await editor.close();
   return {
     singleAnalysisPreserved: true,
     cancellationPreservedFiles: true,
     confirmedRerun: true,
     duplicateCleanup: true,
     mobileDialogFits: true,
+    renameSurvivesReload: true,
+    groupedArchiveEditable: true,
   };
-};
+}

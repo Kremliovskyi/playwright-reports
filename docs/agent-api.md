@@ -18,6 +18,11 @@ not scan disk or refresh the index.
 
 The array shape is unchanged. Reconciled reports have at most one retained analysis; legacy duplicates stay accessible until their removal is explicitly confirmed in **Report Info**. Upgrade does not remove single existing analyses or change their links.
 
+`analysisFiles` and vault endpoints expose final notes only. A grouped-only archive
+is retained separately under `analysis/grouped-analysis/` and is accessible through
+the dashboard's Info dialog, not these final-note APIs. Report creation dates remain
+the original catalog dates across rename/archive; filesystem identity tracking is separate.
+
 ### `GET /api/agent/reports/prepare?reportRef=...`
 
 Resolves a selected report descriptor into local analysis-ready values such as the report root and `data/` directory.

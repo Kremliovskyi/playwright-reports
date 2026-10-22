@@ -64,6 +64,7 @@ if (process.env.ARTIFACT_TEST_SEED === "browser") {
       const output = path.join(config.currentPath, "tmp", name);
       fs.mkdirSync(output, { recursive: true });
       fs.writeFileSync(path.join(output, "index.json"), "{}");
+      fs.writeFileSync(path.join(output, "grouped-analysis.md"), `Grouped ${name}`);
       fs.writeFileSync(
         path.join(config.vaultPath, name + ".md"),
         `Preserve ${name}`,
@@ -227,6 +228,7 @@ require("node:child_process").spawn = (_executable, args) => {
           path.join(runDir, "index.json"),
           JSON.stringify(manifest),
         );
+        fs.writeFileSync(path.join(runDir, "grouped-analysis.md"), "# Synthetic grouped analysis");
       } else if (command === "digest") {
         const folder = "same-test-title__retry0";
         fs.mkdirSync(path.join(runDir, folder));
@@ -257,6 +259,57 @@ require("node:child_process").spawn = (_executable, args) => {
     process.send?.({ event: "command-started" });
   } else setImmediate(complete);
   return child;
+};
+const movedBirthtimes = new Map();
+const originalStat = fs.statSync;
+const originalAsyncStat = fs.promises.stat;
+const originalRename = fs.renameSync;
+const originalCopy = fs.cpSync;
+const moved = (source, destination) => {
+  if (
+    fs.existsSync(path.join(root, "move-birthtime")) &&
+    path.dirname(source) === config.currentPath
+  )
+    movedBirthtimes.set(
+      destination,
+      new Date(originalStat(destination).birthtimeMs + 86400000),
+    );
+  movedBirthtimes.delete(source);
+};
+fs.statSync = (filename, ...args) => {
+  const stat = originalStat(filename, ...args);
+  const birthtime = movedBirthtimes.get(filename);
+  if (birthtime) Object.assign(stat, { birthtime, birthtimeMs: +birthtime });
+  return stat;
+};
+fs.promises.stat = async (filename, ...args) => {
+  const stat = await originalAsyncStat(filename, ...args);
+  const birthtime = movedBirthtimes.get(filename);
+  if (birthtime) Object.assign(stat, { birthtime, birthtimeMs: +birthtime });
+  return stat;
+};
+fs.renameSync = (source, destination) => {
+  if (
+    fs.existsSync(path.join(root, "cross-drive")) &&
+    path.dirname(source) === config.currentPath &&
+    path.dirname(destination) === config.archivePath
+  )
+    throw Object.assign(new Error("Synthetic cross-drive move"), { code: "EXDEV" });
+  originalRename(source, destination);
+  moved(source, destination);
+};
+fs.cpSync = (source, destination, options) => {
+  originalCopy(source, destination, options);
+  moved(source, destination);
+};
+const originalUpdateReportId = store.updateReportId;
+store.updateReportId = (...args) => {
+  const failure = path.join(root, "move-db-fail");
+  if (fs.existsSync(failure)) {
+    fs.unlinkSync(failure);
+    throw new Error("Synthetic move persistence failure");
+  }
+  return originalUpdateReportId(...args);
 };
 const { app } = require("../dist/server");
 const server = app.listen(

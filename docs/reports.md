@@ -4,6 +4,15 @@
 
 The dashboard scans the configured current and archive directories for Playwright HTML reports. Report metadata, creation dates, and stable per-report identities are persisted in SQLite.
 
+If a report cannot be read or is still being written, Refresh shows a warning
+and preserves its indexed metadata and analysis. Only confirmed missing folders
+are pruned. Current and Archive must not contain reports with the same folder
+name: conflicts retain the indexed report and show a warning; rename one folder
+outside the dashboard, then refresh. No automatic rename or migration occurs.
+
+Mutations use the selected report's identity. If another process replaced it,
+the action is rejected; refresh and review the replacement before trying again.
+
 ## Open and inspect reports
 
 Click a report row to open the Playwright HTML report. Use the always-available **Info** action to see its cached size, analysis runs, mapped Markdown analysis files, and saved trace digests.

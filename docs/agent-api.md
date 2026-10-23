@@ -10,11 +10,14 @@ The dashboard exposes a local-first API for discovering reports and resolving th
 
 Searches the persisted report index and returns descriptors with an opaque `reportRef` and a stable per-instance `uuid`. References are path-based and may change after a rename/archive; UUIDs survive those moves. Each descriptor also contains `analysisFiles`, an array of available `run-<timestamp>` vault note names.
 
-Parameters: `query` (metadata/date tokens), `scope=current|archive`, `rangeStart`,
+Parameters: `query` (case-insensitive metadata tokens, all required), `scope=current|archive`, `rangeStart`,
 `rangeEnd`, `selectedDates` (comma-separated dates), and `limit`. Dates use UTC
 catalog creation dates, not necessarily execution dates. Omit `limit` for
 history searches: `totalCount` counts returned descriptors only. Search does
 not scan disk or refresh the index.
+
+Dates are filtered with `rangeStart`, `rangeEnd` and `selectedDates`, not by
+including a date in `query`. Unknown `/api` endpoints return a JSON HTTP 404.
 
 The array shape is unchanged. Reconciled reports have at most one retained analysis; legacy duplicates stay accessible until their removal is explicitly confirmed in **Report Info**. Upgrade does not remove single existing analyses or change their links.
 

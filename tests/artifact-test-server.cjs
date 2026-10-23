@@ -262,6 +262,15 @@ require("node:child_process").spawn = (_executable, args) => {
 };
 const movedBirthtimes = new Map();
 const originalStat = fs.statSync;
+const originalReadFile = fs.readFileSync;
+fs.readFileSync = (filename, ...args) => {
+  if (
+    String(filename) === path.join(reportRoot, "index.html") &&
+    fs.existsSync(path.join(root, "scan-read-fail"))
+  )
+    throw Object.assign(new Error("Synthetic report read failure"), { code: "EACCES" });
+  return originalReadFile(filename, ...args);
+};
 const originalAsyncStat = fs.promises.stat;
 const originalRename = fs.renameSync;
 const originalCopy = fs.cpSync;
@@ -278,7 +287,9 @@ const moved = (source, destination) => {
 };
 fs.statSync = (filename, ...args) => {
   const stat = originalStat(filename, ...args);
-  const birthtime = movedBirthtimes.get(filename);
+  const birthtime = String(filename) === reportRoot && fs.existsSync(path.join(root, "replaced-report"))
+    ? new Date(stat.birthtimeMs + 86400000)
+    : movedBirthtimes.get(filename);
   if (birthtime) Object.assign(stat, { birthtime, birthtimeMs: +birthtime });
   return stat;
 };

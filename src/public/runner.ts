@@ -1,4 +1,5 @@
-declare const Terminal: any;
+declare const Terminal: typeof import("@xterm/xterm").Terminal;
+declare const FitAddon: typeof import("@xterm/addon-fit");
 
 const normalizeRunnerTitles = (titles: string[]): string[] =>
   [...new Set(titles.flatMap((title) => title.split(/\r\n?|\n/))
@@ -232,7 +233,8 @@ document.addEventListener("DOMContentLoaded", () => {
   let isRunning = false;
   let grepTitles: string[] = [];
 
-  let saveTimeout: any = null;
+  let saveTimeout: ReturnType<typeof setTimeout> | undefined;
+  const saveStatus = document.getElementById("runner-save-status") as HTMLElement;
 
   // BrowserStack credentials are loaded from Preferences.
   let bsUsername = "";
@@ -340,6 +342,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const res = await fetch("/api/config");
       const config = await res.json();
+      if (!res.ok) throw new Error(config.error || "Failed to load runner options");
 
       if (config.runnerOptions) {
         optHeaded.checked = config.runnerOptions.headed || false;
@@ -369,6 +372,8 @@ document.addEventListener("DOMContentLoaded", () => {
       bsAccessKey = config.browserstackAccessKey || "";
     } catch (e) {
       console.error("Failed to load options from backend:", e);
+      saveStatus.textContent = e instanceof Error ? e.message : String(e);
+      throw e;
     }
   };
 
@@ -393,13 +398,11 @@ document.addEventListener("DOMContentLoaded", () => {
       };
 
       try {
-        await fetch("/api/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ runnerOptions, selectedProjects }),
-        });
+        await Api.save("/api/config", { runnerOptions, selectedProjects });
+        saveStatus.textContent = "";
       } catch (e) {
         console.error("Failed to save options to backend:", e);
+        saveStatus.textContent = `Options were not saved: ${e instanceof Error ? e.message : String(e)}. Change an option to retry.`;
       }
     }, 500); // 500ms debounce
   };
@@ -872,7 +875,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fontFamily: "'Courier New', Courier, monospace",
     theme: { background: "#000000", foreground: "#ffffff" },
   });
-  const fitAddon = new (window as any).FitAddon.FitAddon();
+  const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   const terminalContainer = document.getElementById("terminal") as HTMLElement;
   term.open(terminalContainer);

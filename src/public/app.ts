@@ -1,34 +1,10 @@
-interface Report {
-  id: string;
-  uuid: string;
-  path: string;
-  name: string;
-  createdAt: string;
-  metadata: string;
-}
-
-interface ReportsResponse {
-  current: Report[];
-  archive: Report[];
-  configStatus: {
-    hasCurrent: boolean;
-    hasArchive: boolean;
-    hasProject?: boolean;
-  };
-}
-
-interface SearchFilters {
-  query: string;
-  rangeStart: string;
-  rangeEnd: string;
-}
-
-interface SearchState {
-  isOpen: boolean;
-  draft: SearchFilters;
-  applied: SearchFilters | null;
-}
-
+type AnalysisInventoryEntry = ReportInfoPanel.AnalysisInventoryEntry;
+type DashboardReport = DashboardModel.Report;
+type ReportsResponse = DashboardModel.ReportsResponse;
+type SearchFilters = DashboardModel.SearchFilters;
+type SearchState = DashboardModel.SearchState;
+const { createEmptySearchFilters, normalizeSearchFilters, hasSearchFilters, buildSearchUrl } = DashboardModel;
+const { normalizeIndent, computeDiff } = AriaDiff;
 type SectionKey = "current" | "archive";
 
 interface DeleteRequest {
@@ -48,89 +24,6 @@ interface TableContext {
   bulkMenu: HTMLElement;
   bulkMenuTrigger: HTMLButtonElement;
   bulkMenuPanel: HTMLElement;
-}
-
-// Simple Diffing Logic
-interface DiffLine {
-  type: "added" | "removed" | "unchanged";
-  text: string;
-}
-
-function normalizeIndent(str: string): string {
-  const normalized = str.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const lines = normalized.split("\n");
-  const indents = lines
-    .filter((l) => l.length > 0 && l.trimStart().length < l.length)
-    .map((l) => l.length - l.trimStart().length);
-  const minIndent = indents.length > 0 ? Math.min(...indents) : 0;
-  if (minIndent === 0 || minIndent === 2) return normalized;
-  return lines
-    .map((l) => {
-      if (l.length === 0) return l;
-      const spaces = l.length - l.trimStart().length;
-      const level = Math.floor(spaces / minIndent);
-      return " ".repeat(level * 2) + l.trimStart();
-    })
-    .join("\n");
-}
-
-function computeDiff(oldStr: string, newStr: string): DiffLine[] {
-  const oldLines = oldStr
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n");
-  const newLines = newStr
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n")
-    .split("\n");
-
-  const prefix = "- /children: deep-equal";
-  const cleanOldLines = oldLines[0] === prefix ? oldLines.slice(1) : oldLines;
-  const cleanNewLines = newLines[0] === prefix ? newLines.slice(1) : newLines;
-
-  // A basic Longest Common Subsequence (LCS) algorithm for diffing
-  const m = cleanOldLines.length;
-  const n = cleanNewLines.length;
-  const dp: number[][] = Array.from({ length: m + 1 }, () =>
-    Array(n + 1).fill(0),
-  );
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (cleanOldLines[i - 1] === cleanNewLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-  }
-
-  const diff: DiffLine[] = [];
-  let i = m,
-    j = n;
-  while (i > 0 && j > 0) {
-    if (cleanOldLines[i - 1] === cleanNewLines[j - 1]) {
-      diff.unshift({ type: "unchanged", text: cleanOldLines[i - 1] });
-      i--;
-      j--;
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      diff.unshift({ type: "removed", text: cleanOldLines[i - 1] });
-      i--;
-    } else {
-      diff.unshift({ type: "added", text: cleanNewLines[j - 1] });
-      j--;
-    }
-  }
-  while (i > 0) {
-    diff.unshift({ type: "removed", text: cleanOldLines[i - 1] });
-    i--;
-  }
-  while (j > 0) {
-    diff.unshift({ type: "added", text: cleanNewLines[j - 1] });
-    j--;
-  }
-
-  return diff;
 }
 
 // Maximum number of reports allowed in the archive at once.
@@ -190,40 +83,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const settingsBtn = document.getElementById(
     "settings-btn",
   ) as HTMLButtonElement;
-  const settingsModal = document.getElementById(
-    "settings-modal",
-  ) as HTMLElement;
-  const closeModalBtn = document.getElementById(
-    "close-modal-btn",
-  ) as HTMLButtonElement;
-  const cancelModalBtn = document.getElementById(
-    "cancel-modal-btn",
-  ) as HTMLButtonElement;
-  const saveModalBtn = document.getElementById(
-    "save-modal-btn",
-  ) as HTMLButtonElement;
-
-  const currentPathInput = document.getElementById(
-    "current-path-input",
-  ) as HTMLInputElement;
-  const archivePathInput = document.getElementById(
-    "archive-path-input",
-  ) as HTMLInputElement;
-  const projectPathInput = document.getElementById(
-    "project-path-input",
-  ) as HTMLInputElement;
-  const vaultPathInput = document.getElementById(
-    "vault-path-input",
-  ) as HTMLInputElement;
-  const browserstackUsernameInput = document.getElementById(
-    "browserstack-username-input",
-  ) as HTMLInputElement;
-  const browserstackKeyInput = document.getElementById(
-    "browserstack-key-input",
-  ) as HTMLInputElement;
-  const copilotTokenInput = document.getElementById(
-    "copilot-token-input",
-  ) as HTMLInputElement;
   const copilotSmallModelField = document.getElementById(
     "copilot-small-model-field",
   ) as HTMLButtonElement;
@@ -236,8 +95,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const copilotBigModelValue = document.getElementById(
     "copilot-big-model-value",
   ) as HTMLElement;
-  const modalError = document.getElementById("modal-error") as HTMLElement;
-
   const setCopilotModelFieldValue = (role: "small" | "big", model: string) => {
     const field =
       role === "small" ? copilotSmallModelField : copilotBigModelField;
@@ -246,25 +103,6 @@ document.addEventListener("DOMContentLoaded", () => {
     value.textContent = model || "Select a model";
     field.classList.toggle("is-missing", !model);
   };
-
-  // Tab switching in preferences modal
-  const modalTabs = settingsModal.querySelectorAll(
-    ".modal-tab",
-  ) as NodeListOf<HTMLButtonElement>;
-  const modalTabContents = settingsModal.querySelectorAll(
-    ".modal-tab-content",
-  ) as NodeListOf<HTMLElement>;
-  modalTabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const target = tab.dataset.tab;
-      modalTabs.forEach((t) => t.classList.remove("active"));
-      modalTabContents.forEach((c) => c.classList.remove("active"));
-      tab.classList.add("active");
-      settingsModal
-        .querySelector(`.modal-tab-content[data-tab-content="${target}"]`)
-        ?.classList.add("active");
-    });
-  });
 
   const deleteModal = document.getElementById("delete-modal") as HTMLElement;
   const deleteModalTitle = document.getElementById(
@@ -379,49 +217,7 @@ document.addEventListener("DOMContentLoaded", () => {
   ) as HTMLAnchorElement;
   const activeFailureAnalyses = new Set<string>();
 
-  const reportInfoModal = document.getElementById(
-    "report-info-modal",
-  ) as HTMLElement;
-  const closeReportInfoModalBtn = document.getElementById(
-    "close-report-info-modal-btn",
-  ) as HTMLButtonElement;
-  const closeReportInfoModalFooterBtn = document.getElementById(
-    "close-report-info-modal-footer-btn",
-  ) as HTMLButtonElement;
-  const reportInfoName = document.getElementById(
-    "report-info-name",
-  ) as HTMLElement;
-  const reportInfoSize = document.getElementById(
-    "report-info-size",
-  ) as HTMLElement;
-  const reportInfoRuns = document.getElementById(
-    "report-info-runs",
-  ) as HTMLElement;
-  const reportInfoDigests = document.getElementById(
-    "report-info-digests",
-  ) as HTMLElement;
-
-  const confirmDeleteModal = document.getElementById(
-    "confirm-delete-modal",
-  ) as HTMLElement;
-  const closeConfirmDeleteModalBtn = document.getElementById(
-    "close-confirm-delete-modal-btn",
-  ) as HTMLButtonElement;
-  const confirmDeleteTitle = document.getElementById(
-    "confirm-delete-title",
-  ) as HTMLElement;
-  const confirmDeleteMessage = document.getElementById(
-    "confirm-delete-message",
-  ) as HTMLElement;
-  const confirmDeletePath = document.getElementById(
-    "confirm-delete-path",
-  ) as HTMLElement;
-  const confirmDeleteCancelBtn = document.getElementById(
-    "confirm-delete-cancel-btn",
-  ) as HTMLButtonElement;
-  const confirmDeleteConfirmBtn = document.getElementById(
-    "confirm-delete-confirm-btn",
-  ) as HTMLButtonElement;
+  const openConfirm = DashboardConfirm.create();
 
   const errorModal = document.getElementById("error-modal") as HTMLElement;
   const errorModalTitle = document.getElementById(
@@ -517,7 +313,8 @@ document.addEventListener("DOMContentLoaded", () => {
     archive: null,
   };
 
-  let deleteRequest: DeleteRequest | null = null;
+  let deleteRequest: (DeleteRequest & { targets: DashboardModel.ReportTarget[] }) | null = null;
+  const reportTargets = new DashboardModel.ReportTargets();
   let activeBulkTarget: SectionKey | null = null;
   let analysisRunsByReport: Map<
     string,
@@ -895,18 +692,6 @@ document.addEventListener("DOMContentLoaded", () => {
     loading.classList.toggle("hidden", !showLoading);
   };
 
-  const createEmptySearchFilters = (): SearchFilters => ({
-    query: "",
-    rangeStart: "",
-    rangeEnd: "",
-  });
-
-  const normalizeSearchFilters = (filters: SearchFilters): SearchFilters => ({
-    query: filters.query.trim(),
-    rangeStart: filters.rangeStart,
-    rangeEnd: filters.rangeEnd,
-  });
-
   const readSearchInputs = (): SearchFilters =>
     normalizeSearchFilters({
       query: searchInput.value,
@@ -927,10 +712,6 @@ document.addEventListener("DOMContentLoaded", () => {
       filters.rangeEnd || (!searchDatesEdited ? bounds.rangeEnd : "");
     searchRangeStartInput.disabled = searchRangeEndInput.disabled =
       !bounds.rangeStart;
-  };
-
-  const hasSearchFilters = (filters: SearchFilters) => {
-    return Boolean(filters.query || filters.rangeStart || filters.rangeEnd);
   };
 
   const setRefreshDisabled = (disabled: boolean) => {
@@ -957,17 +738,6 @@ document.addEventListener("DOMContentLoaded", () => {
     setRefreshDisabled(activeSearchState.isOpen);
   };
 
-  const buildSearchUrl = (filters: SearchFilters) => {
-    const params = new URLSearchParams();
-    if (filters.query) params.set("query", filters.query);
-    if (filters.rangeStart) params.set("rangeStart", filters.rangeStart);
-    if (filters.rangeEnd) params.set("rangeEnd", filters.rangeEnd);
-    const queryString = params.toString();
-    return queryString
-      ? `/api/report-search?${queryString}`
-      : "/api/report-search";
-  };
-
   const setDraftFilters = (filters: SearchFilters) => {
     activeSearchState.draft = normalizeSearchFilters(filters);
     syncSearchInputs(activeSearchState.draft);
@@ -983,12 +753,13 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   const requestReports = async (url: string): Promise<ReportsResponse> => {
-    const response = await fetch(url);
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(data.error || "Failed to load reports");
+    const data = await Api.json<ReportsResponse>(url);
+    if (data.warnings) {
+      const warning = document.getElementById("report-warnings")!;
+      warning.textContent = data.warnings.map(item => `${item.message} (${item.path})`).join("\n");
+      warning.classList.toggle("hidden", data.warnings.length === 0);
     }
-    return data as ReportsResponse;
+    return data;
   };
 
   const updateCachedReportMetadata = (reportId: string, metadata: string) => {
@@ -1240,15 +1011,15 @@ document.addEventListener("DOMContentLoaded", () => {
   const getTableLabel = (target: SectionKey) =>
     target === "current" ? "current" : "archived";
 
-  const performDeleteRequests = async (reportPaths: string[]) => {
+  const performDeleteRequests = async (targets: DashboardModel.ReportTarget[]) => {
     const failures: string[] = [];
 
-    for (const reportPath of reportPaths) {
+    for (const target of targets) {
       try {
         const response = await fetch("/api/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reportPath }),
+          body: JSON.stringify(target),
         });
 
         const data = await response.json();
@@ -1261,20 +1032,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     return {
-      successCount: reportPaths.length - failures.length,
+      successCount: targets.length - failures.length,
       failures,
     };
   };
 
-  const performArchiveRequests = async (reportPaths: string[]) => {
+  const performArchiveRequests = async (targets: DashboardModel.ReportTarget[]) => {
     const failures: string[] = [];
 
-    for (const reportPath of reportPaths) {
+    for (const target of targets) {
       try {
         const response = await fetch("/api/archive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reportPath }),
+          body: JSON.stringify(target),
         });
 
         const data = await response.json();
@@ -1287,7 +1058,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     return {
-      successCount: reportPaths.length - failures.length,
+      successCount: targets.length - failures.length,
       failures,
     };
   };
@@ -1321,7 +1092,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const runArchivePruneDialog = (
     deleteCount: number,
     totalArchived: number,
-    oldestPaths: string[],
+    oldestPaths: DashboardModel.ReportTarget[],
   ): Promise<boolean> => {
     return new Promise((resolve) => {
       archiveLimitModalTitle.textContent = "Archive Limit Reached";
@@ -1396,7 +1167,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     // Fetch a fresh archive count at click time.
-    let archive: Report[];
+    let archive: DashboardReport[];
     try {
       const data = await requestReports("/api/reports");
       archive = data.archive || [];
@@ -1416,13 +1187,13 @@ document.addEventListener("DOMContentLoaded", () => {
     // Server returns the archive newest-first, so the oldest are at the end.
     const oldestPaths = archive
       .slice(archivedCount - deleteCount)
-      .map((report) => report.path);
+      .map((report) => ({ reportPath: report.path, reportUuid: report.uuid }));
 
     return await runArchivePruneDialog(deleteCount, archivedCount, oldestPaths);
   };
 
   const openDeleteModal = (request: DeleteRequest) => {
-    deleteRequest = request;
+    deleteRequest = { ...request, targets: request.reportPaths.map(value => reportTargets.get(value)) };
     deleteModalTitle.textContent = request.title;
     deleteModalMessage.textContent = request.message;
     confirmDeleteBtn.textContent = request.confirmLabel;
@@ -1431,7 +1202,8 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   // Create highly interactive report row
-  const createReportRow = (report: Report, target: SectionKey) => {
+  const createReportRow = (report: DashboardReport, target: SectionKey) => {
+    reportTargets.remember(report);
     const tr = document.createElement("tr");
     tr.className = "report-row";
     tr.dataset.path = report.path; // Store path for table-level extraction
@@ -1748,7 +1520,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const res = await fetch("/api/report-rename", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ reportId: report.id, newName: newVal }),
+              body: JSON.stringify({ reportId: report.id, reportUuid: report.uuid, newName: newVal }),
             });
             const data = await res.json();
             if (!res.ok) {
@@ -1761,6 +1533,7 @@ document.addEventListener("DOMContentLoaded", () => {
             report.id = data.newId;
             report.name = newVal;
             report.path = data.newPath;
+            reportTargets.remember(report);
             const analysisRuns = analysisRunsByReport.get(previousId);
             analysisRunsByReport.delete(previousId);
             analysisRunsByReport.delete(data.newId);
@@ -1842,17 +1615,19 @@ document.addEventListener("DOMContentLoaded", () => {
           const res = await fetch("/api/report-metadata", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reportId: report.id, metadata: newVal }),
+            body: JSON.stringify({ reportId: report.id, reportUuid: report.uuid, metadata: newVal }),
           });
           if (!res.ok) {
             const d = await res.json();
             console.error("Failed to save metadata:", d.error);
+            showErrorDialog("Metadata save failed", d.error);
             return;
           }
           report.metadata = newVal;
           updateCachedReportMetadata(report.id, newVal);
         } catch (err) {
           console.error("Failed to save metadata:", err);
+          showErrorDialog("Metadata save failed", err);
         }
       };
 
@@ -1903,7 +1678,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportPath }),
+        body: JSON.stringify(reportTargets.get(reportPath)),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
@@ -1958,10 +1733,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     try {
+      const target = reportTargets.get(reportPath);
       let response = await fetch("/api/failures", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportPath }),
+        body: JSON.stringify(target),
       });
       let data = await response.json();
       while (data.code === "ANALYSIS_REPLACEMENT_REQUIRED") {
@@ -1987,7 +1763,7 @@ document.addEventListener("DOMContentLoaded", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            reportPath,
+            ...target,
             replaceRunId: data.runId,
             analysisVersion: data.inventory.version,
           }),
@@ -2130,8 +1906,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (aiEvents) aiEvents.close();
       activeFailureAnalyses.delete(reportPath);
       await fetchAnalysisRuns();
-      if (reportInfoCurrentReportId === reportPath.split("/")[3])
-        await loadReportInfo(reportInfoCurrentReportId);
+      if (reportInfo.currentReportId === reportPath.split("/")[3])
+        await loadReportInfo(reportInfo.currentReportId);
     }
   };
 
@@ -2152,6 +1928,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Logic to handle moving current to archive
   const handleArchive = async (reportPath: string, row: HTMLElement) => {
+    const target = reportTargets.get(reportPath);
     if (!(await confirmArchive([reportPath]))) {
       return;
     }
@@ -2163,7 +1940,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const response = await fetch("/api/archive", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportPath }),
+        body: JSON.stringify(target),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
@@ -2353,607 +2130,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // ----- Report Info dialog -----
-  interface ReportInfoRun {
-    runName: string;
-    createdAt: string;
-    runDir: string;
-    runDirExists: boolean;
-    analysisFile: string;
-    analysisFileExists: boolean;
-    groupedAnalysisFile: string;
-    groupedAnalysisExists: boolean;
-    groupedAnalysisUrl: string | null;
-    failuresUrl: string | null;
-    vaultUrl: string;
-  }
-  interface ReportInfoResponse {
-    reportId: string;
-    folder: string;
-    folderExists: boolean;
-    runs: ReportInfoRun[];
-    digests: ReportInfoDigest[];
-    analysisInventory: AnalysisInventory;
-  }
-  interface AnalysisInventoryEntry {
-    id: string;
-    runName: string;
-    createdAt: string;
-    output: { path: string } | null;
-    notes: { path: string }[];
-    grouped?: { path: string } | null;
-  }
-  interface AnalysisInventory {
-    version: string;
-    needsReview: boolean;
-    duplicated: boolean;
-    entries: AnalysisInventoryEntry[];
-    choices: {
-      runId: string;
-      keepPaths: string[];
-      removePaths: string[];
-      blockedReason: string;
-    }[];
-    issues: string[];
-  }
-  interface ReportInfoDigest {
-    id: string;
-    testTitle: string;
-    createdAt: string;
-    digestDir: string;
-    digestDirExists: boolean;
-    digestUrl: string | null;
-  }
-
-  let reportInfoCurrentReportId = "";
-  // Report-folder sizes are cached client-side; they only change on extract/archive/rename, none of
-  // which happen while the dialog is open, so a cached value stays valid across reopens.
-  const reportSizeCache = new Map<string, number>();
-
-  const escHtml = (value: string): string =>
-    value
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-
-  const formatBytes = (bytes: number): string => {
-    if (!bytes || bytes < 0) return "0 B";
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    let value = bytes;
-    let unit = 0;
-    while (value >= 1024 && unit < units.length - 1) {
-      value /= 1024;
-      unit += 1;
-    }
-    return `${unit === 0 ? value : value.toFixed(1)} ${units[unit]}`;
-  };
-
-  const copyIcon =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
-  const openIcon =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" x2="21" y1="14" y2="3"/></svg>';
-  const trashIcon =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>';
-
-  const renderReportInfoPathRow = (
-    kind: "output" | "analysis" | "grouped",
-    runName: string,
-    label: string,
-    pathValue: string,
-    exists: boolean,
-    openUrl: string | null,
-    emptyText: string,
-  ): string => {
-    const safeRun = escHtml(runName);
-    if (!pathValue) {
-      return `
-        <div class="report-info-path-row">
-          <span class="report-info-path-label">${label}</span>
-          <code class="report-info-path is-empty">${emptyText}</code>
-        </div>`;
-    }
-    const safePath = escHtml(pathValue);
-    const missingBadge = exists
-      ? ""
-      : ' <span class="report-info-missing">(missing on disk)</span>';
-    const openBtn = openUrl
-      ? `<a class="report-info-path-action" href="${escHtml(openUrl)}" target="_blank" rel="noopener noreferrer" title="Open">${openIcon}</a>`
-      : "";
-    const deleteBtn =
-      kind === "grouped"
-        ? ""
-        : `<button class="report-info-path-action danger" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>`;
-    return `
-        <div class="report-info-path-row">
-          <span class="report-info-path-label">${label}</span>
-          <code class="report-info-path" data-copy="${safePath}">${safePath}${missingBadge}</code>
-          <div class="report-info-path-actions">
-            <button class="report-info-path-action" type="button" data-action="copy" data-path="${safePath}" title="Copy path">${copyIcon}</button>
-            ${openBtn}
-            ${deleteBtn}
-          </div>
-        </div>`;
-  };
-
-  const renderReportInfo = (info: ReportInfoResponse): void => {
-    reportInfoName.textContent = info.reportId;
-    const review = document.getElementById("report-info-review")!;
-    review.replaceChildren();
-    review.classList.toggle("hidden", !info.analysisInventory?.needsReview);
-    if (info.analysisInventory?.needsReview) {
-      const message = document.createElement("p");
-      message.textContent = info.analysisInventory.duplicated
-        ? "Duplicate analysis data found. No files have been deleted."
-        : "Existing analysis records need review. All files have been preserved.";
-      const button = document.createElement("button");
-      button.className = "btn";
-      button.textContent = "Review analysis data";
-      button.addEventListener(
-        "click",
-        () =>
-          void reviewAnalysisDuplicates(info.reportId, info.analysisInventory),
-      );
-      review.append(message, button);
-    }
-    const runs = info.runs || [];
-    if (runs.length === 0) {
-      reportInfoRuns.innerHTML =
-        '<div class="report-info-empty">No analysis runs for this report yet.</div>';
-    } else {
-      reportInfoRuns.innerHTML = runs
-        .map((run) => {
-          const outputRow = renderReportInfoPathRow(
-            "output",
-            run.runName,
-            "Output dir",
-            run.runDir,
-            run.runDirExists,
-            run.failuresUrl,
-            "— removed",
-          );
-          const groupedRow = renderReportInfoPathRow(
-            "grouped",
-            run.runName,
-            "Grouped analysis",
-            run.groupedAnalysisFile,
-            run.groupedAnalysisExists,
-            run.groupedAnalysisUrl,
-            "No grouped analysis",
-          );
-          const analysisRow = renderReportInfoPathRow(
-            "analysis",
-            run.runName,
-            "Analysis file",
-            run.analysisFile,
-            run.analysisFileExists,
-            run.analysisFileExists ? run.vaultUrl : null,
-            "No analysis file",
-          );
-          return `
-        <div class="report-info-run">
-          <div class="report-info-run-head">
-            <span class="report-info-run-name">${escHtml(run.runName)}</span>
-            <span class="report-info-run-date">${escHtml(formatDate(run.createdAt))}</span>
-          </div>
-          ${outputRow}
-          ${groupedRow}
-          ${analysisRow}
-        </div>`;
-        })
-        .join("");
-    }
-    renderReportInfoDigests(info.digests || []);
-  };
-
-  const renderReportInfoDigests = (digests: ReportInfoDigest[]): void => {
-    if (digests.length === 0) {
-      reportInfoDigests.innerHTML =
-        '<div class="report-info-empty">No digests for this report yet.</div>';
-      return;
-    }
-    reportInfoDigests.innerHTML = digests
-      .map((digest) => {
-        const safeId = escHtml(digest.id);
-        const safePath = escHtml(digest.digestDir);
-        const missingBadge = digest.digestDirExists
-          ? ""
-          : ' <span class="report-info-missing">(missing on disk)</span>';
-        const openBtn =
-          digest.digestDirExists && digest.digestUrl
-            ? `<a class="report-info-path-action" href="${escHtml(digest.digestUrl)}" target="_blank" rel="noopener noreferrer" title="Open digest.json">${openIcon}</a>`
-            : "";
-        return `
-        <div class="report-info-run">
-          <div class="report-info-run-head">
-            <span class="report-info-run-name">${escHtml(digest.testTitle || "(untitled)")}</span>
-            <span class="report-info-run-date">${escHtml(formatDate(digest.createdAt))}</span>
-          </div>
-          <div class="report-info-path-row">
-            <span class="report-info-path-label">Digest dir</span>
-            <code class="report-info-path" data-copy="${safePath}">${safePath}${missingBadge}</code>
-            <div class="report-info-path-actions">
-              <button class="report-info-path-action" type="button" data-action="copy" data-path="${safePath}" title="Copy path">${copyIcon}</button>
-              ${openBtn}
-              <button class="report-info-path-action danger" type="button" data-action="delete-digest" data-digest-id="${safeId}" data-path="${safePath}" title="Delete">${trashIcon}</button>
-            </div>
-          </div>
-        </div>`;
-      })
-      .join("");
-  };
-
-  const loadReportInfo = async (reportId: string): Promise<void> => {
-    try {
-      const response = await fetch(
-        "/api/report-info?reportId=" + encodeURIComponent(reportId),
-      );
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data.error || "Failed to load report info");
-      if (reportInfoCurrentReportId !== reportId) return; // a newer dialog took over
-      renderReportInfo(data as ReportInfoResponse);
-    } catch (err) {
-      console.error("Report info load error:", err);
-      if (reportInfoCurrentReportId !== reportId) return;
-      reportInfoRuns.innerHTML =
-        '<div class="report-info-empty">Failed to load report info.</div>';
-      reportInfoDigests.innerHTML =
-        '<div class="report-info-empty">Failed to load report info.</div>';
-    }
-  };
-
-  // Report size is fetched separately so the runs render immediately without waiting on the
-  // (potentially multi-GB) recursive disk scan. The result is cached for instant reopens.
-  const loadReportSize = async (reportId: string): Promise<void> => {
-    if (reportSizeCache.has(reportId)) {
-      reportInfoSize.textContent = formatBytes(reportSizeCache.get(reportId)!);
-      return;
-    }
-    reportInfoSize.textContent = "Calculating…";
-    try {
-      const response = await fetch(
-        "/api/report-size?reportId=" + encodeURIComponent(reportId),
-      );
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(data.error || "Failed to load report size");
-      if (reportInfoCurrentReportId !== reportId) return; // a newer dialog took over
-      if (!data.folderExists) {
-        reportInfoSize.textContent = "Not on disk";
-        return;
-      }
-      reportSizeCache.set(reportId, data.sizeBytes);
-      reportInfoSize.textContent = formatBytes(data.sizeBytes);
-    } catch (err) {
-      console.error("Report size load error:", err);
-      if (reportInfoCurrentReportId === reportId)
-        reportInfoSize.textContent = "—";
-    }
-  };
-
-  const openReportInfoModal = (reportId: string): void => {
-    reportInfoCurrentReportId = reportId;
-    reportInfoName.textContent = reportId;
-    reportInfoSize.textContent = "Calculating…";
-    reportInfoRuns.innerHTML = '<div class="report-info-empty">Loading…</div>';
-    reportInfoDigests.innerHTML =
-      '<div class="report-info-empty">Loading…</div>';
-    reportInfoModal.classList.remove("hidden");
-    void loadReportInfo(reportId);
-    void loadReportSize(reportId);
-  };
-
-  const closeReportInfoModal = () => reportInfoModal.classList.add("hidden");
-  closeReportInfoModalBtn.addEventListener("click", closeReportInfoModal);
-  closeReportInfoModalFooterBtn.addEventListener("click", closeReportInfoModal);
-
-  // Generic promise-based confirmation.
-  let confirmResolve: ((value: boolean) => void) | null = null;
-  let confirmPreviousFocus: HTMLElement | null = null;
-  const confirmOptions = document.getElementById("confirm-delete-options")!;
-  const openConfirm = (opts: {
-    title: string;
-    message: string;
-    path?: string;
-    confirmLabel?: string;
-    choices?: {
-      label: string;
-      path: string;
-      disabled: boolean;
-      reason: string;
-    }[];
-    onSelect?: (index: number) => void;
-  }): Promise<boolean> => {
-    if (confirmResolve) return Promise.resolve(false);
-    confirmPreviousFocus = document.activeElement as HTMLElement;
-    confirmDeleteTitle.textContent = opts.title;
-    confirmDeleteMessage.textContent = opts.message;
-    confirmDeletePath.textContent = opts.path || "";
-    confirmDeletePath.classList.toggle("hidden", !opts.path);
-    confirmDeleteConfirmBtn.textContent = opts.confirmLabel || "Delete";
-    confirmDeleteConfirmBtn.disabled = !!opts.choices;
-    confirmOptions.replaceChildren();
-    confirmOptions.classList.toggle("hidden", !opts.choices);
-    if (opts.choices) {
-      const label = document.createElement("label");
-      label.textContent = "Analysis to keep";
-      label.htmlFor = "confirm-analysis-selection";
-      const select = document.createElement("select");
-      select.id = "confirm-analysis-selection";
-      select.style.maxWidth = "100%";
-      select.add(new Option("Select analysis", ""));
-      opts.choices.forEach((choice, index) => {
-        const option = new Option(choice.label, String(index));
-        option.disabled = choice.disabled;
-        select.add(option);
-      });
-      const issues = document.createElement("p");
-      issues.textContent = [
-        ...new Set(
-          opts.choices
-            .filter((choice) => choice.disabled)
-            .map((choice) => choice.reason),
-        ),
-      ].join(" ");
-      select.addEventListener("change", () => {
-        const choice =
-          select.value === "" ? undefined : opts.choices![Number(select.value)];
-        confirmDeleteConfirmBtn.disabled = !choice || choice.disabled;
-        confirmDeletePath.textContent = choice?.path || opts.path || "";
-        confirmDeletePath.classList.toggle(
-          "hidden",
-          !confirmDeletePath.textContent,
-        );
-        if (choice) opts.onSelect?.(Number(select.value));
-      });
-      confirmOptions.append(label, select, issues);
-    }
-    confirmDeleteModal.classList.remove("hidden");
-    confirmDeleteCancelBtn.focus();
-    return new Promise<boolean>((resolve) => {
-      confirmResolve = resolve;
-    });
-  };
-  const closeConfirm = (result: boolean) => {
-    confirmDeleteModal.classList.add("hidden");
-    if (confirmResolve) {
-      confirmResolve(result);
-      confirmResolve = null;
-    }
-    confirmPreviousFocus?.focus();
-  };
-  confirmDeleteConfirmBtn.addEventListener("click", () => closeConfirm(true));
-  confirmDeleteCancelBtn.addEventListener("click", () => closeConfirm(false));
-  closeConfirmDeleteModalBtn.addEventListener("click", () =>
-    closeConfirm(false),
-  );
-  confirmDeleteModal.addEventListener("click", (event) => {
-    if (event.target === confirmDeleteModal) closeConfirm(false);
+  const reportInfo = ReportInfoPanel.create({
+    fetchReports: (options) => fetchReports(options),
+    formatDate, showErrorDialog, showAnalysisContextMenu, openConfirm,
   });
-  confirmDeleteModal.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      closeConfirm(false);
-    }
-    if (event.key === "Tab") {
-      const elements = Array.from(
-        confirmDeleteModal.querySelectorAll<HTMLElement>(
-          "button:not(:disabled), select",
-        ),
-      ).filter((element) => element.offsetParent !== null);
-      const first = elements[0];
-      const last = elements[elements.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      }
-      if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    }
-  });
-
-  const reviewAnalysisDuplicates = async (
-    reportId: string,
-    inventory: AnalysisInventory,
-  ): Promise<void> => {
-    let selected = -1;
-    const confirmed = await openConfirm({
-      title: inventory.duplicated
-        ? "Duplicate analysis data found"
-        : "Analysis data needs review",
-      message: `Report: ${reportId}. Only the duplicate files listed for removal will be deleted. The selected analysis will be preserved.`,
-      path: inventory.entries
-        .flatMap((entry) => [
-          entry.runName,
-          ...(entry.output ? [entry.output.path] : []),
-          ...entry.notes.map((note) => note.path),
-        ])
-        .join("\n"),
-      confirmLabel: "Delete Selected Duplicates",
-      choices: inventory.choices.map((choice) => ({
-        label:
-          inventory.entries.find((entry) => entry.id === choice.runId)
-            ?.runName || choice.runId,
-        path: `KEEP\n${choice.keepPaths.join("\n")}\n\nDELETE\n${choice.removePaths.join("\n") || "No files (duplicate records only)"}`,
-        disabled: !!choice.blockedReason,
-        reason: choice.blockedReason,
-      })),
-      onSelect: (index) => {
-        selected = index;
-      },
-    });
-    if (!confirmed || selected < 0) return;
-    try {
-      const response = await fetch("/api/analysis/consolidate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          reportId,
-          keepRunId: inventory.choices[selected].runId,
-          version: inventory.version,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok)
-        throw new Error(
-          data.error || "Failed to remove duplicate analysis data.",
-        );
-    } catch (error) {
-      showErrorDialog("Analysis cleanup failed", error);
-    }
-    await refreshAfterRunChange();
-  };
-
-  const refreshAfterRunChange = async (): Promise<void> => {
-    try {
-      await fetchReports({ showLoading: false });
-    } catch {
-      /* table refresh is best-effort */
-    }
-    await loadReportInfo(reportInfoCurrentReportId);
-  };
-
-  const deleteRunArtifact = async (
-    kind: "output" | "analysis",
-    runName: string,
-  ): Promise<void> => {
-    const isOutput = kind === "output";
-    const ok = await openConfirm({
-      title: isOutput ? "Delete output directory" : "Delete analysis file",
-      message: isOutput
-        ? "This permanently deletes the output directory from disk. The analysis file stays mapped to this report."
-        : "This permanently deletes the analysis file from disk.",
-      path: "",
-    });
-    if (!ok) return;
-    const endpoint = isOutput
-      ? "/api/analysis-run/output-dir"
-      : "/api/analysis-run/analysis-file";
-    try {
-      const response = await fetch(endpoint, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportId: reportInfoCurrentReportId, runName }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Delete failed");
-      await refreshAfterRunChange();
-    } catch (err) {
-      console.error("Delete artifact error:", err);
-      await refreshAfterRunChange();
-    }
-  };
-
-  reportInfoRuns.addEventListener("click", async (event) => {
-    const trigger = (event.target as HTMLElement).closest(
-      "[data-action]",
-    ) as HTMLElement | null;
-    if (!trigger) return;
-    event.stopPropagation();
-    const action = trigger.dataset.action || "";
-    const runName = trigger.dataset.run || "";
-    const pathValue = trigger.dataset.path || "";
-    if (action === "copy") {
-      try {
-        await navigator.clipboard.writeText(pathValue);
-        const original = trigger.innerHTML;
-        trigger.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-        setTimeout(() => {
-          trigger.innerHTML = original;
-        }, 1200);
-      } catch (err) {
-        console.error("Copy path failed:", err);
-      }
-    } else if (action === "delete-output") {
-      await deleteRunArtifact("output", runName);
-    } else if (action === "delete-analysis") {
-      await deleteRunArtifact("analysis", runName);
-    }
-  });
-
-  // Right-click any path to reuse the shared "Copy path" context menu.
-  reportInfoRuns.addEventListener("contextmenu", (event) => {
-    const pathEl = (event.target as HTMLElement).closest(
-      ".report-info-path[data-copy]",
-    ) as HTMLElement | null;
-    if (!pathEl) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const mouseEvent = event as MouseEvent;
-    showAnalysisContextMenu(
-      mouseEvent.clientX,
-      mouseEvent.clientY,
-      pathEl.dataset.copy || "",
-    );
-  });
-
-  const deleteDigest = async (digestId: string): Promise<void> => {
-    const ok = await openConfirm({
-      title: "Delete digest",
-      message: "This permanently deletes the digest directory from disk.",
-      path: "",
-    });
-    if (!ok) return;
-    try {
-      const response = await fetch("/api/digest", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportId: reportInfoCurrentReportId, digestId }),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Delete failed");
-      await refreshAfterRunChange();
-    } catch (err) {
-      console.error("Delete digest error:", err);
-      await refreshAfterRunChange();
-    }
-  };
-
-  reportInfoDigests.addEventListener("click", async (event) => {
-    const trigger = (event.target as HTMLElement).closest(
-      "[data-action]",
-    ) as HTMLElement | null;
-    if (!trigger) return;
-    event.stopPropagation();
-    const action = trigger.dataset.action || "";
-    const pathValue = trigger.dataset.path || "";
-    if (action === "copy") {
-      try {
-        await navigator.clipboard.writeText(pathValue);
-        const original = trigger.innerHTML;
-        trigger.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
-        setTimeout(() => {
-          trigger.innerHTML = original;
-        }, 1200);
-      } catch (err) {
-        console.error("Copy path failed:", err);
-      }
-    } else if (action === "delete-digest") {
-      await deleteDigest(trigger.dataset.digestId || "");
-    }
-  });
-
-  // Right-click any digest path to reuse the shared "Copy path" context menu.
-  reportInfoDigests.addEventListener("contextmenu", (event) => {
-    const pathEl = (event.target as HTMLElement).closest(
-      ".report-info-path[data-copy]",
-    ) as HTMLElement | null;
-    if (!pathEl) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const mouseEvent = event as MouseEvent;
-    showAnalysisContextMenu(
-      mouseEvent.clientX,
-      mouseEvent.clientY,
-      pathEl.dataset.copy || "",
-    );
-  });
+  const { reportSizeCache, loadReportInfo, openReportInfoModal, reviewAnalysisDuplicates } = reportInfo;
 
   const filterDigestTests = () => {
     const query = (digestSearchInput?.value || "").toLowerCase().trim();
@@ -3084,10 +2265,11 @@ document.addEventListener("DOMContentLoaded", () => {
     container.innerHTML = "";
 
     try {
+      const target = reportTargets.get(reportPath);
       let res = await fetch("/api/digest-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportPath, tracePath }),
+        body: JSON.stringify({ ...target, tracePath }),
       });
       let data = await res.json();
       while (data.code === "DIGEST_REPLACEMENT_REQUIRED") {
@@ -3105,7 +2287,7 @@ document.addEventListener("DOMContentLoaded", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            reportPath,
+            ...target,
             tracePath,
             replaceDigestVersion: data.version,
           }),
@@ -3213,7 +2395,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   ariaDeepEqualCheckbox.addEventListener("change", renderAllDiffs);
 
-  const renderTable = (reports: Report[], target: SectionKey) => {
+  const renderTable = (reports: DashboardReport[], target: SectionKey) => {
     const context = tableContexts[target];
     const { tbody, section, table } = context;
     tbody.innerHTML = "";
@@ -3301,6 +2483,13 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       await fetchAnalysisRuns();
       const data = await requestReports("/api/reports");
+      if (cachedReportsData) {
+        const previous = new Map(
+          [...cachedReportsData.current, ...cachedReportsData.archive].map(report => [report.id, report.uuid]),
+        );
+        for (const report of [...data.current, ...data.archive])
+          if (previous.get(report.id) !== report.uuid) reportSizeCache.delete(report.id);
+      }
       cachedReportsData = data;
       if (!searchDatesEdited) syncSearchInputs(activeSearchState.draft);
       if (render) {
@@ -3431,36 +2620,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.setTimeout(() => searchInput.focus(), 0);
   };
 
-  // --- Modal Logic ---
-
-  const openModal = async () => {
-    modalError.classList.add("hidden");
-    settingsModal.classList.remove("hidden");
-
-    try {
-      const response = await fetch("/api/config");
-      const data = await response.json();
-      currentPathInput.value = data.currentPath || "";
-      archivePathInput.value = data.archivePath || "";
-      projectPathInput.value = data.projectPath || "";
-      vaultPathInput.value = data.vaultPath || "";
-      browserstackUsernameInput.value = data.browserstackUsername || "";
-      browserstackKeyInput.value = data.browserstackAccessKey || "";
-      copilotTokenInput.value = data.copilotToken || "";
-      setCopilotModelFieldValue("small", data.copilotModel || "");
-      setCopilotModelFieldValue("big", data.copilotBigModel || "");
-    } catch (err) {
-      console.error("Failed to load config:", err);
-    }
-  };
-
-  const closeModal = () => {
-    settingsModal.classList.add("hidden");
-  };
-
-  settingsBtn.addEventListener("click", openModal);
-  closeModalBtn.addEventListener("click", closeModal);
-  cancelModalBtn.addEventListener("click", closeModal);
+  Preferences.create({ checkRunnerOpen, showErrorDialog, setCopilotModelFieldValue });
 
   // --- Delete Modal Logic ---
   const closeDeleteModal = () => {
@@ -3482,7 +2642,7 @@ document.addEventListener("DOMContentLoaded", () => {
     confirmDeleteBtn.innerHTML = `<div class="spinner" style="width: 14px; height: 14px; margin-right: 6px; border-width: 2px; border-top-color: #fff;"></div> Deleting...`;
 
     try {
-      const result = await performDeleteRequests(currentRequest.reportPaths);
+      const result = await performDeleteRequests(currentRequest.targets);
 
       if (result.failures.length === currentRequest.reportPaths.length) {
         throw new Error(result.failures[0] || "Failed to delete reports");
@@ -3502,63 +2662,6 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       confirmDeleteBtn.disabled = false;
       confirmDeleteBtn.textContent = currentRequest.confirmLabel;
-    }
-  });
-
-  // Intentionally not closing on backdrop click as requested
-  // User must use standard close/cancel/save buttons
-
-  saveModalBtn.addEventListener("click", async () => {
-    saveModalBtn.disabled = true;
-    if (await checkRunnerOpen()) {
-      showErrorDialog(
-        "Runner is open",
-        "Please close the runner before changing preferences.",
-        { closeLabel: "Close" },
-      );
-      saveModalBtn.disabled = false;
-      return;
-    }
-
-    const currentPath = currentPathInput.value.trim();
-    const archivePath = archivePathInput.value.trim();
-    const projectPath = projectPathInput.value.trim();
-    const vaultPath = vaultPathInput.value.trim();
-    const browserstackUsername = browserstackUsernameInput.value.trim();
-    const browserstackAccessKey = browserstackKeyInput.value.trim();
-    const copilotToken = copilotTokenInput.value.trim();
-
-    modalError.classList.add("hidden");
-    saveModalBtn.textContent = "Saving...";
-
-    try {
-      const response = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          currentPath,
-          archivePath,
-          projectPath,
-          vaultPath,
-          browserstackUsername,
-          browserstackAccessKey,
-          copilotToken,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to update paths");
-      }
-
-      window.location.reload();
-    } catch (err: any) {
-      modalError.textContent = err.message;
-      modalError.classList.remove("hidden");
-    } finally {
-      saveModalBtn.disabled = false;
-      saveModalBtn.textContent = "Save changes and reload";
     }
   });
 
@@ -3619,6 +2722,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         if (action === "archive") {
+          const targets = selectedPaths.map(value => reportTargets.get(value));
           if (!(await confirmArchive(selectedPaths))) {
             return;
           }
@@ -3631,7 +2735,7 @@ document.addEventListener("DOMContentLoaded", () => {
           actionBtn.textContent = "Archiving...";
 
           try {
-            const result = await performArchiveRequests(selectedPaths);
+            const result = await performArchiveRequests(targets);
             if (result.failures.length === selectedPaths.length) {
               throw new Error(
                 result.failures[0] || "Failed to archive reports",

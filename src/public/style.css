@@ -2161,3 +2161,11 @@ p {
   padding: var(--space-3);
   word-break: break-word;
 }
+.report-warnings {
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

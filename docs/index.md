@@ -21,6 +21,8 @@ Playwright Reports Central is a local dashboard for running Playwright tests and
 
 ## Reference
 
+- [Development and Local Validation](development.md): build, focused checks, isolated local browser workflows and maintenance boundaries.
+
 - [Agent API](agent-api.md)
 - [Troubleshooting](troubleshooting.md)
 - [Developer architecture](../ARCHITECTURE.md)

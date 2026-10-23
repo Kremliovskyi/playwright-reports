@@ -4,9 +4,9 @@
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) installed on your machine.
+- [Node.js](https://nodejs.org/) in the supported range: 20.19+ on Node 20, or 22.12+ through Node 26. Prefer Node 22, 24 or 26.
 - Playwright installed in the project whose tests and reports you want to manage.
-- [PM2](https://pm2.keymetrics.io/) installed globally with `npm install -g pm2`. PM2 is optional, but recommended for keeping the dashboard running in the background.
+- [PM2](https://pm2.keymetrics.io/) is installed as a project dependency and used by the background-start scripts. No global installation is needed for `npm start` or `npx pm2`. It is optional when running in the foreground.
 
 The dashboard uses `jiti` internally to resolve Playwright configuration files. It is installed with the project dependencies.
 
@@ -34,6 +34,9 @@ The dashboard uses `jiti` internally to resolve Playwright configuration files. 
 4. Open [http://localhost:9333](http://localhost:9333), or the port configured in `ecosystem.config.js`.
 
 Continue with [Configuration](configuration.md) to connect the dashboard to your reports and Playwright project.
+
+To run without PM2, use `npm run start:foreground`. The server stays attached to
+the terminal; stop it with Ctrl+C.
 
 ## Manage the server
 

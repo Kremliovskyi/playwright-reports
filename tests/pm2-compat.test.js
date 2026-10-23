@@ -5,6 +5,7 @@ const path = require("node:path");
 const { once } = require("node:events");
 const { createRequire } = require("node:module");
 const { spawnSync } = require("node:child_process");
+const http = require("node:http");
 const { test } = require("node:test");
 
 const pm2Require = createRequire(require.resolve("pm2/package.json"));
@@ -14,6 +15,7 @@ test("PM2 dependency overrides retain YAML and FTP client APIs", () => {
   assert.deepEqual(yaml.load("apps:\n  - name: fixture\n    watch: false\n"), {
     apps: [{ name: "fixture", watch: false }]
   });
+
   const proxyRequire = createRequire(pm2Require.resolve("proxy-agent"));
   const pacRequire = createRequire(proxyRequire.resolve("pac-proxy-agent"));
   const uriRequire = createRequire(pacRequire.resolve("get-uri"));
@@ -24,6 +26,48 @@ test("PM2 dependency overrides retain YAML and FTP client APIs", () => {
       assert.equal(typeof client[method], "function", method);
   } finally {
     client.close();
+  }
+});
+
+test("PM2 patched networking dependencies retain redirect and IPv6 support", async () => {
+  const apiRequire = createRequire(pm2Require.resolve("@pm2/js-api"));
+  const requestRequire = createRequire(apiRequire.resolve("extrareqp2"));
+  const redirects = requestRequire("follow-redirects");
+  const proxyRequire = createRequire(pm2Require.resolve("proxy-agent"));
+  const socksProxyRequire = createRequire(proxyRequire.resolve("socks-proxy-agent"));
+  const socksRequire = createRequire(socksProxyRequire.resolve("socks"));
+  const { Address6 } = socksRequire("ip-address");
+  assert.equal(new Address6("0:0:0:0:0:0:0:1").correctForm(), "::1");
+
+  const server = http.createServer((req, res) => {
+    if (req.url === "/redirect") {
+      res.writeHead(302, { Location: "/result" });
+      res.end();
+    } else {
+      res.end("redirected");
+    }
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const result = await new Promise((resolve, reject) => {
+      const request = redirects.http.get(
+        `http://127.0.0.1:${server.address().port}/redirect`,
+        response => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", chunk => { body += chunk; });
+          response.on("end", () => resolve({ status: response.statusCode, body }));
+          response.on("error", reject);
+        },
+      );
+      request.on("error", reject);
+      request.setTimeout(5000, () => request.destroy(new Error("Local redirect timed out")));
+    });
+    assert.deepEqual(result, { status: 200, body: "redirected" });
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
   }
 });
 

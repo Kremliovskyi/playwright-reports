@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="style.css" />
     <link
       rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@xterm/xterm/css/xterm.css"
+      href="vendor/xterm.css"
     />
     <style>
       :root {
@@ -687,6 +687,7 @@
         </div>
 
         <!-- Main Action -->
+        <p id="runner-save-status" role="status"></p>
         <button id="run-btn" class="run-btn btn-primary">Run Tests</button>
 
         <!-- Terminal Output -->
@@ -798,8 +799,9 @@
       </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm/lib/xterm.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit/lib/addon-fit.js"></script>
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="api.js"></script>
     <script src="runner.js"></script>
   </body>
 </html>

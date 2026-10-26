@@ -66,6 +66,10 @@ npx playwright test --grep "artifact browser workflow"
   confirmation checks. External requests
   are blocked for the hub pages. Screenshots and failure traces are ignored under
   `tests/.browser-results/`.
+- Trace-viewer coverage installs a stale service worker deliberately, checks
+  bounded recovery and preservation of genuine errors, and loads a real trace
+  with the installed Playwright viewer. Serving tests ensure the guard does not
+  rewrite report files or alter snapshots and worker assets.
 - Copilot responses and trace jobs use synthetic fixtures. The browser scenarios
   retain their existing mocked mode checks; no live BrowserStack or Podman tests
   are added or run.

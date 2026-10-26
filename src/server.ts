@@ -24,6 +24,7 @@ import { assertReportInstance } from "./report-storage";
 import { registerRunnerRoutes } from "./runner-routes";
 import { activeDigests, activeFailureAnalyses, appConfig, refreshConfigCache, reportIsBusy } from "./runtime";
 import { registerTrendsRoutes } from "./trends-routes";
+import { registerTraceViewerRoutes } from "./trace-viewer-routes";
 import { registerVaultRoutes } from "./vault-routes";
 
 export const app = express();
@@ -111,6 +112,8 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
   }
   next();
 });
+
+registerTraceViewerRoutes(app);
 
 // Serve the reports dynamically using isolated mount points
 app.use(

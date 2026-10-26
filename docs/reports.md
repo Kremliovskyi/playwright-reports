@@ -19,7 +19,7 @@ Click a report row to open the Playwright HTML report. Use the always-available 
 
 ## Search and filter
 
-Open **Search** in the header to filter persisted reports by metadata and creation date.
+Open **Search** using the magnifying-glass icon in the header to filter persisted reports by metadata and creation date. On narrow screens, Search is in **More actions**. The full-size **Refresh** button beside **Run Tests** rescans reports.
 
 - Metadata matching is case-insensitive and requires every whitespace-delimited search term. For example, `UAT e2e` matches `UAT EU e2e`.
 - **From** and **To** initially span the oldest through newest report across both Current and Archive, independently of metadata. Bounds use the catalog creation date in UTC, not the test execution timestamp. A single report gives equal bounds; an empty catalog leaves them blank and disabled.
@@ -33,9 +33,9 @@ Search is read-only. It queries the persisted report index without scanning dire
 
 ## Test Trends
 
-Open **Trends** beside Search in the dashboard header to launch a dedicated browser tab. The original dashboard stays usable and keeps its active Search filter. Refresh and Preferences are compact icon controls; on narrow screens they are in **More actions**. The Trends page also has a **Reports** link back to the dashboard.
+Open **Trends** beside Refresh in the dashboard header to launch a dedicated browser tab. The original dashboard stays usable and keeps its active Search filter. Search and Preferences are compact icon controls; on narrow screens they are in **More actions**. The Trends page also has a **Reports** link back to the dashboard.
 
-Enter metadata such as `DEV NA` and a **Test title contains** value, then select **Search matches**. The required title query is a literal, case-insensitive substring of the test's leaf title (1 to 256 characters), not a regular expression or an inferred test ID. A full title or a stable fragment works across title and file moves. The date fields default to the complete Current + Archive range and use catalog creation dates in UTC.
+Enter metadata such as `DEV NA` and a **Test title contains** value, then select **Search matches**. Loading the report catalog does not move keyboard focus, so you can start typing in either input immediately. The required title query is a literal, case-insensitive substring of the test's leaf title (1 to 256 characters), not a regular expression or an inferred test ID. A full title or a stable fragment works across title and file moves. The date fields default to the complete Current + Archive range and use catalog creation dates in UTC.
 
 Search refreshes the catalog and captures matches from the currently available reports. Review the matches before selecting **Generate trend**:
 

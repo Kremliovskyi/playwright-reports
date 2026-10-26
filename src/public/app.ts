@@ -2793,7 +2793,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const utilitiesPanel = document.getElementById(
     "utilities-panel",
   ) as HTMLElement;
-  utilitiesPanel.append(refreshBtn, settingsBtn);
+  utilitiesPanel.append(searchToggleBtn, settingsBtn);
   const closeUtilities = (restoreFocus = false) => {
     utilitiesPanel.dataset.open = "false";
     utilitiesPanel.style.transform = "";
@@ -2812,7 +2812,7 @@ document.addEventListener("DOMContentLoaded", () => {
         Math.min(0, window.innerWidth - 8 - bounds.right),
       );
       utilitiesPanel.style.transform = `translateX(${offset}px)`;
-      (refreshBtn.disabled ? settingsBtn : refreshBtn).focus();
+      searchToggleBtn.focus();
     }
   });
   window.addEventListener("resize", () => closeUtilities());

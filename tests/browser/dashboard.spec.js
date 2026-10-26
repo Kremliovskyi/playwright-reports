@@ -36,6 +36,100 @@ for (const [scenario, seed] of [
   });
 }
 
+for (const editingMetadata of [false, true]) {
+  test(`Trends initialization does not move focus ${editingMetadata ? "while typing metadata" : "on page load"}`, async ({ browser }) => {
+    const cleanup = [];
+    const hub = await startHub({ after: fn => cleanup.push(fn) });
+    let context;
+    let releaseCatalog;
+    const catalogGate = new Promise(resolve => { releaseCatalog = resolve; });
+    try {
+      context = await browser.newContext();
+      await context.route("**/*", route =>
+        new URL(route.request().url()).origin === hub.url ? route.continue() : route.abort(),
+      );
+      const page = await context.newPage();
+      await page.route("**/api/reports", async route => {
+        await catalogGate;
+        await route.continue();
+      });
+      await page.goto(hub.url + "/trends.html", { waitUntil: "domcontentloaded" });
+      const search = page.getByRole("button", { name: "Search matches", exact: true });
+      const metadata = page.getByLabel("Metadata", { exact: true });
+      const title = page.getByLabel("Test title contains", { exact: true });
+      await expect(search).toBeDisabled();
+      await expect(title).not.toBeFocused();
+      if (editingMetadata) {
+        await metadata.click();
+        await page.keyboard.type("DEV");
+      }
+      releaseCatalog();
+      await expect(search).toBeEnabled();
+      await expect(title).not.toBeFocused();
+      if (editingMetadata) {
+        await expect(metadata).toBeFocused();
+        await page.keyboard.type(" NA");
+        await expect(metadata).toHaveValue("DEV NA");
+        await expect(title).toHaveValue("");
+      }
+    } finally {
+      releaseCatalog();
+      await context?.close();
+      for (const dispose of cleanup.reverse()) await dispose();
+    }
+  });
+}
+
+test("dashboard keeps Refresh beside Run Tests and Search in responsive utilities", async ({ browser }) => {
+  const cleanup = [];
+  const hub = await startHub({ after: fn => cleanup.push(fn) });
+  let context;
+  try {
+    context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    await context.route("**/*", route =>
+      new URL(route.request().url()).origin === hub.url ? route.continue() : route.abort(),
+    );
+    const page = await context.newPage();
+    await page.goto(hub.url);
+    await expect(page.locator("#current-tbody .report-row").first()).toBeVisible();
+    const refresh = page.getByRole("button", { name: "Refresh reports", exact: true });
+    const search = page.getByRole("button", { name: "Open search", exact: true });
+    const utilities = page.locator("#utilities-toggle");
+    await expect(page.locator("#run-tests-wrapper + #refresh-btn")).toBeVisible();
+    await expect(refresh).toHaveText("Refresh");
+    await expect(page.locator("#utilities-panel > #search-toggle-btn")).toBeVisible();
+    await expect(search.locator("svg")).toBeVisible();
+    await expect(search.locator(".utility-label")).toBeHidden();
+    expect((await search.boundingBox()).width).toBe(36);
+    await expect(utilities).toBeHidden();
+    const refreshed = page.waitForResponse("**/api/reports");
+    await refresh.click();
+    expect((await refreshed).ok()).toBe(true);
+
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(refresh).toBeVisible();
+      await expect(refresh).toHaveText("Refresh");
+      if (width < 800) {
+        await expect(search).toBeHidden();
+        await utilities.click();
+        await expect(search).toBeFocused();
+        await expect(search.locator(".utility-label")).toBeVisible();
+        await expect(page.locator("#settings-btn")).toBeVisible();
+      }
+      await search.click();
+      await expect(page.locator("#search-input")).toBeFocused();
+      await expect(refresh).toBeDisabled();
+      await expect(utilities).toHaveAttribute("aria-expanded", "false");
+      await page.getByRole("button", { name: "Close search", exact: true }).click();
+      await expect(refresh).toBeEnabled();
+    }
+  } finally {
+    await context?.close();
+    for (const dispose of cleanup.reverse()) await dispose();
+  }
+});
+
 test("runner uses local terminal assets and reports rejected option saves", async ({ browser }) => {
   const cleanup = [];
   const hub = await startHub({ after: fn => cleanup.push(fn) });

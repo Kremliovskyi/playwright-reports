@@ -14,7 +14,12 @@ async (page) => {
   const dates = [...catalog.current, ...catalog.archive]
     .map((report) => report.createdAt.slice(0, 10))
     .sort();
-  await page.getByRole("button", { name: "Open search", exact: true }).click();
+  const openSearch = async () => {
+    const button = page.getByRole("button", { name: "Open search", exact: true });
+    if (!(await button.isVisible())) await page.locator("#utilities-toggle").click();
+    await button.click();
+  };
+  await openSearch();
   verify(
     (await page.locator("#search-range-start").inputValue()) === dates[0],
     "Oldest full-catalog default",
@@ -417,7 +422,7 @@ async (page) => {
     );
     await page.keyboard.press("Escape");
   }
-  await page.getByRole("button", { name: "Open search", exact: true }).click();
+  await openSearch();
   await page.getByRole("button", { name: "Reset", exact: true }).click();
   verify(
     (await page.locator("#search-range-start").inputValue()) === dates[0],
@@ -440,7 +445,7 @@ async (page) => {
     .click();
   verify((await explicitDates).ok(), "Explicit date filter submitted");
   await page.getByRole("button", { name: "Close search", exact: true }).click();
-  await page.getByRole("button", { name: "Open search", exact: true }).click();
+  await openSearch();
   verify(
     (await page.locator("#search-range-start").inputValue()) === "2026-01-01",
     "Explicit bounds survive reopening",

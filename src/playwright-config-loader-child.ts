@@ -1,13 +1,5 @@
 import { createJiti } from "jiti";
-
-type ConfigProjection = {
-  projectNames: string[];
-  ariaSnapshotPathTemplate?: string;
-};
-
-type LoaderResponse =
-  | { ok: true; projection: ConfigProjection }
-  | { ok: false; error: string };
+import type { LoaderResponse } from "./playwright-config-loader";
 
 const sendResponse = (response: LoaderResponse): void => {
   const send = process.send;

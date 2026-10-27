@@ -71,11 +71,14 @@ and read-only verification commands.
 ## Development
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) before changing report discovery, filesystem synchronization, database identity, or analysis workflows.
+See [Development and Local Validation](docs/development.md) for supported Node
+versions, foreground startup and the isolated Node/browser test commands.
+Tests remain local; no CI test workflow is configured.
 
 ```bash
 npm run build
-npm run restart
-npm run logs
+npm test
+npm run test:browser
 ```
 
 ### Dependency Maintenance
@@ -87,6 +90,12 @@ script, but no longer supports glob patterns. This project's PM2 configuration
 has `watch: false`; if enabling it, use literal file/directory paths and regular
 expressions for exclusions. Compatibility tests cover PM2 startup/restart,
 directory watching and the dependency APIs used by PM2.
+
+The Markdown renderer requires `markdown-it` 14.3.3 or later within major 14.
+The lockfile also retains patched PM2 networking dependencies:
+`follow-redirects` 1.16.1 and `ip-address` 10.7.4. These satisfy upstream ranges
+without additional overrides or a PM2 upgrade. Local compatibility tests cover
+redirect handling, IPv6 parsing and vault Markdown rendering.
 
 The installed `better-sqlite3` version has an explicit install-script approval
 for its native binary/build step. Review and approve a new version explicitly

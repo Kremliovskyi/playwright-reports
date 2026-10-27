@@ -84,3 +84,24 @@ test("isolates process globals between sequential config loads", async (t) => {
     ["second"],
   );
 });
+
+for (const fails of [false, true]) {
+  test(`terminates config-created handles before ${fails ? "rejecting" : "resolving"}`, async t => {
+    const { configPath, projectPath } = createConfig(t, `
+      import fs from "node:fs";
+      fs.writeFileSync("loader.pid", String(process.pid));
+      setInterval(() => {}, 1000);
+      ${fails ? 'throw new Error("fixture failure");' : 'export default { projects: [{ name: "timer" }] };'}
+    `);
+    const loaded = loadPlaywrightConfigProjection(configPath, { cwd: projectPath });
+    if (fails) await assert.rejects(loaded, /fixture failure/);
+    else assert.deepEqual((await loaded).projectNames, ["timer"]);
+    const pid = Number(fs.readFileSync(path.join(projectPath, "loader.pid"), "utf8"));
+    assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+  });
+}
+
+test("times out and terminates a config that never finishes evaluation", async t => {
+  const { configPath } = createConfig(t, "while (true) {}");
+  await assert.rejects(loadPlaywrightConfigProjection(configPath, { timeoutMs: 100 }), /Timed out/);
+});

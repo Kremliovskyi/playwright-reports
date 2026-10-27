@@ -15,3 +15,6 @@ The Aria Snapshot Fixer extracts failed `toMatchAriaSnapshot` comparisons from a
 The dashboard reads the assertion call log and code frame embedded in the HTML report to reconstruct the evaluated structure and expected snapshot path. When a test contains multiple `.yml` assertions, it also uses content matching to select the intended snapshot. Missing snapshot directories are created when the fix is applied.
 
 Always review the diff before applying it. Snapshot updates should represent an intentional accessibility-tree change rather than hide an application regression.
+
+Configuration evaluation errors are reported rather than falling back to a
+guessed snapshot directory. An unresolved snapshot path cannot be applied.

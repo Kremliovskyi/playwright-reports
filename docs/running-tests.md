@@ -32,6 +32,11 @@ The runner parses the selected Playwright config and lists its projects. Select 
 
 Runner options are persisted across dashboard restarts.
 
+A failed option save displays an inline error instead of silently losing the
+change; change an option to retry. Overlapping start/stop preparation requests
+are rejected until the current transition finishes. Invalid start requests do
+not stop a run already in progress.
+
 **Headed** and **Headless** are mutually exclusive overrides. Select neither to use the `use.headless` value from `playwright.config.ts`; select either mode to override that value for the run. Debug mode opens a headed browser, so selecting Debug clears Headless.
 
 ### Filter by test titles
@@ -86,5 +91,8 @@ Use this mode only with trusted tests and sites: the official image runs as root
 ## Follow or stop the run
 
 The embedded `xterm.js` terminal streams colored process output while tests run. You can stop an active run from the runner; the dashboard terminates the associated process tree to avoid leaving background Node.js processes.
+
+The terminal's scripts and styles are served locally from the installed,
+lockfile-controlled dependencies; they do not require a CDN connection.
 
 Completed HTML reports appear in the configured current reports directory and can then be handled from [Managing Reports](reports.md).

@@ -4,13 +4,22 @@
 
 The dashboard scans the configured current and archive directories for Playwright HTML reports. Report metadata, creation dates, and stable per-report identities are persisted in SQLite.
 
+If a report cannot be read or is still being written, Refresh shows a warning
+and preserves its indexed metadata and analysis. Only confirmed missing folders
+are pruned. Current and Archive must not contain reports with the same folder
+name: conflicts retain the indexed report and show a warning; rename one folder
+outside the dashboard, then refresh. No automatic rename or migration occurs.
+
+Mutations use the selected report's identity. If another process replaced it,
+the action is rejected; refresh and review the replacement before trying again.
+
 ## Open and inspect reports
 
 Click a report row to open the Playwright HTML report. Use the always-available **Info** action to see its cached size, analysis runs, mapped Markdown analysis files, and saved trace digests.
 
 ## Search and filter
 
-Open **Search** in the header to filter persisted reports by metadata and creation date.
+Open **Search** using the magnifying-glass icon in the header to filter persisted reports by metadata and creation date. On narrow screens, Search is in **More actions**. The full-size **Refresh** button beside **Run Tests** rescans reports.
 
 - Metadata matching is case-insensitive and requires every whitespace-delimited search term. For example, `UAT e2e` matches `UAT EU e2e`.
 - **From** and **To** initially span the oldest through newest report across both Current and Archive, independently of metadata. Bounds use the catalog creation date in UTC, not the test execution timestamp. A single report gives equal bounds; an empty catalog leaves them blank and disabled.
@@ -24,9 +33,9 @@ Search is read-only. It queries the persisted report index without scanning dire
 
 ## Test Trends
 
-Open **Trends** beside Search in the dashboard header to launch a dedicated browser tab. The original dashboard stays usable and keeps its active Search filter. Refresh and Preferences are compact icon controls; on narrow screens they are in **More actions**. The Trends page also has a **Reports** link back to the dashboard.
+Open **Trends** beside Refresh in the dashboard header to launch a dedicated browser tab. The original dashboard stays usable and keeps its active Search filter. Search and Preferences are compact icon controls; on narrow screens they are in **More actions**. The Trends page also has a **Reports** link back to the dashboard.
 
-Enter metadata such as `DEV NA` and a **Test title contains** value, then select **Search matches**. The required title query is a literal, case-insensitive substring of the test's leaf title (1 to 256 characters), not a regular expression or an inferred test ID. A full title or a stable fragment works across title and file moves. The date fields default to the complete Current + Archive range and use catalog creation dates in UTC.
+Enter metadata such as `DEV NA` and a **Test title contains** value, then select **Search matches**. Loading the report catalog does not move keyboard focus, so you can start typing in either input immediately. The required title query is a literal, case-insensitive substring of the test's leaf title (1 to 256 characters), not a regular expression or an inferred test ID. A full title or a stable fragment works across title and file moves. The date fields default to the complete Current + Archive range and use catalog creation dates in UTC.
 
 Search refreshes the catalog and captures matches from the currently available reports. Review the matches before selecting **Generate trend**:
 
@@ -102,6 +111,23 @@ Click **Delete** on one row, or select rows and choose **Actions > Delete select
 ## Extract traces
 
 Click **Extract** on a report to unpack its Playwright trace `.zip` files into raw trace data on the host machine. Extraction is available per report; archive and delete support bulk selection.
+
+Current and Archived reports use up to four reusable worker processes. Each ZIP
+is extracted into private staging, then its complete folder is published beside
+the ZIP. Existing destination folders are left untouched. If extraction fails,
+workers finish their active jobs before staging is cleaned and the error is shown;
+already published complete folders remain available and a retry skips them.
+Legacy folders are still treated as existing extractions, not revalidated.
+
+Extract shares a preparation queue with Analyze Failures: only one report's
+preparation runs at a time, keeping these buttons within four workers across the
+dashboard server. Other requests show **Waiting for preparation slot**; extraction
+then shows completed/total progress. The server stays responsive. Queued and
+running extractions prevent rename, archive, delete, analysis, or digest actions
+on the same report, and prevent changes to storage paths.
+
+Extract is not needed before Analyze Failures. Failure preparation uses the
+reader's separate ZIP cache rather than these raw extraction folders.
 
 For structured, test-specific output, use [Selective Trace Digestion](trace-digestion.md).
 

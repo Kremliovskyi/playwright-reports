@@ -1,4 +1,4 @@
-import AdmZip from "adm-zip";
+import { readReportArchive } from "./report-archive";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
@@ -38,19 +38,7 @@ export function normalizeSuiteTitle(title: string): string {
 }
 
 function readTrendArchive(html: string): (name: string) => any {
-  const encoded =
-    html.match(/window\.playwrightReportBase64\s*=\s*["']([^"']+)["']/)?.[1] ??
-    html.match(
-      /<(?:script|template)\b[^>]*\bid=["']playwrightReportBase64["'][^>]*>([^<]+)<\/(?:script|template)>/
-    )?.[1];
-  if (!encoded)
-    throw new Error("Unsupported report: embedded report data is missing.");
-  const zip = new AdmZip(
-    Buffer.from(
-      encoded.trim().replace(/^data:application\/zip;base64,/, ""),
-      "base64"
-    )
-  );
+  const zip = readReportArchive(html);
   return (name: string): any => {
     const entry = zip.getEntry(name);
     if (!entry || entry.header.size > 64 * 1024 * 1024)

@@ -1,8 +1,10 @@
 {
   "name": "playwright-reports",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Local dashboard for running, managing and analyzing Playwright reports.",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0 <27"
+  },
   "bin": {
     "playwright-reports": "dist/cli.js"
   },
@@ -15,17 +17,20 @@
     "build": "concurrently \"tsc -p tsconfig.server.json\" \"tsc -p tsconfig.client.json\" && npm run copy-assets",
     "copy-assets": "node copy-assets.js",
     "start": "npm run build && pm2 start ecosystem.config.js",
+    "start:foreground": "npm run build && node dist/server.js",
     "stop": "pm2 stop playwright-reports",
     "restart": "npm run build && pm2 restart playwright-reports",
     "logs": "pm2 logs playwright-reports",
     "delete": "pm2 delete playwright-reports",
-    "test": "npm run build && node --test tests/*.test.js"
+    "test": "npm run build && node --test tests/*.test.js",
+    "test:browser": "npm run build && playwright test",
+    "test:all": "npm test && npm run test:browser"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.6",
+    "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.8",
     "@github/copilot-sdk": "^1.0.3",
     "@types/better-sqlite3": "^7.6.13",
     "@xterm/addon-fit": "^0.11.0",
@@ -36,7 +41,7 @@
     "express": "^5.2.1",
     "glob": "^13.0.6",
     "jiti": "^2.6.1",
-    "markdown-it": "^14.1.1",
+    "markdown-it": "^14.3.3",
     "pm2": "^7.0.4",
     "tree-kill": "^1.2.2"
   },
@@ -48,6 +53,7 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/adm-zip": "^0.5.7",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",

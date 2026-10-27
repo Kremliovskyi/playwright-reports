@@ -6,7 +6,7 @@ export type PlaywrightConfigProjection = {
   ariaSnapshotPathTemplate?: string;
 };
 
-type LoaderResponse =
+export type LoaderResponse =
   | { ok: true; projection: PlaywrightConfigProjection }
   | { ok: false; error: string };
 
@@ -45,6 +45,8 @@ export const loadPlaywrightConfigProjection = (
     );
     let stderr = "";
     let settled = false;
+    let response: LoaderResponse | undefined;
+    let terminationTimer: ReturnType<typeof setTimeout> | undefined;
 
     child.stderr?.on("data", (chunk) => {
       if (stderr.length < MAX_STDERR_LENGTH)
@@ -53,59 +55,52 @@ export const loadPlaywrightConfigProjection = (
 
     const cleanup = () => {
       clearTimeout(timeout);
+      clearTimeout(terminationTimer);
       child.removeAllListeners();
       child.stderr?.removeAllListeners();
     };
-    const finish = (callback: () => void, terminateChild: boolean = false) => {
+    const finish = (callback: () => void) => {
       if (settled) return;
       settled = true;
       cleanup();
-      if (terminateChild && !child.killed) child.kill();
       callback();
     };
     const diagnostic = () => (stderr.trim() ? `\n${stderr.trim()}` : "");
+    const terminate = (result: LoaderResponse) => {
+      if (settled || response) return;
+      response = result;
+      clearTimeout(timeout);
+      child.kill("SIGTERM");
+      terminationTimer = setTimeout(() => child.kill("SIGKILL"), 1000);
+    };
 
     const timeout = setTimeout(() => {
-      finish(
-        () =>
-          reject(
-            new Error(
-              `Timed out loading Playwright config after ${options.timeoutMs || DEFAULT_TIMEOUT_MS}ms${diagnostic()}`,
-            ),
-          ),
-        true,
-      );
+      terminate({
+        ok: false,
+        error: `Timed out loading Playwright config after ${options.timeoutMs || DEFAULT_TIMEOUT_MS}ms${diagnostic()}`,
+      });
     }, options.timeoutMs || DEFAULT_TIMEOUT_MS);
 
     child.once("message", (message) => {
       if (!isLoaderResponse(message)) {
-        finish(
-          () =>
-            reject(new Error("Invalid response from Playwright config loader")),
-          true,
-        );
+        terminate({ ok: false, error: "Invalid response from Playwright config loader" });
         return;
       }
       if (!message.ok) {
-        finish(
-          () => reject(new Error(`${message.error}${diagnostic()}`)),
-          true,
-        );
+        terminate({ ok: false, error: `${message.error}${diagnostic()}` });
         return;
       }
-      finish(() => resolve(message.projection));
+      terminate(message);
     });
     child.once("error", (error) => {
-      finish(() => reject(error), true);
+      finish(() => reject(error));
     });
     child.once("exit", (code, signal) => {
-      finish(() =>
-        reject(
-          new Error(
-            `Playwright config loader exited before responding (code ${code}, signal ${signal})${diagnostic()}`,
-          ),
-        ),
-      );
+      finish(() => {
+        if (response?.ok) resolve(response.projection);
+        else reject(new Error(response?.error ||
+          `Playwright config loader exited before responding (code ${code}, signal ${signal})${diagnostic()}`));
+      });
     });
   });
 };

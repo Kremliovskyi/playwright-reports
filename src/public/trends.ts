@@ -367,7 +367,6 @@ namespace TrendView {
         const bounds = this.setBounds(catalog);
         this.message(bounds.rangeStart ? "" : "No reports available.");
         this.input("apply").disabled = !bounds.rangeStart;
-        this.input("test-query").focus();
       } catch (error) {
         if (!this.destroyed) this.message((error as Error).message, true);
       }

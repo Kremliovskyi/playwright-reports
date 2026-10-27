@@ -216,6 +216,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "failures-modal-grouped-link",
   ) as HTMLAnchorElement;
   const activeFailureAnalyses = new Set<string>();
+  const activeExtractions = new Set<string>();
 
   const openConfirm = DashboardConfirm.create();
 
@@ -1671,14 +1672,74 @@ document.addEventListener("DOMContentLoaded", () => {
     }, 2000);
   };
 
+  const waitForProgressStream = (stream: EventSource): Promise<void> =>
+    new Promise((resolve) => {
+      if (stream.readyState === EventSource.OPEN) {
+        resolve();
+        return;
+      }
+      const finish = () => {
+        clearTimeout(timer);
+        stream.removeEventListener("open", finish);
+        stream.removeEventListener("error", unavailable);
+        resolve();
+      };
+      const unavailable = () => {
+        console.warn("Live progress is unavailable; continuing the report operation.");
+        finish();
+      };
+      const timer = setTimeout(unavailable, 2000);
+      stream.addEventListener("open", finish);
+      stream.addEventListener("error", unavailable);
+    });
+
+  let progressStream: EventSource | null = null;
+  let progressSubscribers = 0;
+  const subscribeProgress = (type: string, listener: (event: MessageEvent) => void) => {
+    const stream = progressStream ??= new EventSource("/api/logs");
+    progressSubscribers++;
+    stream.addEventListener(type, listener);
+    return {
+      ready: waitForProgressStream(stream),
+      close: () => {
+        stream.removeEventListener(type, listener);
+        if (--progressSubscribers === 0) {
+          stream.close();
+          progressStream = null;
+        }
+      },
+    };
+  };
+
   // Logic to handle individual extraction
   const handleExtract = async (reportPath: string, row: HTMLElement) => {
-    showRowProgress(row, "Extracting...");
+    if (activeExtractions.has(reportPath) || activeFailureAnalyses.has(reportPath)) return;
+    activeExtractions.add(reportPath);
+    showRowProgress(row, "Preparing extraction...");
+    let extractionEvents: ReturnType<typeof subscribeProgress> | null = null;
     try {
+      const target = reportTargets.get(reportPath);
+      try {
+        extractionEvents = subscribeProgress("trace-extraction", (event: MessageEvent) => {
+          try {
+            const progress = JSON.parse(event.data);
+            if (progress.reportUuid !== target.reportUuid) return;
+            if (progress.phase === "queued")
+              showRowProgress(row, "Waiting for preparation slot...");
+            else if (progress.phase === "progress")
+              showRowProgress(row, `Extracting ${progress.completed}/${progress.total}...`);
+          } catch (error) {
+            console.warn("Extraction progress could not be read.", error);
+          }
+        });
+        await extractionEvents.ready;
+      } catch (error) {
+        console.warn("Extraction progress is unavailable.", error);
+      }
       const response = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reportTargets.get(reportPath)),
+        body: JSON.stringify(target),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
@@ -1687,23 +1748,28 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Extraction failed API call:", err);
       hideRowProgress(row, "error", "Extraction failed");
       showErrorDialog("Extraction failed", err);
+    } finally {
+      extractionEvents?.close();
+      activeExtractions.delete(reportPath);
     }
   };
 
   // Logic to handle failure analysis (playwright-traces-reader `failures` + Copilot SDK per-trace records)
   const handleFailures = async (reportPath: string, row: HTMLElement) => {
-    if (activeFailureAnalyses.has(reportPath)) return;
+    if (activeFailureAnalyses.has(reportPath) || activeExtractions.has(reportPath)) return;
     activeFailureAnalyses.add(reportPath);
     showRowProgress(row, "Checking Copilot...");
 
     // Subscribe to per-trace AI analysis progress over SSE.
-    let aiEvents: EventSource | null = null;
+    let aiEvents: ReturnType<typeof subscribeProgress> | null = null;
     try {
-      aiEvents = new EventSource("/api/logs");
-      aiEvents.addEventListener("failure-analysis", (e: MessageEvent) => {
+      aiEvents = subscribeProgress("failure-analysis", (e: MessageEvent) => {
         try {
           const p = JSON.parse(e.data);
-          if (p.phase === "digest") {
+          if (p.reportUuid !== reportTargets.get(reportPath).reportUuid) return;
+          if (p.phase === "queued") {
+            showRowProgress(row, "Waiting for preparation slot...");
+          } else if (p.phase === "digest") {
             showRowProgress(row, "Digesting failures...");
           } else if (p.phase === "start") {
             showRowProgress(
@@ -1724,12 +1790,13 @@ document.addEventListener("DOMContentLoaded", () => {
           } else if (p.phase === "grouping-failed") {
             showRowProgress(row, "Finalizing with grouping warning...");
           }
-        } catch {
-          /* ignore malformed event */
+        } catch (error) {
+          console.warn("Failure analysis progress could not be read.", error);
         }
       });
-    } catch {
-      /* SSE is optional progress sugar */
+      await aiEvents.ready;
+    } catch (error) {
+      console.warn("Failure analysis progress is unavailable.", error);
     }
 
     try {

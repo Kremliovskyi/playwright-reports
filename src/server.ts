@@ -22,7 +22,7 @@ import { registerReportCatalog } from "./report-catalog";
 import { registerReportRoutes } from "./report-routes";
 import { assertReportInstance } from "./report-storage";
 import { registerRunnerRoutes } from "./runner-routes";
-import { activeDigests, activeFailureAnalyses, appConfig, refreshConfigCache, reportIsBusy } from "./runtime";
+import { activeDigests, activeExtractions, activeFailureAnalyses, appConfig, refreshConfigCache, reportIsBusy } from "./runtime";
 import { registerTrendsRoutes } from "./trends-routes";
 import { registerTraceViewerRoutes } from "./trace-viewer-routes";
 import { registerVaultRoutes } from "./vault-routes";
@@ -87,16 +87,18 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
       return res.status(404).json({ error: "Report not found. Refresh before trying again." });
     }
     if (report && reportIsBusy(report.uuid) &&
-      !["/api/failures", "/api/digest-test", "/api/report-metadata"].includes(req.path))
+      (activeExtractions.has(report.uuid)
+        ? req.path !== "/api/report-metadata"
+        : !["/api/failures", "/api/digest-test", "/api/report-metadata"].includes(req.path)))
       return res.status(409).json({
         code: "REPORT_ARTIFACTS_BUSY",
-        error: "Wait for this report's analysis or digest to finish."
+        error: "Wait for this report's extraction, analysis or digest to finish."
       });
   }
   if (
     req.method === "POST" &&
     req.path === "/api/config" &&
-    (activeFailureAnalyses.size || activeDigests.size)
+    (activeFailureAnalyses.size || activeDigests.size || activeExtractions.size)
   ) {
     if (
       ["currentPath", "archivePath", "vaultPath"].some(
@@ -107,7 +109,7 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
     )
       return res.status(409).json({
         error:
-          "Storage paths cannot change while analysis or digest jobs are running."
+          "Storage paths cannot change while extraction, analysis or digest jobs are queued or running."
       });
   }
   next();

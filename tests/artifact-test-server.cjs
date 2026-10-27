@@ -188,13 +188,26 @@ analyzer.withCopilotAnalysisClient = async (_models, _token, operation) => {
     throw new Error("Synthetic authentication failure");
   return operation({});
 };
-analyzer.analyzeRun = async () => ({
-  records: [],
-  analyzed: 0,
-  failed: 0,
-  skipped: 0,
-});
-require("node:child_process").spawn = (_executable, args) => {
+analyzer.analyzeRun = async (_client, _runDir, manifest) => {
+  if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
+    process.send?.({ event: "ai-started", count: manifest.failures.length });
+    if (fs.existsSync(path.join(root, "hold-ai")))
+      await new Promise(resolve => {
+        const resume = message => {
+          if (!message.resumeAi) return;
+          process.removeListener("message", resume);
+          resolve();
+        };
+        process.on("message", resume);
+      });
+  }
+  return { records: [], analyzed: 0, failed: 0, skipped: 0 };
+};
+const actualSpawn = require("node:child_process").spawn;
+require("node:child_process").spawn = (_executable, args, options) => {
+  fs.appendFileSync(path.join(root, "command-args.jsonl"), JSON.stringify(args) + "\n");
+  if (process.env.ARTIFACT_TEST_REAL_READER)
+    return actualSpawn(_executable, args, options);
   const child = new EventEmitter();
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -260,6 +273,36 @@ require("node:child_process").spawn = (_executable, args) => {
   } else setImmediate(complete);
   return child;
 };
+if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
+  const runtime = require("../dist/runtime");
+  const broadcast = runtime.broadcastJson;
+  runtime.broadcastJson = (type, payload) => {
+    broadcast(type, payload);
+    process.send?.({ event: type, ...payload });
+  };
+  const actualFork = require("node:child_process").fork;
+  require("node:child_process").fork = (...args) => {
+    const worker = actualFork(...args);
+    if (path.basename(args[0]) === "trace-extraction-worker.js") {
+      process.send?.({ event: "extraction-worker-started" });
+      const send = worker.send.bind(worker);
+      worker.send = (message, ...rest) => {
+        if (fs.existsSync(path.join(root, "hold-extraction"))) {
+          const resume = value => {
+            if (!value.resumeExtraction) return;
+            process.removeListener("message", resume);
+            send(message, ...rest);
+          };
+          process.on("message", resume);
+          process.send?.({ event: "extraction-held" });
+          return true;
+        }
+        return send(message, ...rest);
+      };
+    }
+    return worker;
+  };
+}
 const movedBirthtimes = new Map();
 const originalStat = fs.statSync;
 const originalReadFile = fs.readFileSync;

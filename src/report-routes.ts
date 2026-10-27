@@ -16,83 +16,66 @@ import {
   ArtifactError,
   preserveArchiveAnalyses
 } from "./report-artifacts";
-import { assertCurrentReportSource, isWithin, moveReportFolder, purgeReportDigests } from "./report-storage";
-import { appConfig, invalidateReportSize, refreshConfigCache } from "./runtime";
+import { assertCurrentReportSource, assertReportInstance, isWithin, moveReportFolder, parseDashboardReportPath, purgeReportDigests } from "./report-storage";
+import { activeExtractions, appConfig, broadcastJson, invalidateReportSize, refreshConfigCache, reportIsBusy } from "./runtime";
+import { withReportPreparation } from "./report-preparation";
+import { extractReportTraces } from "./trace-extraction";
 import { resolveVaultFile } from "./vault-files";
 
 export function registerReportRoutes(app: Express): void {
 
-  // Auto-extract traces endpoint
-  app.post("/api/extract", (req: Request, res: Response): any => {
+  app.post("/api/extract", async (req: Request, res: Response): Promise<any> => {
+    refreshConfigCache();
     const { reportPath } = req.body;
-    if (!reportPath)
+    if (typeof reportPath !== "string" || !reportPath)
       return res.status(400).json({ error: "reportPath is required" });
-
+    const parsed = parseDashboardReportPath(reportPath);
+    const report = parsed && getReport(parsed.folderName);
+    if (!report || report.reportPath !== reportPath)
+      return res.status(404).json({ error: "Report not found. Refresh before trying again." });
+    if (reportIsBusy(report.uuid))
+      return res.status(409).json({
+        code: "REPORT_ARTIFACTS_BUSY",
+        error: "Wait for this report's extraction, analysis or digest to finish."
+      });
+    activeExtractions.add(report.uuid);
     try {
-      // 1. Determine which base directory this is from (current vs archive)
-      const isArchive = reportPath.startsWith("/reports/archive/");
-      const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
-
-      if (!basePath) {
-        return res.status(400).json({ error: "Base directory not configured" });
-      }
-
-      // 2. Extract the actual report folder name from the URL path
-      // e.g., /reports/current/my-test-run/index.html -> my-test-run
-      const urlParts = reportPath.split("/");
-      if (urlParts.length < 4)
-        return res.status(400).json({ error: "Invalid report path format" });
-
-      const folderName = urlParts[3];
-
-      // 3. Construct the absolute physical path to the report's data folder
-      const physicalDataFolder = path.join(basePath, folderName, "data");
-
-      if (!fs.existsSync(physicalDataFolder)) {
-        return res.json({
-          success: true,
-          extractedCount: 0,
-          message: "No data folder found, nothing to extract."
+      const assertCurrent = () => {
+        if (getReport(report.id)?.uuid !== report.uuid)
+          throw new ArtifactError("REPORT_CHANGED", "The report changed while waiting for extraction.");
+        return assertReportInstance(report, req.body.reportUuid, reportPath);
+      };
+      assertCurrent();
+      broadcastJson("trace-extraction", { reportUuid: report.uuid, phase: "queued" });
+      const result = await withReportPreparation(async () => {
+        const dataDir = path.join(assertCurrent(), "data");
+        if (!fs.existsSync(dataDir))
+          return {
+            success: true,
+            extractedCount: 0,
+            message: "No data folder found, nothing to extract."
+          };
+        const extractedCount = await extractReportTraces(dataDir, {
+          beforePublish: assertCurrent,
+          onProgress: (progress) => broadcastJson("trace-extraction", {
+            reportUuid: report.uuid,
+            phase: "progress",
+            ...progress
+          })
         });
-      }
-
-      // 4. Scan the data folder for .zip files
-      let extractedCount = 0;
-      const entries = fs.readdirSync(physicalDataFolder, { withFileTypes: true });
-
-      for (const dirent of entries) {
-        if (dirent.isFile() && dirent.name.endsWith(".zip")) {
-          const zipFile = path.join(physicalDataFolder, dirent.name);
-
-          // Target extraction folder: drop the '.zip' extension
-          const targetFolderName = dirent.name.replace(".zip", "");
-          const targetExtractionPath = path.join(
-            physicalDataFolder,
-            targetFolderName
-          );
-
-          // Idempotency check: Skip if the unzipped folder already exists!
-          if (fs.existsSync(targetExtractionPath)) {
-            continue;
-          }
-
-          // Lazy load AdmZip only when actually extracting to save memory globally
-          const AdmZip = require("adm-zip");
-          const zip = new AdmZip(zipFile);
-
-          // Extract everything into the newly named folder
-          zip.extractAllTo(targetExtractionPath, true); // true = overwrite
-          extractedCount++;
-        }
-      }
-
-      if (extractedCount > 0) invalidateReportSize(folderName);
-      res.json({ success: true, extractedCount });
-    } catch (error: any) {
+        return { success: true, extractedCount };
+      });
+      res.json(result);
+    } catch (error) {
       console.error("Extraction error:", error);
+      if (error instanceof ArtifactError)
+        return res.status(409).json({ code: error.code, error: error.message });
       res
         .status(500)
-        .json({ error: "Failed to extract trace files: " + error.message });
+        .json({ error: "Failed to extract trace files: " + (error instanceof Error ? error.message : String(error)) });
+    } finally {
+      invalidateReportSize(report.id);
+      activeExtractions.delete(report.uuid);
     }
   });
 
@@ -376,4 +359,3 @@ export function registerReportRoutes(app: Express): void {
     }
   });
 }
-

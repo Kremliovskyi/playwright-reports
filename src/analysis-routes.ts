@@ -35,6 +35,7 @@ import {
 } from "./report-artifacts";
 import { assertReportInstance, parseDashboardReportPath } from "./report-storage";
 import { activeFailureAnalyses, appConfig, broadcastJson, refreshConfigCache, reportIsBusy } from "./runtime";
+import { PREPARATION_WORKERS, withReportPreparation } from "./report-preparation";
 
 export function registerAnalysisRoutes(app: Express): void {
 
@@ -142,6 +143,8 @@ export function registerAnalysisRoutes(app: Express): void {
         error: "The previous analysis changed. Refresh and try again."
       });
     activeFailureAnalyses.add(analysisKey);
+    const broadcastProgress = (progress: object) =>
+      broadcastJson("failure-analysis", { reportUuid: report.uuid, ...progress });
     let generationRoot = "";
     let persisted = false;
     try {
@@ -197,48 +200,54 @@ export function registerAnalysisRoutes(app: Express): void {
           const pkgMain =
             require.resolve("@andrii_kremlovskyi/playwright-traces-reader");
           const cliPath = path.join(path.dirname(pkgMain), "cli.js");
-          broadcastJson("failure-analysis", { phase: "digest" });
-          const stdout = await new Promise<string>((resolve, reject) => {
-            const child = spawn(
-              process.execPath,
-              [
-                cliPath,
-                "failures",
-                reportRootPath,
-                outputDir,
-                "--format",
-                "json"
-              ],
-              {
-                cwd: config.currentPath
-              }
-            );
-            let commandStdout = "";
-            let commandStderr = "";
-            child.stdout.on("data", (chunk) => {
-              commandStdout += chunk.toString();
-            });
-            child.stderr.on("data", (chunk) => {
-              commandStderr += chunk.toString();
-            });
-            child.on("error", (error) =>
-              reject(
-                new Error("Failed to start failures command: " + error.message)
-              )
-            );
-            child.on("close", (code) => {
-              if (code === 0) {
-                resolve(commandStdout);
-              } else {
+          broadcastProgress({ phase: "queued" });
+          const stdout = await withReportPreparation(() => {
+            assertReportInstance(report, report.uuid, reportPath);
+            broadcastProgress({ phase: "digest" });
+            return new Promise<string>((resolve, reject) => {
+              const child = spawn(
+                process.execPath,
+                [
+                  cliPath,
+                  "failures",
+                  reportRootPath,
+                  outputDir,
+                  "--format",
+                  "json",
+                  "--workers",
+                  String(PREPARATION_WORKERS)
+                ],
+                {
+                  cwd: config.currentPath
+                }
+              );
+              let commandStdout = "";
+              let commandStderr = "";
+              child.stdout.on("data", (chunk) => {
+                commandStdout += chunk.toString();
+              });
+              child.stderr.on("data", (chunk) => {
+                commandStderr += chunk.toString();
+              });
+              child.on("error", (error) =>
                 reject(
-                  new Error(
-                    "Failures command failed: " +
-                    (commandStderr.trim() ||
-                      commandStdout.trim() ||
-                      `exit code ${code}`)
-                  )
-                );
-              }
+                  new Error("Failed to start failures command: " + error.message)
+                )
+              );
+              child.on("close", (code) => {
+                if (code === 0) {
+                  resolve(commandStdout);
+                } else {
+                  reject(
+                    new Error(
+                      "Failures command failed: " +
+                      (commandStderr.trim() ||
+                        commandStdout.trim() ||
+                        `exit code ${code}`)
+                    )
+                  );
+                }
+              });
             });
           });
 
@@ -299,7 +308,7 @@ export function registerAnalysisRoutes(app: Express): void {
             const analyzableTotal = (manifest.failures || []).filter(
               isAnalyzableEntry
             ).length;
-            broadcastJson("failure-analysis", {
+            broadcastProgress({
               phase: "start",
               total: analyzableTotal
             });
@@ -309,20 +318,20 @@ export function registerAnalysisRoutes(app: Express): void {
               manifest,
               config.copilotModel,
               (p) => {
-                broadcastJson("failure-analysis", { phase: "progress", ...p });
+                broadcastProgress({ phase: "progress", ...p });
               }
             );
             const { records, ...summary } = analysisResult;
             analysisRecords = records;
             aiSummary = summary;
-            broadcastJson("failure-analysis", {
+            broadcastProgress({
               phase: "complete",
               ...aiSummary
             });
           } catch (err: any) {
             aiError = err?.message || String(err);
             console.error("AI analysis failed:", err);
-            broadcastJson("failure-analysis", {
+            broadcastProgress({
               phase: "failed",
               error: aiError
             });
@@ -333,7 +342,7 @@ export function registerAnalysisRoutes(app: Express): void {
           ).length;
           if (analyzableTotal > 1 && analysisRecords.length > 0) {
             try {
-              broadcastJson("failure-analysis", { phase: "grouping-start" });
+              broadcastProgress({ phase: "grouping-start" });
               const result = await groupRun(
                 client,
                 manifest.runDir,
@@ -353,7 +362,7 @@ export function registerAnalysisRoutes(app: Express): void {
                 relativePath,
                 url: `/reports/current/${relativePath}`
               };
-              broadcastJson("failure-analysis", {
+              broadcastProgress({
                 phase: "grouping-complete",
                 problemCount: result.problemCount
               });
@@ -362,7 +371,7 @@ export function registerAnalysisRoutes(app: Express): void {
                 groupingDiagnostics = err.diagnostics;
               groupingError = err?.message || String(err);
               console.error("AI problem grouping failed:", err);
-              broadcastJson("failure-analysis", {
+              broadcastProgress({
                 phase: "grouping-failed",
                 error: groupingError
               });

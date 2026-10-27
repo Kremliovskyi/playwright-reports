@@ -29,6 +29,21 @@ Existing analysis paths remain unchanged until an explicitly confirmed rerun. Ma
 
 Only one failure-analysis request may run for a report at a time. Repeated clicks in the same dashboard page are ignored while that report is active. If another browser tab or client starts the same report concurrently, the server returns `FAILURE_ANALYSIS_IN_PROGRESS`; the row briefly shows **Analysis already running** instead of starting a second CLI process. Different reports can still be analyzed independently, and the bounded three-way Copilot processing inside one completed digest is unaffected.
 
+Preparation explicitly uses four trace-reader workers. Each worker extracts and
+prepares one attempt end-to-end before taking another, rather than extracting the
+entire report first. Only explicit per-attempt passes are excluded early: failed
+retries of eventually passing tests, timeouts, interruptions, and expected
+failures remain candidates. Missing metadata retains the reader's fallback;
+conflicting or ambiguous attempt metadata produces an error.
+
+Extract and Analyze Failures share a FIFO preparation queue. Only one report's
+preparation runs at a time, with up to four workers across these actions.
+Waiting rows show **Waiting for preparation slot**. The slot is released when
+preparation finishes, before Copilot analysis or grouping, so the next report can
+prepare while AI analyzes the previous one. Model selection, prompts, grouping,
+and AI concurrency are unchanged. Progress events are scoped to the report UUID.
+Manual single-trace Digest and external reader processes are not in this queue.
+
 The trace reader does not extract ZIPs into the report. It uses a persistent, content-addressed cache under the operating system's temporary directory:
 
 ```text
@@ -74,7 +89,8 @@ The console and network error files are created only when the trace contains tha
 flowchart TD
 	USER["User clicks Analyze Failures"] --> API["POST /api/failures<br/>server.ts"]
 
-	API --> CLI["Trace reader CLI<br/>node cli.js failures REPORT OUTPUT --format json"]
+	API --> QUEUE["Shared preparation queue"]
+	QUEUE --> CLI["Trace reader CLI<br/>node cli.js failures REPORT OUTPUT --format json --workers 4"]
 	CLI --> RUN["Generated run directory"]
 	RUN --> MANIFEST["index.json<br/>attempt manifest"]
 	RUN --> FOLDERS["One folder per attempt/retry"]

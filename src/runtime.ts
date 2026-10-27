@@ -20,7 +20,10 @@ export const activeFailureAnalyses = new Set<string>();
 
 export const activeDigests = new Set<string>();
 
+export const activeExtractions = new Set<string>();
+
 export const reportIsBusy = (uuid: string): boolean =>
+  activeExtractions.has(uuid) ||
   activeFailureAnalyses.has(uuid) ||
   [...activeDigests].some((key) => key.startsWith(uuid + ":"));
 

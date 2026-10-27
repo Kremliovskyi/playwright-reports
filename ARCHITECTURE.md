@@ -18,6 +18,8 @@ background indexing service is required.
 | [report-catalog.ts](src/report-catalog.ts) | Scan/reconciliation, search and agent discovery |
 | [report-storage.ts](src/report-storage.ts) | Instance/path checks, moves with rollback and report-owned cleanup |
 | [report-routes.ts](src/report-routes.ts) | Extract, rename, archive, delete and metadata HTTP actions |
+| [report-preparation.ts](src/report-preparation.ts) | Shared FIFO preparation queue and four-worker budget for Extract and Analyze Failures |
+| [trace-extraction.ts](src/trace-extraction.ts), [trace-extraction-worker.ts](src/trace-extraction-worker.ts) | Raw ZIP worker pool, complete-folder publication and failed-job cleanup |
 | [report-artifacts.ts](src/report-artifacts.ts) | Artifact inventory, ownership, confirmed removal and digest publication |
 | [artifact-routes.ts](src/artifact-routes.ts) | Info, size and individual artifact actions |
 | [runner-routes.ts](src/runner-routes.ts) | Configuration discovery and local runner lifecycle |
@@ -107,6 +109,22 @@ cleanup/editor consent. Cleanup failures must be logged or returned to the user.
 Report folder size is separate from Info because recursive scans can be expensive.
 Analysis outputs are siblings of report folders; deleting output does not change
 report size. Rename/archive/delete/extract/replacement invalidate the size cache.
+
+Extract registers report ownership before queueing, so lifecycle mutations and
+storage-path changes stay blocked while it waits as well as while workers run.
+Its workers write private staging folders; the coordinator rechecks report
+identity before atomically publishing each complete extraction. On errors it
+stops dispatch, drains workers, cleans staging, invalidates the size cache (even
+after partial success), and releases report ownership.
+
+Extract and failure preparation share one FIFO slot per dashboard server.
+Each slot permits four preparation workers; the failures CLI receives an explicit
+`--workers 4`. The slot ends before AI processing, which keeps its existing
+three-way concurrency. Manual Digest and external CLI consumers are independent.
+Preparation and AI progress are correlated by report UUID. Active actions share
+one browser SSE connection and wait for it to open before submitting work.
+Connection errors or a two-second connection timeout warn in the browser console
+but do not prevent the operation.
 
 ## Runner lifecycle
 

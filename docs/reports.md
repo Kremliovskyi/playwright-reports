@@ -112,6 +112,23 @@ Click **Delete** on one row, or select rows and choose **Actions > Delete select
 
 Click **Extract** on a report to unpack its Playwright trace `.zip` files into raw trace data on the host machine. Extraction is available per report; archive and delete support bulk selection.
 
+Current and Archived reports use up to four reusable worker processes. Each ZIP
+is extracted into private staging, then its complete folder is published beside
+the ZIP. Existing destination folders are left untouched. If extraction fails,
+workers finish their active jobs before staging is cleaned and the error is shown;
+already published complete folders remain available and a retry skips them.
+Legacy folders are still treated as existing extractions, not revalidated.
+
+Extract shares a preparation queue with Analyze Failures: only one report's
+preparation runs at a time, keeping these buttons within four workers across the
+dashboard server. Other requests show **Waiting for preparation slot**; extraction
+then shows completed/total progress. The server stays responsive. Queued and
+running extractions prevent rename, archive, delete, analysis, or digest actions
+on the same report, and prevent changes to storage paths.
+
+Extract is not needed before Analyze Failures. Failure preparation uses the
+reader's separate ZIP cache rather than these raw extraction folders.
+
 For structured, test-specific output, use [Selective Trace Digestion](trace-digestion.md).
 
 ## View analysis notes

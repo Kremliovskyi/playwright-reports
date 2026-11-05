@@ -101,6 +101,14 @@ async (page) => {
     .getByRole("button", { name: "Delete & Analyze", exact: true })
     .click();
   await page.locator("#failures-modal").waitFor();
+  verify(
+    (await page.locator("#failures-modal").innerText()).includes("coverage is unknown"),
+    "Incomplete coverage must remain visible in the completion dialog",
+  );
+  verify(
+    (await page.locator("#failures-modal").getAttribute("data-outcome")) === "warning",
+    "Replacement analysis with coverage warnings must not be styled as success",
+  );
   const replacement = await info("fixture-report");
   verify(
     replacement.runs.length === 1 &&

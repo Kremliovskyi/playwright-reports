@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import {
   GROUPED_ANALYSIS_FILENAME
-} from "./copilot-grouper";
+} from "@andrii_kremlovskyi/playwright-failure-analyzer";
 import {
   getAllAnalysisRuns,
   getAnalysisRuns,

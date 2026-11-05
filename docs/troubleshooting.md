@@ -38,6 +38,13 @@ Click the header's **Copilot** chip to see the current authentication or model e
 
 See [Configuration](configuration.md) for model selection behavior.
 
+The dashboard uses the runtime bundled with the failure-analyzer package, not
+necessarily a globally installed CLI version. Successful CLI authentication or
+model discovery does not prove inference is permitted for both selected models.
+Check the reported model role and organization policy; models are not silently
+substituted. Also check token environment variables if a different account is
+used than the stored local login.
+
 ## Failure analysis fails with a trace-cache `EPERM` error
 
 An error containing `EPERM: operation not permitted, rename` and a path below `%TEMP%\playwright-traces-reader\trace-cache` is a trace ZIP cache publication failure on Windows. Current versions serialize analysis of the same report, accept a verified cache entry produced by another process, and retry transient antivirus or indexing locks.

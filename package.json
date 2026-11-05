@@ -30,8 +30,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "@andrii_kremlovskyi/playwright-failure-analyzer": "0.1.2",
     "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.8",
-    "@github/copilot-sdk": "^1.0.3",
     "@types/better-sqlite3": "^7.6.13",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

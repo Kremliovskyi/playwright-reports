@@ -12,13 +12,14 @@ import {
   copilotModels,
   FailureManifest,
   isAnalyzableEntry,
-  withCopilotAnalysisClient
-} from "./copilot-analyzer";
-import {
+  withCopilotAnalysisClient,
+  validateManifest,
+  measureCoverage,
   GroupingDiagnostics,
   GroupingRunError,
   groupRun
-} from "./copilot-grouper";
+} from "@andrii_kremlovskyi/playwright-failure-analyzer";
+import { getReportMetadata } from "@andrii_kremlovskyi/playwright-traces-reader";
 import {
   addAnalysisRun,
   deleteAnalysisRunIds,
@@ -178,7 +179,9 @@ export function registerAnalysisRoutes(app: Express): void {
               "ANALYSIS_CHANGED",
               "The report changed while preparing analysis."
             );
-        assertReportInstance(report, report.uuid, reportPath);
+          assertReportInstance(report, report.uuid, reportPath);
+          const metadata = await getReportMetadata(reportRootPath);
+          assertReportInstance(report, report.uuid, reportPath);
           if (previousRuns.length) {
             const removed = removeAnalysisArtifacts(
               config,
@@ -253,6 +256,7 @@ export function registerAnalysisRoutes(app: Express): void {
 
           const manifest = JSON.parse(stdout) as FailureManifest;
           assertOwnedPath(outputDir, manifest.runDir);
+          validateManifest(manifest, manifest.runDir);
           if (
             !Array.isArray(manifest.failures) ||
             !fs.existsSync(path.join(manifest.runDir, "index.json"))
@@ -290,6 +294,11 @@ export function registerAnalysisRoutes(app: Express): void {
             createdAt: new Date().toISOString()
           });
           persisted = true;
+          const coverage = measureCoverage(
+            metadata?.stats && Array.isArray(metadata.files) ? metadata : null,
+            manifest
+          );
+          const warnings = [...coverage.warnings];
 
           // Run Copilot SDK per-trace analysis over the digested failures (omits Before Hooks/skipped).
           let aiSummary: AnalyzeRunSummary | null = null;
@@ -323,6 +332,13 @@ export function registerAnalysisRoutes(app: Express): void {
             );
             const { records, ...summary } = analysisResult;
             analysisRecords = records;
+            for (const record of records) {
+              if (record.warning) warnings.push(record.warning);
+            }
+            if (summary.skipped)
+              warnings.push(`${summary.skipped} manifest entries were excluded from AI analysis.`);
+            if (summary.omitted)
+              warnings.push(`${summary.omitted} attempts were not analyzed.`);
             aiSummary = summary;
             broadcastProgress({
               phase: "complete",
@@ -356,6 +372,12 @@ export function registerAnalysisRoutes(app: Express): void {
                 .split(path.sep)
                 .join("/");
               groupingDiagnostics = result.diagnostics;
+              if (
+                result.diagnostics.evidenceErrorMessage ||
+                result.diagnostics.repairErrorMessage ||
+                result.diagnostics.omittedIssueCountAfterRepair
+              )
+                warnings.push("Problem grouping retained provisional or unclassified results; review its diagnostics.");
               grouping = {
                 problemCount: result.problemCount,
                 fileName: result.fileName,
@@ -385,6 +407,8 @@ export function registerAnalysisRoutes(app: Express): void {
             relativeRunDir,
             failuresUrl,
             manifest,
+            coverage,
+            warnings: [...new Set(warnings)],
             ai: aiSummary,
             aiError,
             grouping,

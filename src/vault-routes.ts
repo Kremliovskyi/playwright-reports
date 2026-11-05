@@ -5,7 +5,7 @@ import MarkdownIt from "markdown-it";
 import path from "path";
 import {
   GROUPED_ANALYSIS_FILENAME
-} from "./copilot-grouper";
+} from "@andrii_kremlovskyi/playwright-failure-analyzer";
 import {
   getAllAnalysisRuns
 } from "./db";
@@ -434,4 +434,3 @@ export function registerVaultRoutes(app: Express): void {
     }
   });
 }
-

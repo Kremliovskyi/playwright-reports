@@ -26,7 +26,7 @@ background indexing service is required.
 | [runner-command.ts](src/runner-command.ts) | Execution arguments and platform-specific command preparation |
 | [playwright-config-loader.ts](src/playwright-config-loader.ts) | Bounded, isolated configuration evaluation |
 | [analysis-routes.ts](src/analysis-routes.ts), [digest-routes.ts](src/digest-routes.ts) | Trace-reader CLI orchestration |
-| [copilot-analyzer.ts](src/copilot-analyzer.ts), [copilot-evidence.ts](src/copilot-evidence.ts), [copilot-grouper.ts](src/copilot-grouper.ts) | Per-attempt evidence, schema validation and semantic grouping |
+| [`@andrii_kremlovskyi/playwright-failure-analyzer`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-failure-analyzer) | Shared per-attempt evidence, schema validation, Copilot sessions and semantic grouping |
 | [report-archive.ts](src/report-archive.ts) | Shared embedded report ZIP decoding |
 | [report-trends.ts](src/report-trends.ts), [trends-routes.ts](src/trends-routes.ts) | Read-only timing interpretation and exact-attempt resolution |
 | [aria-routes.ts](src/aria-routes.ts) | ARIA failure extraction and reviewed snapshot writes |
@@ -43,6 +43,13 @@ the order in [index.html](src/public/index.html) is intentional.
 The independent Trends page retains its own [model](src/public/trends-model.ts),
 [DTO](src/public/trends-types.d.ts), and [view](src/public/trends.ts). The runner
 retains its separate [entry](src/public/runner.ts).
+
+The analyzer is pinned to the published 0.1.2 release. The dashboard uses its
+prepared-run API, not the standalone full-report runner: report UUIDs, replacement
+confirmation, preparation queue, database ownership, and SSE remain here.
+Algorithm tests live with the package; dashboard integration tests exercise the
+installed engine with synthetic model responses. Coverage and fallback warnings
+must be carried through the HTTP result and completion dialog.
 
 ## Report identity and reconciliation
 

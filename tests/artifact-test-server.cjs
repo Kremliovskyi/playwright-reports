@@ -11,6 +11,10 @@ const config = {
   currentPath: path.join(root, "current"),
   archivePath: path.join(root, "archive"),
   vaultPath: path.join(root, "vault"),
+  ...(process.env.ARTIFACT_TEST_REAL_ANALYZER ? {
+    copilotModel: "synthetic-small",
+    copilotBigModel: "synthetic-big",
+  } : {}),
 };
 for (const directory of [
   config.currentPath,
@@ -177,18 +181,70 @@ if (process.env.ARTIFACT_TEST_SEED === "trends") {
   }
 }
 let sequence = 0;
-const analyzer = require("../dist/copilot-analyzer");
+const analyzerPath = require.resolve("@andrii_kremlovskyi/playwright-failure-analyzer");
+const publishedAnalyzer = require(analyzerPath);
+const analyzer = { ...publishedAnalyzer };
+require.cache[analyzerPath].exports = analyzer;
 analyzer.copilotAccessCheck = async () => ({
+  ok: true,
   authenticated: true,
-  available: true,
 });
-analyzer.copilotModels = async () => ({ models: [] });
+analyzer.copilotModels = async () => ({
+  ok: true,
+  authenticated: true,
+  availableModels: ["synthetic-small", "synthetic-big"],
+});
+const syntheticClient = {
+  async createSession(sessionConfig) {
+    return {
+      on() { return () => {}; },
+      async disconnect() {},
+      async sendAndWait() {
+        if (fs.existsSync(path.join(root, "invalid-ai")))
+          return { data: { content: "not JSON" } };
+        const response = sessionConfig.model === "synthetic-big"
+          ? {
+              summary: "Two attempts share an unexpected status.",
+              problems: [{
+                title: "Unexpected response",
+                error: "Expected 200, received 503.",
+                failureExplanation: "The generated response differs from the assertion.",
+                issueIds: ["I1", "I2"],
+              }],
+              evidenceRequests: [],
+            }
+          : {
+              schemaVersion: 4,
+              issues: [{ blockIndex: 1, analysis: {
+                summary: "Unexpected response status.",
+                operation: "Check response status.",
+                expected: "200",
+                observed: "503",
+                likelyCause: "The generated service returned an error.",
+                relevantSignals: ["The assertion reports 503."],
+                confidence: "medium",
+                unknowns: ["The backend cause is not in the evidence."],
+              } }],
+            };
+        return { data: { content: JSON.stringify(response) } };
+      },
+    };
+  },
+};
 analyzer.withCopilotAnalysisClient = async (_models, _token, operation) => {
   if (fs.existsSync(path.join(root, "auth-fail")))
     throw new Error("Synthetic authentication failure");
-  return operation({});
+  if (fs.existsSync(path.join(root, "typed-auth-fail")))
+    throw new analyzer.CopilotAnalysisError(
+      "COPILOT_NOT_AUTHENTICATED", "Synthetic authentication failure", "",
+    );
+  if (fs.existsSync(path.join(root, "model-fail")))
+    throw new analyzer.CopilotAnalysisError(
+      "COPILOT_MODEL_UNAVAILABLE", "Synthetic unavailable small model", _models.smallModel, "small",
+    );
+  return operation(syntheticClient);
 };
-analyzer.analyzeRun = async (_client, _runDir, manifest) => {
+analyzer.analyzeRun = async (client, runDir, manifest, ...args) => {
   if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
     process.send?.({ event: "ai-started", count: manifest.failures.length });
     if (fs.existsSync(path.join(root, "hold-ai")))
@@ -201,7 +257,9 @@ analyzer.analyzeRun = async (_client, _runDir, manifest) => {
         process.on("message", resume);
       });
   }
-  return { records: [], analyzed: 0, failed: 0, skipped: 0 };
+  if (process.env.ARTIFACT_TEST_REAL_ANALYZER)
+    return publishedAnalyzer.analyzeRun(client, runDir, manifest, ...args);
+  return { records: [], total: 0, analyzed: 0, failed: 0, skipped: 0, omitted: 0 };
 };
 const actualSpawn = require("node:child_process").spawn;
 require("node:child_process").spawn = (_executable, args, options) => {
@@ -237,11 +295,31 @@ require("node:child_process").spawn = (_executable, args, options) => {
       let manifest;
       if (command === "failures") {
         manifest = { runDir, count: 0, failures: [] };
+        if (process.env.ARTIFACT_TEST_REAL_ANALYZER) {
+          for (const index of [0, 1]) {
+            const folder = `generated-case-${index}__retry0`;
+            fs.mkdirSync(path.join(runDir, folder));
+            fs.writeFileSync(
+              path.join(runDir, folder, "error.md"),
+              "# Generated failure\n\n# Error details\n\n```text\nExpected: 200\nReceived: 503\n```\n",
+            );
+            fs.writeFileSync(path.join(runDir, folder, "failure.json"), JSON.stringify({
+              testTitle: `Generated case ${index}`,
+              spec: "generated.spec.ts",
+            }));
+            manifest.failures.push({
+              folder, title: `Generated case ${index}`, testTitle: `Generated case ${index}`,
+              retryIndex: 0, status: "failed", outcome: "unexpected", traceSha1: `generated-${index}`,
+            });
+          }
+          manifest.count = manifest.failures.length;
+        }
         fs.writeFileSync(
           path.join(runDir, "index.json"),
           JSON.stringify(manifest),
         );
-        fs.writeFileSync(path.join(runDir, "grouped-analysis.md"), "# Synthetic grouped analysis");
+        if (!process.env.ARTIFACT_TEST_REAL_ANALYZER)
+          fs.writeFileSync(path.join(runDir, "grouped-analysis.md"), "# Synthetic grouped analysis");
       } else if (command === "digest") {
         const folder = "same-test-title__retry0";
         fs.mkdirSync(path.join(runDir, folder));

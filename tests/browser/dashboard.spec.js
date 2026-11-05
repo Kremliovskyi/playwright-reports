@@ -36,6 +36,76 @@ for (const [scenario, seed] of [
   });
 }
 
+test("failure analysis distinguishes failed, partial and successful outcomes", async ({ browser }) => {
+  const cleanup = [];
+  const hub = await startHub({ after: fn => cleanup.push(fn) });
+  let context;
+  try {
+    context = await browser.newContext();
+    await context.route("**/*", route =>
+      new URL(route.request().url()).origin === hub.url ? route.continue() : route.abort(),
+    );
+    const page = await context.newPage();
+    let result;
+    await page.route("**/api/failures", route => route.fulfill({
+      json: { count: 10, relativeRunDir: "tmp/synthetic-analysis", ...result },
+    }));
+    await page.goto(hub.url);
+    const row = page.locator('.report-row[data-path="/reports/current/fixture-report/index.html"]');
+    const modal = page.locator("#failures-modal");
+    for (const scenario of [
+      {
+        result: { ai: { analyzed: 0, failed: 10 }, groupingError: "Synthetic cleanup failure" },
+        outcome: "error", title: "Failure Analysis Failed", color: "rgb(248, 81, 73)",
+        message: "Evidence records: 0 written, 10 failed",
+      },
+      {
+        result: { aiError: "Synthetic engine failure" },
+        outcome: "error", title: "Failure Analysis Failed", color: "rgb(248, 81, 73)",
+        message: "Synthetic engine failure",
+      },
+      {
+        result: { ai: { analyzed: 9, failed: 1 } },
+        outcome: "warning", title: "Failure Analysis Completed with Warnings", color: "rgb(210, 153, 34)",
+        message: "Evidence records: 9 written, 1 failed",
+      },
+      {
+        result: { ai: { analyzed: 10, failed: 0 }, groupingError: "Synthetic grouping failure" },
+        outcome: "warning", title: "Failure Analysis Completed with Warnings", color: "rgb(210, 153, 34)",
+        message: "Synthetic grouping failure",
+      },
+      {
+        result: { ai: { analyzed: 10, failed: 0 }, grouping: { problemCount: 2 } },
+        outcome: "success", title: "Failure Analysis Complete", color: "rgb(46, 160, 67)",
+        message: "Analyzed failures successfully!",
+      },
+      {
+        result: { count: 0, ai: { analyzed: 0, failed: 0 } },
+        outcome: "success", title: "Failure Analysis Complete", color: "rgb(46, 160, 67)",
+        message: "No failures",
+      },
+    ]) {
+      result = scenario.result;
+      await row.getByRole("button", { name: "More actions" }).click();
+      await row.getByRole("button", { name: "Analyze Failures" }).click();
+      await expect(modal).toBeVisible();
+      await expect(modal).toHaveAttribute("data-outcome", scenario.outcome);
+      await expect(modal.getByRole("heading")).toHaveText(scenario.title);
+      await expect(modal.locator(".digest-status-title")).toHaveCSS("color", scenario.color);
+      await expect(modal).toContainText(scenario.message);
+      if (scenario.outcome === "success")
+        await expect(modal.locator(".digest-status-title svg")).toBeVisible();
+      else
+        await expect(modal.locator(".digest-status-title svg")).toBeHidden();
+      await modal.getByRole("button", { name: "Dismiss", exact: true }).click();
+      await expect(modal).toBeHidden();
+    }
+  } finally {
+    await context?.close();
+    for (const dispose of cleanup.reverse()) await dispose();
+  }
+});
+
 for (const editingMetadata of [false, true]) {
   test(`Trends initialization does not move focus ${editingMetadata ? "while typing metadata" : "on page load"}`, async ({ browser }) => {
     const cleanup = [];

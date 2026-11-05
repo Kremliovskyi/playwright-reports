@@ -191,6 +191,9 @@ document.addEventListener("DOMContentLoaded", () => {
   const failuresModal = document.getElementById(
     "failures-modal",
   ) as HTMLElement;
+  const failuresModalTitle = document.getElementById(
+    "failures-modal-title",
+  ) as HTMLElement;
   const closeFailuresModalBtn = document.getElementById(
     "close-failures-modal-btn",
   ) as HTMLButtonElement;
@@ -1877,20 +1880,31 @@ document.addEventListener("DOMContentLoaded", () => {
         count === 0
           ? "No failures"
           : `${count} failure${count === 1 ? "" : "s"}`;
-      const hasWarnings = data.aiError || data.groupingError || data.ai?.failed;
+      const warnings: string[] = data.warnings || [];
+      const hasWarnings =
+        data.aiError || data.groupingError || data.ai?.failed ||
+        data.ai?.omitted || warnings.length > 0;
+      const analysisFailed = Boolean(
+        data.aiError || (data.ai?.analyzed === 0 && data.ai?.failed > 0),
+      );
       hideRowProgress(
         row,
         hasWarnings ? "error" : "success",
-        hasWarnings ? "Analysis has warnings" : label,
+        analysisFailed ? "Analysis failed" : hasWarnings ? "Analysis has warnings" : label,
       );
 
       // Populate and open the failures modal, including evidence-record outcome.
-      let statusText = `${hasWarnings ? "Analysis completed with warnings." : "Analyzed failures successfully!"} ${count === 0 ? "No failures" : `${count} failure${count === 1 ? "" : "s"} found.`}`;
+      failuresModal.dataset.outcome = analysisFailed ? "error" : hasWarnings ? "warning" : "success";
+      failuresModalTitle.textContent = analysisFailed
+        ? "Failure Analysis Failed"
+        : hasWarnings ? "Failure Analysis Completed with Warnings" : "Failure Analysis Complete";
+      let statusText = `${analysisFailed ? "Failure analysis failed." : hasWarnings ? "Analysis completed with warnings." : "Analyzed failures successfully!"} ${count === 0 ? "No failures" : `${count} failure${count === 1 ? "" : "s"} found.`}`;
       if (data.ai) {
         statusText +=
           ` Evidence records: ${data.ai.analyzed} written` +
           (data.ai.failed ? `, ${data.ai.failed} failed` : "") +
           (data.ai.skipped ? `, ${data.ai.skipped} skipped` : "") +
+          (data.ai.omitted ? `, ${data.ai.omitted} not analyzed` : "") +
           ".";
       } else if (data.aiError) {
         statusText += ` AI analysis skipped: ${data.aiError}`;
@@ -1900,6 +1914,10 @@ document.addEventListener("DOMContentLoaded", () => {
       } else if (data.groupingError) {
         statusText += ` Problem grouping failed: ${data.groupingError}`;
       }
+      if (data.coverage?.known) {
+        statusText += ` Trace coverage: ${data.coverage.traceBackedAttempts}/${data.coverage.failedAttempts} failed attempts.`;
+      }
+      if (warnings.length) statusText += ` Warnings: ${warnings.join(" ")}`;
       failuresModalStatusText.textContent = statusText;
       failuresModalPathValue.textContent = data.relativeRunDir || "";
       const diagnostics = data.groupingDiagnostics;

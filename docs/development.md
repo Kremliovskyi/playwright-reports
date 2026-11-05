@@ -60,7 +60,7 @@ npx playwright test --grep "artifact browser workflow"
   project. Helpers shut down their children and remove their fixture directories.
 - Node tests cover report retention/reconciliation, stale mutations, migrations,
   artifact rollback, config-child termination, local runner ownership, ARIA,
-  API errors, search/trends, evidence/grouping and CLI installation contracts.
+  API errors, search/trends, published analyzer integration and CLI installation contracts.
 - The local browser runner executes the existing archive, artifact, title-filter
   and trends scenarios, plus local terminal/save-error, scan-warning and stale
   confirmation checks. External requests
@@ -73,6 +73,9 @@ npx playwright test --grep "artifact browser workflow"
 - Copilot responses and trace jobs use synthetic fixtures. The browser scenarios
   retain their existing mocked mode checks; no live BrowserStack or Podman tests
   are added or run.
+- Evidence/grouping algorithm tests belong to the failure-analyzer package.
+  `tests/analysis-routes.test.js` exercises the published package through dashboard
+  routes, including warnings, access/model errors, UUID paths and replacement.
 - The supplied-real-report trace matrix stays opt-in. See
   [Agent API verification](agent-api.md#verification). A default-suite skip for
   that test is expected.

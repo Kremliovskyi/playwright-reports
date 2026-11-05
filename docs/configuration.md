@@ -29,7 +29,11 @@ BrowserStack config files are selected in the test runner, not Preferences.
 
 ## Copilot
 
-The optional **GitHub Token** authenticates the Copilot SDK used for AI failure analysis. When it is empty, the dashboard falls back to the host's Copilot CLI or GitHub CLI login.
+The optional **GitHub Token** authenticates the shared failure-analyzer package.
+It takes precedence over `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, and `GITHUB_TOKEN`
+(in that order), followed by the host's stored Copilot/GitHub CLI login.
+Stored-login fallback is disabled when running under CI. The package includes
+its SDK runtime; a global Copilot CLI installation is not required.
 
 Select two model roles in the same tab:
 

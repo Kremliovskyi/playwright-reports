@@ -4,9 +4,19 @@
 
 Failure analysis turns the failed attempts in a current report into compact, agent-ready folders, extracts canonical issue evidence for each analyzable failure, and groups those records into run-level problems.
 
+The engine comes from the published
+[`@andrii_kremlovskyi/playwright-failure-analyzer`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-failure-analyzer)
+package (pinned to 0.1.2). The dashboard retains report ownership, confirmation,
+queued preparation, progress, and vault integration; it does not keep a second
+copy of the analysis engine.
+
 ## Before you begin
 
-Use the **Copilot** tab in [Preferences](configuration.md#copilot) to configure an optional GitHub token and select the small per-trace model and big grouping model. If no token is provided, the dashboard uses the host's Copilot CLI or GitHub CLI authentication. The header chip checks access only.
+Use the **Copilot** tab in [Preferences](configuration.md#copilot) to configure an optional GitHub token and select the small per-trace model and big grouping model. Authentication follows the [documented precedence](configuration.md#copilot). The header chip checks access only.
+
+Both model stages run without tools or repository instructions. Evidence is not
+automatically redacted: test source, errors, page content, and selected network
+data may be sent to Copilot. Only analyze reports approved for that service.
 
 ## Analyze a report
 
@@ -24,6 +34,18 @@ The dashboard runs the installed [`@andrii_kremlovskyi/playwright-traces-reader`
 ```
 
 Existing analysis paths remain unchanged until an explicitly confirmed rerun. Manual trace digests are stored separately and are never deleted by analysis replacement.
+The replacement confirmation concerns saved report-analysis artifacts, not
+Copilot login configuration or the SDK's temporary session storage.
+
+The completion dialog reports trace coverage and warnings for missing or unknown
+metadata, excluded/unprocessed attempts, source-only fallbacks, and provisional
+grouping. A zero trace count is not proof of a clean report. Partial artifacts
+remain inspectable. A failed AI stage or zero successful evidence records with
+failed attempts is shown as a red **Failure Analysis Failed** result. Partial
+results and warnings are amber; only clean completion is green.
+The dashboard's prepared-run integration retains its existing
+artifact layout; the standalone CLI additionally writes `analysis-result.json`
+and a count-only `summary.md` for CI.
 
 ## Concurrent requests and trace extraction
 

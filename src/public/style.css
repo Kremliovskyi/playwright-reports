@@ -1879,6 +1879,28 @@ p {
   font-weight: 600;
 }
 
+#failures-modal[data-outcome="warning"] .digest-success-info {
+  background: rgba(210, 153, 34, 0.08);
+  border-color: rgba(210, 153, 34, 0.3);
+}
+
+#failures-modal[data-outcome="warning"] .digest-status-title {
+  color: #d29922;
+}
+
+#failures-modal[data-outcome="error"] .digest-success-info {
+  background: rgba(248, 81, 73, 0.08);
+  border-color: rgba(248, 81, 73, 0.3);
+}
+
+#failures-modal[data-outcome="error"] .digest-status-title {
+  color: #f85149;
+}
+
+#failures-modal:not([data-outcome="success"]) .digest-status-title svg {
+  display: none;
+}
+
 .digest-path-label {
   font-size: 0.75rem;
   color: var(--text-secondary);

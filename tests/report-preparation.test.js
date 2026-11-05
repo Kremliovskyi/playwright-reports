@@ -204,6 +204,8 @@ test("Analyze Failures integrates the installed reader with real failed retries 
   const response = await hub.request("/api/failures", { reportPath: "/reports/current/fixture-report/index.html" });
   assert.equal(response.status, 200, JSON.stringify(response.data));
   assert.equal(response.data.count, 2);
+  assert.equal(response.data.coverage.known, false);
+  assert.ok(response.data.warnings.some(warning => warning.includes("coverage is unknown")));
   assert.deepEqual(response.data.manifest.failures.map(entry => entry.retryIndex), [0, 1]);
   for (const entry of response.data.manifest.failures)
     assert.ok(fs.existsSync(path.join(response.data.runDir, entry.folder, "failure.json")));

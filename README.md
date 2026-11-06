@@ -93,9 +93,15 @@ directory watching and the dependency APIs used by PM2.
 
 The Markdown renderer requires `markdown-it` 14.3.3 or later within major 14.
 The lockfile also retains patched PM2 networking dependencies:
-`follow-redirects` 1.16.1 and `ip-address` 10.7.4. These satisfy upstream ranges
+`follow-redirects` 1.16.2 and `ip-address` 10.7.4. These satisfy upstream ranges
 without additional overrides or a PM2 upgrade. Local compatibility tests cover
 redirect handling, IPv6 parsing and vault Markdown rendering.
+
+Runner config discovery uses `glob` 14.0.4 with `minimatch` 11.0.5 to address
+cancellation and resource-exhaustion advisories. Compatibility tests cover
+config extensions, literal paths, hidden files, ignored directories and symlink
+exclusions. The lockfile also updates Express's `body-parser` to 2.4.0 and `qs`
+to 6.17.1 within its existing dependency ranges.
 
 The installed `better-sqlite3` version has an explicit install-script approval
 for its native binary/build step. Review and approve a new version explicitly

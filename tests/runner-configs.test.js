@@ -51,6 +51,40 @@ test("discovers and sorts runner configs under the project path", async (t) => {
   ]);
 });
 
+test("discovery preserves config extensions, literal paths and traversal exclusions", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "runner-configs-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const projectPath = path.join(root, "[team] (shared)");
+  const playwrightConfigs = ["ts", "js", "mts", "mjs", "cts", "cjs"].map(
+    extension => `configs/[env]/playwright.config.${extension}`,
+  );
+  const browserstackConfigs = ["yml", "yaml"].map(
+    extension => `.config/browserstack.${extension}`,
+  );
+  for (const relativePath of [
+    ...playwrightConfigs,
+    ...browserstackConfigs,
+    "nested/node_modules/package/playwright.config.ts",
+    "nested/node_modules/package/browserstack.yml",
+    "nested/test-results/run/playwright.config.ts",
+    "nested/test-results/run/browserstack.yml",
+    "nested/.playwright-reports-headless-playwright.config.cjs",
+    "nested/.pw-reports-headless-playwright.config.cjs",
+    "playwright.config.json",
+    "browserstack.txt",
+  ])
+    writeFile(projectPath, relativePath);
+
+  const externalPath = path.join(root, "external");
+  writeFile(externalPath, "playwright.config.ts");
+  writeFile(externalPath, "browserstack.yml");
+  fs.symlinkSync(externalPath, path.join(projectPath, "linked"), "junction");
+
+  const configs = await discoverRunnerConfigs(projectPath);
+  assert.deepEqual(configs.playwrightConfigs.sort(), playwrightConfigs.sort());
+  assert.deepEqual(configs.browserstackConfigs.sort(), browserstackConfigs.sort());
+});
+
 test("resolves only discovered configs inside the project path", (t) => {
   const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "runner-configs-"));
   t.after(() => fs.rmSync(projectPath, { recursive: true, force: true }));

@@ -30,7 +30,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@andrii_kremlovskyi/playwright-failure-analyzer": "0.1.2",
+    "@andrii_kremlovskyi/playwright-failure-analyzer": "^0.1.3",
     "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.8",
     "@types/better-sqlite3": "^7.6.13",
     "@xterm/addon-fit": "^0.11.0",
@@ -39,7 +39,7 @@
     "better-sqlite3": "^12.11.1",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "glob": "^13.0.6",
+    "glob": "^14.0.4",
     "jiti": "^2.6.1",
     "markdown-it": "^14.3.3",
     "pm2": "^7.0.4",
@@ -63,6 +63,7 @@
     "typescript": "^5.9.3"
   },
   "allowScripts": {
-    "better-sqlite3@12.11.1": true
+    "better-sqlite3@12.11.1": true,
+    "koffi@3.3.7": true
   }
 }

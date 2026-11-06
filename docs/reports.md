@@ -89,7 +89,7 @@ Each Current and Archived row has a checkbox. Use **Select All**, **Select None*
 
 Click **Archive** for one report, or select current reports and choose **Actions > Archive selected**. Review the report paths in the confirmation dialog, then confirm **Archive** (or **Archive N Reports** for a bulk selection). Canceling or dismissing the dialog leaves all reports untouched, including any archive-capacity cleanup. After confirmation, the dashboard moves each report into the configured archive directory with a timestamped folder name that avoids collisions.
 
-Archive preserves a mapped final vault note at `<archivePath>/analysis/<runName>.md`. If no final note exists but grouped analysis does, it preserves that Markdown at `<archivePath>/analysis/grouped-analysis/<runName>.md`, creating the directories as needed. This rule applies to each existing legacy mapping without consolidating it. When neither file exists, the report can still be archived.
+Archive preserves `<archivePath>/analysis/<reportUuid>/<runName>/final-analysis.md`, or `grouped-analysis.md` there if no final exists. It never retains the whole raw bundle. This applies per existing mapping without consolidating legacy duplicates. When neither artifact exists, the report can still be archived.
 
 Preservation completes before moving the report or deleting output. An unreadable source, destination conflict, or copy failure stops Archive and surfaces an error rather than discarding the only analysis. Ephemeral output and trace digest directories are cleaned up after the report move succeeds.
 
@@ -133,10 +133,14 @@ For structured, test-specific output, use [Selective Trace Digestion](trace-dige
 
 ## View analysis notes
 
-Set an Obsidian vault directory in [Configuration](configuration.md) to associate Markdown notes with analysis runs.
+Use `final-analysis.md` inside the registered output directory. No vault setting
+is required. Reopen Info after saving externally to refresh the reference.
+For downloaded CI output, use **Info > Import output directory**; see the
+[import workflow](failure-analysis.md#import-a-downloaded-analysis).
 
 - The report's **Info** dialog links to each mapped note.
 - Markdown is rendered with headings, tables, code blocks, links, and images.
+- Embedded raw HTML is displayed as text, not executed.
 - Click **Edit** to update a note in the dashboard and save it back to disk.
 - Notes associated with archived reports are resolved from the archive's `analysis/` directory.
-- Agents can access notes through `/api/agent/vault/list` and `/api/agent/vault/:filename`.
+- Agents list notes through `/api/agent/vault/list` and follow each returned report-scoped `url`. Filename-only legacy aliases require an unambiguous registered run.

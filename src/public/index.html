@@ -326,7 +326,11 @@
       <!-- Main Content Area -->
       <main class="main-content">
         <!-- Loading State for Initial App Load -->
-        <div id="report-warnings" class="report-warnings hidden" role="status"></div>
+        <div
+          id="report-warnings"
+          class="report-warnings hidden"
+          role="status"
+        ></div>
         <div id="loading" class="loading-state hidden">
           <div class="spinner"></div>
           <p>Loading reports...</p>
@@ -626,19 +630,19 @@
               />
             </div>
 
-            <div class="form-group" style="margin-top: 1.5rem">
-              <label for="vault-path-input">Obsidian Vault Path</label>
-              <p class="form-hint">
-                Absolute path to your Obsidian vault folder with report analysis
-                .md files.
-              </p>
-              <input
-                type="text"
-                id="vault-path-input"
-                class="path-input full-width"
-                placeholder="e.g., /Users/you/vault/report-analyses"
-              />
-            </div>
+            <p class="form-hint">
+              Final analyses are stored inside their output directories.
+              Deleting output preserves the final in managed analysis storage.
+            </p>
+            <p id="legacy-analysis-review" class="form-hint hidden">
+              Legacy analysis originals are preserved.
+              <a
+                href="/api/analysis/legacy"
+                target="_blank"
+                rel="noopener noreferrer"
+                >Review legacy files</a
+              >. Opening Report Info adopts unambiguous registered notes.
+            </p>
           </div>
 
           <div class="modal-tab-content" data-tab-content="browserstack">
@@ -1041,10 +1045,7 @@
         </div>
         <div
           class="modal-body modal-body-padded"
-          style="
-            max-height: 70vh;
-            overflow-y: auto;
-          "
+          style="max-height: 70vh; overflow-y: auto"
         >
           <p class="form-hint" style="margin-bottom: 1.5rem">
             Select a test to compile its execution trace into a structured,
@@ -1290,7 +1291,11 @@
     </div>
 
     <!-- Report Info Modal -->
-    <div id="report-info-modal" class="modal-backdrop hidden">
+    <div
+      id="report-info-modal"
+      automation-id="report-info-dialog"
+      class="modal-backdrop hidden"
+    >
       <div class="modal-content" style="max-width: 760px">
         <div class="modal-header">
           <h2>Report Info</h2>
@@ -1340,6 +1345,7 @@
         <div class="modal-footer">
           <button
             id="close-report-info-modal-footer-btn"
+            automation-id="report-info-close"
             class="btn primary-btn"
           >
             Dismiss
@@ -1393,8 +1399,18 @@
           <div id="confirm-delete-options" class="hidden"></div>
         </div>
         <div class="modal-footer">
-          <button id="confirm-delete-cancel-btn" class="btn">Cancel</button>
-          <button id="confirm-delete-confirm-btn" class="btn danger-btn">
+          <button
+            id="confirm-delete-cancel-btn"
+            automation-id="confirm-cancel"
+            class="btn"
+          >
+            Cancel
+          </button>
+          <button
+            id="confirm-delete-confirm-btn"
+            automation-id="confirm-primary"
+            class="btn danger-btn"
+          >
             Delete
           </button>
         </div>

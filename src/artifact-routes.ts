@@ -3,20 +3,33 @@ import { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import {
-  clearAnalysisRunDir,
   deleteAnalysisRun,
   deleteDigest,
   getAllReports,
   getAnalysisRuns,
   getDigests,
-  getReport
+  getReport,
+  updateAnalysisArtifacts,
 } from "./db";
+import { analysisInventory, analysisNoteLocations } from "./report-artifacts";
 import {
-  analysisInventory
-} from "./report-artifacts";
+  assertExclusiveAnalysis,
+  preserveFinalAndDeleteOutput,
+  reconcileAnalysis,
+  resolveFinal,
+} from "./analysis-storage";
 import { isWithin, resolveReportFolder } from "./report-storage";
-import { appConfig, invalidateReportSize, refreshConfigCache, reportSizeCache } from "./runtime";
-import { getReportAnalysisFiles, resolveGroupedAnalysisFile, resolveVaultFile } from "./vault-files";
+import {
+  appConfig,
+  invalidateReportSize,
+  refreshConfigCache,
+  reportSizeCache,
+} from "./runtime";
+import {
+  getReportAnalysisFiles,
+  resolveGroupedAnalysisFile,
+  resolveVaultFile,
+} from "./vault-files";
 
 // Recursively sum the byte size of a directory tree (best-effort; unreadable entries are skipped).
 // Async on purpose: a multi-GB synchronous scan blocks the event loop and stalls concurrent
@@ -45,7 +58,6 @@ const dirSizeBytes = async (dir: string): Promise<number> => {
 };
 
 export function registerArtifactRoutes(app: Express): void {
-
   // List, per report, the failure-analysis run files that exist in the vault (newest first).
   app.get("/api/analysis-runs", (req: Request, res: Response): any => {
     refreshConfigCache();
@@ -54,11 +66,14 @@ export function registerArtifactRoutes(app: Express): void {
         string,
         { runName: string; mtime: string; runDir: string }[]
       > = {};
+      const issues: Record<string, string[]> = {};
       for (const report of getAllReports()) {
-        const files = getReportAnalysisFiles(report.id);
+        const result = getReportAnalysisFiles(report.id);
+        const files = result.files;
         if (files.length > 0) runs[report.id] = files;
+        if (result.issues.length) issues[report.id] = result.issues;
       }
-      return res.json({ runs });
+      return res.json({ runs, issues });
     } catch (error: any) {
       console.error("Analysis runs list error:", error.message);
       return res.status(500).json({ error: "Failed to list analysis runs" });
@@ -71,7 +86,8 @@ export function registerArtifactRoutes(app: Express): void {
     refreshConfigCache();
     const reportId =
       typeof req.query.reportId === "string" ? req.query.reportId : "";
-    if (!reportId) return res.status(400).json({ error: "reportId is required" });
+    if (!reportId)
+      return res.status(400).json({ error: "reportId is required" });
 
     try {
       const report = getReport(reportId);
@@ -85,21 +101,30 @@ export function registerArtifactRoutes(app: Express): void {
       // rather than as a misleading "(missing on disk)" row.
       const isArchived = report.reportPath.startsWith("/reports/archive/");
 
+      const resolutionErrors: string[] = [];
       const runs = getAnalysisRuns(report.uuid).map((run) => {
         const rawRunDir = run.runDir || "";
         const runDirExists = !!rawRunDir && fs.existsSync(rawRunDir);
         const runDir = isArchived && !runDirExists ? "" : rawRunDir;
-        const analysisFile = resolveVaultFile(run.runName);
-        const groupedAnalysisFile = resolveGroupedAnalysisFile(
-          reportId,
-          run.runName
-        );
-        const groupedAnalysisExists = !!groupedAnalysisFile;
+        let analysisFile = run.finalAnalysisPath || "";
+        let groupedAnalysisFile = run.groupedAnalysisPath || "";
+        try {
+          analysisFile = resolveFinal(appConfig, run) || "";
+          groupedAnalysisFile =
+            resolveGroupedAnalysisFile(reportId, run.runName) || "";
+        } catch (error) {
+          resolutionErrors.push(
+            error instanceof Error ? error.message : String(error),
+          );
+        }
+        const groupedAnalysisExists =
+          !!groupedAnalysisFile && fs.existsSync(groupedAnalysisFile);
         let failuresUrl: string | null = null;
         if (
           runDirExists &&
           appConfig.currentPath &&
-          isWithin(appConfig.currentPath, runDir)
+          isWithin(appConfig.currentPath, runDir) &&
+          fs.existsSync(path.join(runDir, "index.json"))
         ) {
           const relativeRunDir = path.relative(appConfig.currentPath, runDir);
           failuresUrl = `/reports/current/${relativeRunDir.split(path.sep).join("/")}/index.json`;
@@ -110,14 +135,15 @@ export function registerArtifactRoutes(app: Express): void {
           runDir,
           runDirExists,
           analysisFile: analysisFile || "",
-          analysisFileExists: !!analysisFile,
+          analysisFileExists: !!analysisFile && fs.existsSync(analysisFile),
           groupedAnalysisFile: groupedAnalysisFile || "",
           groupedAnalysisExists,
           groupedAnalysisUrl: groupedAnalysisExists
             ? `/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(run.runName)}`
             : null,
           failuresUrl,
-          vaultUrl: `/vault/${encodeURIComponent(run.runName)}`
+          importedAt: run.importedAt,
+          vaultUrl: `/final-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(run.runName)}`,
         };
       });
 
@@ -134,7 +160,7 @@ export function registerArtifactRoutes(app: Express): void {
         ) {
           const relativeDigestDir = path.relative(
             appConfig.currentPath,
-            digestDir
+            digestDir,
           );
           digestUrl = `/reports/current/${relativeDigestDir.split(path.sep).join("/")}/digest.json`;
         }
@@ -144,21 +170,25 @@ export function registerArtifactRoutes(app: Express): void {
           createdAt: digest.createdAt,
           digestDir,
           digestDirExists,
-          digestUrl
+          digestUrl,
         };
       });
 
+      const inventory = analysisInventory(
+        appConfig,
+        getAnalysisRuns(report.uuid),
+      );
+      inventory.issues.push(...resolutionErrors);
+      inventory.needsReview ||= resolutionErrors.length > 0;
       return res.json({
         reportId,
         reportUuid: report.uuid,
         folder: folder || "",
         folderExists,
+        canImport: !isArchived && folderExists,
         runs,
         digests,
-        analysisInventory: analysisInventory(
-          appConfig,
-          getAnalysisRuns(report.uuid)
-        )
+        analysisInventory: inventory,
       });
     } catch (error: any) {
       console.error("Report info error:", error.message);
@@ -188,17 +218,18 @@ export function registerArtifactRoutes(app: Express): void {
             reportId,
             folderExists: false,
             sizeBytes: 0,
-            cached: false
+            cached: false,
           });
         }
 
-        const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+        const refresh =
+          req.query.refresh === "1" || req.query.refresh === "true";
         if (!refresh && reportSizeCache.has(reportId)) {
           return res.json({
             reportId,
             folderExists: true,
             sizeBytes: reportSizeCache.get(reportId),
-            cached: true
+            cached: true,
           });
         }
 
@@ -208,13 +239,15 @@ export function registerArtifactRoutes(app: Express): void {
           reportId,
           folderExists: true,
           sizeBytes,
-          cached: false
+          cached: false,
         });
       } catch (error: any) {
         console.error("Report size error:", error.message);
-        return res.status(500).json({ error: "Failed to calculate report size" });
+        return res
+          .status(500)
+          .json({ error: "Failed to calculate report size" });
       }
-    }
+    },
   );
 
   // Delete the (ephemeral) output directory of a run, detaching its DB reference while keeping the
@@ -235,32 +268,25 @@ export function registerArtifactRoutes(app: Express): void {
         if (!report) return res.status(404).json({ error: "Report not found" });
 
         const run = getAnalysisRuns(report.uuid).find(
-          (r) => r.runName === runName
+          (r) => r.runName === runName,
         );
         if (!run)
           return res.status(404).json({ error: "Analysis run not found" });
 
-        if (run.runDir) {
-          if (
-            !appConfig.currentPath ||
-            !isWithin(appConfig.currentPath, run.runDir)
-          ) {
-            return res.status(400).json({
-              error: "Output directory is outside the configured current path"
-            });
-          }
-          if (fs.existsSync(run.runDir))
-            fs.rmSync(run.runDir, { recursive: true, force: true });
-        }
-        clearAnalysisRunDir(report.uuid, runName);
+        if (!run.runDir) return res.json({ success: true });
+        const migrated = reconcileAnalysis(appConfig, {
+          ...run,
+          groupedAnalysisPath: "",
+        });
+        preserveFinalAndDeleteOutput(appConfig, migrated);
         return res.json({ success: true });
       } catch (error: any) {
         console.error("Delete output dir error:", error.message);
-        return res
-          .status(500)
-          .json({ error: "Failed to delete output directory: " + error.message });
+        return res.status(500).json({
+          error: "Failed to delete output directory: " + error.message,
+        });
       }
-    }
+    },
   );
 
   // Delete a run's analysis (vault) file. If the output dir reference is already gone, prune the row.
@@ -279,30 +305,41 @@ export function registerArtifactRoutes(app: Express): void {
         const report = getReport(reportId);
         if (!report) return res.status(404).json({ error: "Report not found" });
 
-        const run = getAnalysisRuns(report.uuid).find(
-          (r) => r.runName === runName
+        let run = getAnalysisRuns(report.uuid).find(
+          (r) => r.runName === runName,
         );
         if (!run)
           return res.status(404).json({ error: "Analysis run not found" });
 
-        const resolved = resolveVaultFile(runName);
+        if (run.storageVersion !== 1) run = reconcileAnalysis(appConfig, run);
+        assertExclusiveAnalysis(appConfig, run);
+        analysisNoteLocations(appConfig, run);
+        const resolved =
+          run.finalAnalysisPath && !fs.existsSync(run.finalAnalysisPath)
+            ? null
+            : resolveFinal(appConfig, run);
         if (resolved) {
-          const vaultRoots = [
-            appConfig.vaultPath,
-            appConfig.archivePath
-              ? path.join(appConfig.archivePath, "analysis")
-              : null
-          ].filter((p): p is string => !!p);
-          if (!vaultRoots.some((root) => isWithin(root, resolved))) {
+          const locations = analysisNoteLocations(appConfig, run);
+          if (
+            !locations.some(
+              (location) =>
+                path.resolve(location.path) === path.resolve(resolved),
+            )
+          ) {
             return res.status(400).json({
-              error: "Analysis file is outside the configured vault paths"
+              error:
+                "Analysis file is outside this run's managed note locations",
             });
           }
           fs.unlinkSync(resolved);
         }
+        updateAnalysisArtifacts({ ...run, finalAnalysisPath: "" });
 
         // Once the analysis file is gone and no output dir remains, the row has no purpose.
-        if ((!run.runDir || !fs.existsSync(run.runDir)) && !resolveGroupedAnalysisFile(reportId, runName)) {
+        if (
+          (!run.runDir || !fs.existsSync(run.runDir)) &&
+          !resolveGroupedAnalysisFile(reportId, runName)
+        ) {
           deleteAnalysisRun(report.uuid, runName);
         }
         return res.json({ success: true });
@@ -312,7 +349,7 @@ export function registerArtifactRoutes(app: Express): void {
           .status(500)
           .json({ error: "Failed to delete analysis file: " + error.message });
       }
-    }
+    },
   );
 
   // Delete a single trace digest: removes its directory from disk (guarded to currentPath) and the DB row.
@@ -341,7 +378,7 @@ export function registerArtifactRoutes(app: Express): void {
           !isWithin(appConfig.currentPath, digestDir)
         ) {
           return res.status(400).json({
-            error: "Digest directory is outside the configured current path"
+            error: "Digest directory is outside the configured current path",
           });
         }
         if (fs.existsSync(digestDir))

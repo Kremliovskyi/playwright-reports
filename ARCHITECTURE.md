@@ -10,27 +10,27 @@ The application is a local Node/Express server, a synchronous SQLite store, and
 vanilla TypeScript pages. There is one server process. No ORM, UI framework, or
 background indexing service is required.
 
-| Module | Responsibility |
-| --- | --- |
-| [server.ts](src/server.ts) | HTTP composition, configuration/presets, report mutation guards and static mounts |
-| [runtime.ts](src/runtime.ts) | Cached configuration, artifact-job ownership, report-size cache and SSE subscribers |
-| [db.ts](src/db.ts) | SQLite connection, additive migrations and persistence operations |
-| [report-catalog.ts](src/report-catalog.ts) | Scan/reconciliation, search and agent discovery |
-| [report-storage.ts](src/report-storage.ts) | Instance/path checks, moves with rollback and report-owned cleanup |
-| [report-routes.ts](src/report-routes.ts) | Extract, rename, archive, delete and metadata HTTP actions |
-| [report-preparation.ts](src/report-preparation.ts) | Shared FIFO preparation queue and four-worker budget for Extract and Analyze Failures |
-| [trace-extraction.ts](src/trace-extraction.ts), [trace-extraction-worker.ts](src/trace-extraction-worker.ts) | Raw ZIP worker pool, complete-folder publication and failed-job cleanup |
-| [report-artifacts.ts](src/report-artifacts.ts) | Artifact inventory, ownership, confirmed removal and digest publication |
-| [artifact-routes.ts](src/artifact-routes.ts) | Info, size and individual artifact actions |
-| [runner-routes.ts](src/runner-routes.ts) | Configuration discovery and local runner lifecycle |
-| [runner-command.ts](src/runner-command.ts) | Execution arguments and platform-specific command preparation |
-| [playwright-config-loader.ts](src/playwright-config-loader.ts) | Bounded, isolated configuration evaluation |
-| [analysis-routes.ts](src/analysis-routes.ts), [digest-routes.ts](src/digest-routes.ts) | Trace-reader CLI orchestration |
+| Module                                                                                                                             | Responsibility                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [server.ts](src/server.ts)                                                                                                         | HTTP composition, configuration/presets, report mutation guards and static mounts      |
+| [runtime.ts](src/runtime.ts)                                                                                                       | Cached configuration, artifact-job ownership, report-size cache and SSE subscribers    |
+| [db.ts](src/db.ts)                                                                                                                 | SQLite connection, additive migrations and persistence operations                      |
+| [report-catalog.ts](src/report-catalog.ts)                                                                                         | Scan/reconciliation, search and agent discovery                                        |
+| [report-storage.ts](src/report-storage.ts)                                                                                         | Instance/path checks, moves with rollback and report-owned cleanup                     |
+| [report-routes.ts](src/report-routes.ts)                                                                                           | Extract, rename, archive, delete and metadata HTTP actions                             |
+| [report-preparation.ts](src/report-preparation.ts)                                                                                 | Shared FIFO preparation queue and four-worker budget for Extract and Analyze Failures  |
+| [trace-extraction.ts](src/trace-extraction.ts), [trace-extraction-worker.ts](src/trace-extraction-worker.ts)                       | Raw ZIP worker pool, complete-folder publication and failed-job cleanup                |
+| [report-artifacts.ts](src/report-artifacts.ts)                                                                                     | Artifact inventory, ownership, confirmed removal and digest publication                |
+| [artifact-routes.ts](src/artifact-routes.ts)                                                                                       | Info, size and individual artifact actions                                             |
+| [runner-routes.ts](src/runner-routes.ts)                                                                                           | Configuration discovery and local runner lifecycle                                     |
+| [runner-command.ts](src/runner-command.ts)                                                                                         | Execution arguments and platform-specific command preparation                          |
+| [playwright-config-loader.ts](src/playwright-config-loader.ts)                                                                     | Bounded, isolated configuration evaluation                                             |
+| [analysis-routes.ts](src/analysis-routes.ts), [digest-routes.ts](src/digest-routes.ts)                                             | Trace-reader CLI orchestration                                                         |
 | [`@andrii_kremlovskyi/playwright-failure-analyzer`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-failure-analyzer) | Shared per-attempt evidence, schema validation, Copilot sessions and semantic grouping |
-| [report-archive.ts](src/report-archive.ts) | Shared embedded report ZIP decoding |
-| [report-trends.ts](src/report-trends.ts), [trends-routes.ts](src/trends-routes.ts) | Read-only timing interpretation and exact-attempt resolution |
-| [aria-routes.ts](src/aria-routes.ts) | ARIA failure extraction and reviewed snapshot writes |
-| [vault-files.ts](src/vault-files.ts), [vault-routes.ts](src/vault-routes.ts) | Note resolution, Markdown rendering and editing |
+| [report-archive.ts](src/report-archive.ts)                                                                                         | Shared embedded report ZIP decoding                                                    |
+| [report-trends.ts](src/report-trends.ts), [trends-routes.ts](src/trends-routes.ts)                                                 | Read-only timing interpretation and exact-attempt resolution                           |
+| [aria-routes.ts](src/aria-routes.ts)                                                                                               | ARIA failure extraction and reviewed snapshot writes                                   |
+| [vault-files.ts](src/vault-files.ts), [vault-routes.ts](src/vault-routes.ts)                                                       | Note resolution, Markdown rendering and editing                                        |
 
 The dashboard entry [app.ts](src/public/app.ts) owns table wiring and workflow
 coordination. Its extracted features are [dashboard-model.ts](src/public/dashboard-model.ts),
@@ -96,12 +96,19 @@ analysis duplicates or delete their files during startup. New analyses use an
 immediate transaction to enforce one retained analysis per UUID; legacy data
 requires explicit inventory review and versioned confirmation.
 
-| Artifact | Ownership and lifecycle |
-| --- | --- |
-| Analysis output | `<currentPath>/tmp/analysis-<uuid>/run-<timestamp>-<uuid>/`; deleting output clears `runDir` but keeps a surviving note mapping |
-| Final note | `<vaultPath>/<runName>.md`; archive preserves it at `<archivePath>/analysis/<runName>.md` |
-| Grouped fallback | If no final note exists, archive preserves it at `<archivePath>/analysis/grouped-analysis/<runName>.md`; it is not a final vault/agent note |
-| Manual digest | `<currentPath>/tmp/digests-<uuid>/<traceKey>/`; deleting one digest leaves siblings intact |
+| Artifact          | Ownership and lifecycle                                                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Analysis output   | `<currentPath>/tmp/analysis-<uuid>/run-<UTC timestamp>-<six-character suffix>/`; imports copy the same format and retain legacy names                   |
+| Final note        | `final-analysis.md` inside output; Delete output first retains it at `<currentPath>/analysis/<uuid>/<runName>/final-analysis.md`                        |
+| Archived analysis | `<archivePath>/analysis/<uuid>/<runName>/final-analysis.md`, or `grouped-analysis.md` only when final is absent; existing flat archives remain readable |
+| Manual digest     | `<currentPath>/tmp/digests-<uuid>/<traceKey>/`; deleting one digest leaves siblings intact                                                              |
+
+`analysis_runs` stores explicit `finalAnalysisPath`, `groupedAnalysisPath`,
+`importedAt`, and migration `storageVersion`. The shared resolver migrates
+unambiguous legacy current finals by copying, never deleting the originals.
+Directory import validates and hashes a server-local bundle, stages a managed
+copy, journals replacement backups, then transactionally registers the new run.
+Interrupted journals block mutation until explicit recovery through Info.
 
 Archive preserves notes before moving reports, then detaches ephemeral output and
 purges digests. Delete removes report-owned outputs/mappings. Confirmed missing

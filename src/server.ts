@@ -11,21 +11,29 @@ import {
   deletePreset,
   getPresets,
   getReport,
+  getAllReports,
   Preset,
-  updateConfig
+  updateConfig,
 } from "./db";
 import { registerDigestRoutes } from "./digest-routes";
-import {
-  ArtifactError
-} from "./report-artifacts";
+import { ArtifactError } from "./report-artifacts";
 import { registerReportCatalog } from "./report-catalog";
 import { registerReportRoutes } from "./report-routes";
 import { assertReportInstance } from "./report-storage";
 import { registerRunnerRoutes } from "./runner-routes";
-import { activeDigests, activeExtractions, activeFailureAnalyses, appConfig, refreshConfigCache, reportIsBusy } from "./runtime";
+import {
+  activeDigests,
+  activeExtractions,
+  activeFailureAnalyses,
+  appConfig,
+  refreshConfigCache,
+  reportIsBusy,
+} from "./runtime";
 import { registerTrendsRoutes } from "./trends-routes";
 import { registerTraceViewerRoutes } from "./trace-viewer-routes";
 import { registerVaultRoutes } from "./vault-routes";
+import { registerImportRoutes, pendingImports } from "./analysis-import";
+import { activeImports } from "./runtime";
 
 export const app = express();
 const PORT = process.env.PORT || 9333;
@@ -40,7 +48,14 @@ const publicDir = path.join(__dirname, "public");
 app.use(express.static(publicDir));
 
 // Enable JSON body parsing for our API
-app.use(express.json());
+const defaultJson = express.json();
+const finalJson = express.json({ limit: "16mb" });
+app.use((req, res, next) =>
+  req.method === "PUT" &&
+  (req.path === "/api/analysis-run/final" || req.path.startsWith("/api/vault/"))
+    ? finalJson(req, res, next)
+    : defaultJson(req, res, next),
+);
 
 app.use((req: Request, res: Response, next: NextFunction): any => {
   const mutationPaths = [
@@ -55,7 +70,12 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
     "/api/failures",
     "/api/digest-test",
     "/api/analysis/consolidate",
-    "/api/report-metadata"
+    "/api/report-metadata",
+    "/api/analysis/import/preview",
+    "/api/analysis/import",
+    "/api/analysis/import/recover",
+    "/api/analysis/reconcile",
+    "/api/analysis-run/final",
   ];
   if (req.method !== "GET" && mutationPaths.includes(req.path)) {
     const reportId =
@@ -69,47 +89,87 @@ app.use((req: Request, res: Response, next: NextFunction): any => {
     if (report) {
       try {
         if (
+          req.path !== "/api/analysis/import/recover" &&
+          pendingImports(appConfig, report.uuid).length
+        )
+          throw new ArtifactError(
+            "IMPORT_RECOVERY_REQUIRED",
+            "An interrupted import needs recovery in Report Info before changing this report.",
+          );
+        if (
           req.body?.reportUuid !== undefined &&
           req.body.reportUuid !== report.uuid
         )
-          throw new ArtifactError("REPORT_CHANGED", "The report identity changed. Refresh before trying again.");
-        if (["/api/archive", "/api/delete", "/api/report-rename", "/api/extract",
-          "/api/failures", "/api/digest-test", "/api/report-metadata"].includes(req.path))
-          assertReportInstance(report, req.body?.reportUuid, req.body?.reportPath);
+          throw new ArtifactError(
+            "REPORT_CHANGED",
+            "The report identity changed. Refresh before trying again.",
+          );
+        if (
+          [
+            "/api/archive",
+            "/api/delete",
+            "/api/report-rename",
+            "/api/extract",
+            "/api/failures",
+            "/api/digest-test",
+            "/api/report-metadata",
+          ].includes(req.path)
+        )
+          assertReportInstance(
+            report,
+            req.body?.reportUuid,
+            req.body?.reportPath,
+          );
       } catch (error) {
         console.warn("Report mutation rejected:", error);
         return res.status(409).json({
           code: error instanceof ArtifactError ? error.code : "REPORT_CHANGED",
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     } else {
-      return res.status(404).json({ error: "Report not found. Refresh before trying again." });
+      return res
+        .status(404)
+        .json({ error: "Report not found. Refresh before trying again." });
     }
-    if (report && reportIsBusy(report.uuid) &&
+    if (
+      report &&
+      reportIsBusy(report.uuid) &&
       (activeExtractions.has(report.uuid)
         ? req.path !== "/api/report-metadata"
-        : !["/api/failures", "/api/digest-test", "/api/report-metadata"].includes(req.path)))
+        : ![
+            "/api/failures",
+            "/api/digest-test",
+            "/api/report-metadata",
+          ].includes(req.path))
+    )
       return res.status(409).json({
         code: "REPORT_ARTIFACTS_BUSY",
-        error: "Wait for this report's extraction, analysis or digest to finish."
+        error:
+          "Wait for this report's extraction, analysis or digest to finish.",
       });
   }
   if (
     req.method === "POST" &&
     req.path === "/api/config" &&
-    (activeFailureAnalyses.size || activeDigests.size || activeExtractions.size)
+    (activeFailureAnalyses.size ||
+      activeDigests.size ||
+      activeExtractions.size ||
+      activeImports.size ||
+      getAllReports().some(
+        (report) => pendingImports(appConfig, report.uuid).length,
+      ))
   ) {
     if (
-      ["currentPath", "archivePath", "vaultPath"].some(
+      ["currentPath", "archivePath"].some(
         (key) =>
           req.body?.[key] !== undefined &&
-          req.body[key] !== appConfig[key as keyof AppConfig]
+          req.body[key] !== appConfig[key as keyof AppConfig],
       )
     )
       return res.status(409).json({
         error:
-          "Storage paths cannot change while extraction, analysis or digest jobs are queued or running."
+          "Storage paths cannot change while extraction, analysis or digest jobs are queued or running.",
       });
   }
   next();
@@ -126,7 +186,7 @@ app.use(
     } else {
       next();
     }
-  }
+  },
 );
 
 app.use(
@@ -137,7 +197,7 @@ app.use(
     } else {
       next();
     }
-  }
+  },
 );
 
 // Helper to validate a path
@@ -153,7 +213,8 @@ const validatePath = (dirPath: string): boolean => {
 // --- Config API Endpoints ---
 app.get("/api/config", (req: Request, res: Response) => {
   refreshConfigCache();
-  res.json(appConfig);
+  const { vaultPath, ...config } = appConfig;
+  res.json({ ...config, legacyAnalysisReview: !!vaultPath });
 });
 
 app.post("/api/config", (req: Request, res: Response): any => {
@@ -161,14 +222,13 @@ app.post("/api/config", (req: Request, res: Response): any => {
     currentPath,
     archivePath,
     projectPath,
-    vaultPath,
     browserstackUsername,
     browserstackAccessKey,
     copilotToken,
     copilotModel,
     copilotBigModel,
     runnerOptions,
-    selectedProjects
+    selectedProjects,
   } = req.body;
 
   try {
@@ -178,7 +238,10 @@ app.post("/api/config", (req: Request, res: Response): any => {
       validatePath(archivePath);
     if (projectPath !== undefined && projectPath !== null)
       validatePath(projectPath);
-    if (vaultPath !== undefined && vaultPath !== null) validatePath(vaultPath);
+    if (req.body.vaultPath !== undefined)
+      throw new Error(
+        "Vault storage is no longer configurable. Finals are stored with their analysis.",
+      );
 
     const newConfig: AppConfig = {
       id: "default",
@@ -188,8 +251,7 @@ app.post("/api/config", (req: Request, res: Response): any => {
         archivePath !== undefined ? archivePath.trim() : appConfig.archivePath,
       projectPath:
         projectPath !== undefined ? projectPath.trim() : appConfig.projectPath,
-      vaultPath:
-        vaultPath !== undefined ? vaultPath.trim() : appConfig.vaultPath,
+      vaultPath: appConfig.vaultPath,
       browserstackUsername:
         browserstackUsername !== undefined
           ? browserstackUsername.trim()
@@ -217,12 +279,13 @@ app.post("/api/config", (req: Request, res: Response): any => {
       selectedProjects:
         selectedProjects !== undefined && Array.isArray(selectedProjects)
           ? selectedProjects
-          : appConfig.selectedProjects
+          : appConfig.selectedProjects,
     };
 
     updateConfig(newConfig);
     refreshConfigCache();
-    res.json({ success: true, config: appConfig });
+    const { vaultPath: legacyVaultPath, ...publicConfig } = appConfig;
+    res.json({ success: true, config: publicConfig });
   } catch (error: any) {
     console.error("Validation/Save error:", error.message);
     res.status(400).json({ error: error.message });
@@ -247,7 +310,7 @@ app.post("/api/presets", (req: Request, res: Response): any => {
       id: Date.now().toString(),
       configId: "default",
       name: name.trim(),
-      projects: projects
+      projects: projects,
     };
     addPreset(newPreset);
     res.json({ success: true, preset: newPreset });
@@ -276,10 +339,33 @@ registerReportRoutes(app);
 registerAriaRoutes(app);
 registerArtifactRoutes(app);
 registerVaultRoutes(app);
+registerImportRoutes(app);
+
+app.use((error: unknown, _req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) return next(error);
+  console.error("Analysis request failed:", error);
+  const parserStatus =
+    error && typeof error === "object" && "status" in error
+      ? error.status
+      : undefined;
+  const status =
+    error instanceof ArtifactError
+      ? 409
+      : parserStatus === 400 || parserStatus === 413
+        ? parserStatus
+        : 500;
+  res.status(status).json({
+    code:
+      error instanceof ArtifactError ? error.code : "ANALYSIS_REQUEST_FAILED",
+    error: error instanceof Error ? error.message : String(error),
+  });
+});
 registerTrendsRoutes(app);
 
 app.use("/api", (req, res) => {
-  res.status(404).json({ error: `Unknown API endpoint: ${req.method} ${req.path}` });
+  res
+    .status(404)
+    .json({ error: `Unknown API endpoint: ${req.method} ${req.path}` });
 });
 
 // Fallback to dashboard for any missing routes
@@ -294,6 +380,6 @@ app.use((req: Request, res: Response) => {
 if (require.main === module)
   app.listen(PORT, () => {
     console.log(
-      `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`
+      `🚀 Playwright Report Viewer is running on http://localhost:${PORT}`,
     );
   });

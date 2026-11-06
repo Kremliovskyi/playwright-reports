@@ -1,97 +1,78 @@
-import fs from "fs";
-import path from "path";
-import {
-  GROUPED_ANALYSIS_FILENAME
-} from "@andrii_kremlovskyi/playwright-failure-analyzer";
+import fs from "node:fs";
+import path from "node:path";
 import {
   getAllAnalysisRuns,
   getAnalysisRuns,
-  getReport
+  getReport,
+  type AnalysisRun,
 } from "./db";
-import {
-  archivedGroupedAnalysisPath,
-  ArtifactError,
-  assertOwnedPath
-} from "./report-artifacts";
-import { isWithin } from "./report-storage";
+import { ArtifactError } from "./report-artifacts";
+import { resolveFinal, resolveGrouped } from "./analysis-storage";
 import { appConfig } from "./runtime";
 
-// --- Vault API Endpoints ---
+export function resolveLegacyRun(filename: string): AnalysisRun | undefined {
+  if (path.basename(filename) !== filename)
+    throw new ArtifactError("UNSAFE_ARTIFACT_PATH", "Invalid analysis name.");
+  const name = filename.replace(/\.md$/, "");
+  const runs = getAllAnalysisRuns().filter((run) => run.runName === name);
+  if (runs.length > 1)
+    throw new ArtifactError(
+      "ANALYSIS_REVIEW_REQUIRED",
+      "This name belongs to multiple analyses. Use the report-scoped link in Info.",
+    );
+  return runs[0];
+}
 
 export const resolveVaultFile = (filename: string): string | null => {
-  const safeName = path.basename(filename);
-  // Check vaultPath first (current reports)
-  if (appConfig.vaultPath) {
-    const resolved = path.resolve(appConfig.vaultPath, safeName + ".md");
-    const base = path.resolve(appConfig.vaultPath);
-    if (
-      (resolved.startsWith(base + path.sep) || resolved === base) &&
-      fs.existsSync(resolved)
-    )
-      return resolved;
-  }
-  // Check archivePath/analysis/ (archived reports)
-  if (appConfig.archivePath) {
-    const analysisDir = path.join(appConfig.archivePath, "analysis");
-    const resolved = path.resolve(analysisDir, safeName + ".md");
-    const base = path.resolve(analysisDir);
-    if (
-      (resolved.startsWith(base + path.sep) || resolved === base) &&
-      fs.existsSync(resolved)
-    )
-      return resolved;
-  }
-  return null;
+  const run = resolveLegacyRun(filename);
+  return run ? resolveFinal(appConfig, run) : null;
 };
 
-// Resolve the persisted failure-analysis runs for a report into existing vault files (newest first).
 export const getReportAnalysisFiles = (
-  reportId: string
-): { runName: string; mtime: string; runDir: string }[] => {
-  const files: { runName: string; mtime: string; runDir: string }[] = [];
-  const reportUuid = getReport(reportId)?.uuid;
-  if (!reportUuid) return files;
-  for (const run of getAnalysisRuns(reportUuid)) {
-    const resolved = resolveVaultFile(run.runName);
-    if (!resolved) continue;
+  reportId: string,
+): {
+  files: { runName: string; mtime: string; runDir: string }[];
+  issues: string[];
+} => {
+  const report = getReport(reportId);
+  if (!report) return { files: [], issues: [] };
+  const issues: string[] = [];
+  const files = getAnalysisRuns(report.uuid).flatMap((run) => {
     try {
-      const stat = fs.statSync(resolved);
-      files.push({
-        runName: run.runName,
-        mtime: stat.mtime.toISOString(),
-        runDir: run.runDir
-      });
-    } catch {
-      // Skip runs whose vault file became unreadable.
+      const file = resolveFinal(appConfig, run);
+      return file
+        ? [
+            {
+              runName: run.runName,
+              mtime: fs.statSync(file).mtime.toISOString(),
+              runDir: run.runDir,
+            },
+          ]
+        : [];
+    } catch (error) {
+      if (!(error instanceof ArtifactError)) throw error;
+      issues.push(`${run.runName}: ${error.message}`);
+      return [];
     }
-  }
-  return files;
+  });
+  return { files, issues };
 };
+
+export function scopedAnalysisRun(
+  reportId: string,
+  runName: string,
+): AnalysisRun | undefined {
+  const report = getReport(reportId);
+  return (
+    report &&
+    getAnalysisRuns(report.uuid).find((run) => run.runName === runName)
+  );
+}
 
 export const resolveGroupedAnalysisFile = (
   reportId: string,
-  runName: string
+  runName: string,
 ): string | null => {
-  const report = getReport(reportId);
-  if (!report) return null;
-  const run = getAnalysisRuns(report.uuid).find(
-    (candidate) => candidate.runName === runName
-  );
-  if (!run) return null;
-  if (report.reportPath.startsWith("/reports/archive/")) {
-    const archived = archivedGroupedAnalysisPath(appConfig, runName);
-    if (!archived || !fs.existsSync(archived)) return null;
-    if (getAllAnalysisRuns().some((other) => other.runName === runName && other.reportId !== report.uuid))
-      throw new ArtifactError("SHARED_ARTIFACT", "Another report references this grouped analysis.");
-    return fs.statSync(archived).isFile() ? archived : null;
-  }
-  if (
-    !run?.runDir ||
-    !appConfig.currentPath ||
-    !isWithin(appConfig.currentPath, run.runDir)
-  )
-    return null;
-  const groupedAnalysisFile = path.join(run.runDir, GROUPED_ANALYSIS_FILENAME);
-  assertOwnedPath(appConfig.currentPath, groupedAnalysisFile);
-  return fs.existsSync(groupedAnalysisFile) && fs.statSync(groupedAnalysisFile).isFile() ? groupedAnalysisFile : null;
+  const run = scopedAnalysisRun(reportId, runName);
+  return run ? resolveGrouped(appConfig, run) : null;
 };

@@ -11,10 +11,8 @@ const config = {
   currentPath: path.join(root, "current"),
   archivePath: path.join(root, "archive"),
   vaultPath: path.join(root, "vault"),
-  ...(process.env.ARTIFACT_TEST_REAL_ANALYZER ? {
-    copilotModel: "synthetic-small",
-    copilotBigModel: "synthetic-big",
-  } : {}),
+  copilotModel: "synthetic-small",
+  copilotBigModel: "synthetic-big",
 };
 for (const directory of [
   config.currentPath,
@@ -68,13 +66,18 @@ if (process.env.ARTIFACT_TEST_SEED === "browser") {
       const output = path.join(config.currentPath, "tmp", name);
       fs.mkdirSync(output, { recursive: true });
       fs.writeFileSync(path.join(output, "index.json"), "{}");
-      fs.writeFileSync(path.join(output, "grouped-analysis.md"), `Grouped ${name}`);
+      fs.writeFileSync(
+        path.join(output, "grouped-analysis.md"),
+        `Grouped ${name}`,
+      );
       fs.writeFileSync(
         path.join(config.vaultPath, name + ".md"),
         `Preserve ${name}`,
       );
       database
-        .prepare("INSERT INTO analysis_runs VALUES (?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO analysis_runs (id, reportId, runDir, runName, createdAt) VALUES (?, ?, ?, ?, ?)",
+        )
         .run(name, uuid, output, name, new Date().toISOString());
     }
   }
@@ -181,7 +184,8 @@ if (process.env.ARTIFACT_TEST_SEED === "trends") {
   }
 }
 let sequence = 0;
-const analyzerPath = require.resolve("@andrii_kremlovskyi/playwright-failure-analyzer");
+const analyzerPath =
+  require.resolve("@andrii_kremlovskyi/playwright-failure-analyzer");
 const publishedAnalyzer = require(analyzerPath);
 const analyzer = { ...publishedAnalyzer };
 require.cache[analyzerPath].exports = analyzer;
@@ -197,35 +201,46 @@ analyzer.copilotModels = async () => ({
 const syntheticClient = {
   async createSession(sessionConfig) {
     return {
-      on() { return () => {}; },
+      on() {
+        return () => {};
+      },
       async disconnect() {},
       async sendAndWait() {
         if (fs.existsSync(path.join(root, "invalid-ai")))
           return { data: { content: "not JSON" } };
-        const response = sessionConfig.model === "synthetic-big"
-          ? {
-              summary: "Two attempts share an unexpected status.",
-              problems: [{
-                title: "Unexpected response",
-                error: "Expected 200, received 503.",
-                failureExplanation: "The generated response differs from the assertion.",
-                issueIds: ["I1", "I2"],
-              }],
-              evidenceRequests: [],
-            }
-          : {
-              schemaVersion: 4,
-              issues: [{ blockIndex: 1, analysis: {
-                summary: "Unexpected response status.",
-                operation: "Check response status.",
-                expected: "200",
-                observed: "503",
-                likelyCause: "The generated service returned an error.",
-                relevantSignals: ["The assertion reports 503."],
-                confidence: "medium",
-                unknowns: ["The backend cause is not in the evidence."],
-              } }],
-            };
+        const response =
+          sessionConfig.model === "synthetic-big"
+            ? {
+                summary: "Two attempts share an unexpected status.",
+                problems: [
+                  {
+                    title: "Unexpected response",
+                    error: "Expected 200, received 503.",
+                    failureExplanation:
+                      "The generated response differs from the assertion.",
+                    issueIds: ["I1", "I2"],
+                  },
+                ],
+                evidenceRequests: [],
+              }
+            : {
+                schemaVersion: 4,
+                issues: [
+                  {
+                    blockIndex: 1,
+                    analysis: {
+                      summary: "Unexpected response status.",
+                      operation: "Check response status.",
+                      expected: "200",
+                      observed: "503",
+                      likelyCause: "The generated service returned an error.",
+                      relevantSignals: ["The assertion reports 503."],
+                      confidence: "medium",
+                      unknowns: ["The backend cause is not in the evidence."],
+                    },
+                  },
+                ],
+              };
         return { data: { content: JSON.stringify(response) } };
       },
     };
@@ -236,34 +251,47 @@ analyzer.withCopilotAnalysisClient = async (_models, _token, operation) => {
     throw new Error("Synthetic authentication failure");
   if (fs.existsSync(path.join(root, "typed-auth-fail")))
     throw new analyzer.CopilotAnalysisError(
-      "COPILOT_NOT_AUTHENTICATED", "Synthetic authentication failure", "",
+      "COPILOT_NOT_AUTHENTICATED",
+      "Synthetic authentication failure",
+      "",
     );
   if (fs.existsSync(path.join(root, "model-fail")))
     throw new analyzer.CopilotAnalysisError(
-      "COPILOT_MODEL_UNAVAILABLE", "Synthetic unavailable small model", _models.smallModel, "small",
+      "COPILOT_MODEL_UNAVAILABLE",
+      "Synthetic unavailable small model",
+      _models.smallModel,
+      "small",
     );
   return operation(syntheticClient);
 };
-analyzer.analyzeRun = async (client, runDir, manifest, ...args) => {
-  if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
-    process.send?.({ event: "ai-started", count: manifest.failures.length });
-    if (fs.existsSync(path.join(root, "hold-ai")))
-      await new Promise(resolve => {
-        const resume = message => {
-          if (!message.resumeAi) return;
-          process.removeListener("message", resume);
-          resolve();
-        };
-        process.on("message", resume);
-      });
-  }
-  if (process.env.ARTIFACT_TEST_REAL_ANALYZER)
-    return publishedAnalyzer.analyzeRun(client, runDir, manifest, ...args);
-  return { records: [], total: 0, analyzed: 0, failed: 0, skipped: 0, omitted: 0 };
-};
+analyzer.analyzeFailures = async (options) =>
+  publishedAnalyzer.analyzeFailures({
+    ...options,
+    onPrepared: async (run, signal) => {
+      await options.onPrepared?.(run, signal);
+      if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
+        process.send?.({
+          event: "ai-started",
+          count: run.manifest.failures.length,
+        });
+        if (fs.existsSync(path.join(root, "hold-ai")))
+          await new Promise((resolve) => {
+            const resume = (message) => {
+              if (!message.resumeAi) return;
+              process.removeListener("message", resume);
+              resolve();
+            };
+            process.on("message", resume);
+          });
+      }
+    },
+  });
 const actualSpawn = require("node:child_process").spawn;
 require("node:child_process").spawn = (_executable, args, options) => {
-  fs.appendFileSync(path.join(root, "command-args.jsonl"), JSON.stringify(args) + "\n");
+  fs.appendFileSync(
+    path.join(root, "command-args.jsonl"),
+    JSON.stringify(args) + "\n",
+  );
   if (process.env.ARTIFACT_TEST_REAL_READER)
     return actualSpawn(_executable, args, options);
   const child = new EventEmitter();
@@ -294,7 +322,14 @@ require("node:child_process").spawn = (_executable, args, options) => {
       fs.mkdirSync(runDir, { recursive: true });
       let manifest;
       if (command === "failures") {
-        manifest = { runDir, count: 0, failures: [] };
+        manifest = {
+          schemaVersion: 2,
+          command: "failures",
+          outputDir: args[3],
+          runDir,
+          count: 0,
+          failures: [],
+        };
         if (process.env.ARTIFACT_TEST_REAL_ANALYZER) {
           for (const index of [0, 1]) {
             const folder = `generated-case-${index}__retry0`;
@@ -303,13 +338,21 @@ require("node:child_process").spawn = (_executable, args, options) => {
               path.join(runDir, folder, "error.md"),
               "# Generated failure\n\n# Error details\n\n```text\nExpected: 200\nReceived: 503\n```\n",
             );
-            fs.writeFileSync(path.join(runDir, folder, "failure.json"), JSON.stringify({
-              testTitle: `Generated case ${index}`,
-              spec: "generated.spec.ts",
-            }));
+            fs.writeFileSync(
+              path.join(runDir, folder, "failure.json"),
+              JSON.stringify({
+                testTitle: `Generated case ${index}`,
+                spec: "generated.spec.ts",
+              }),
+            );
             manifest.failures.push({
-              folder, title: `Generated case ${index}`, testTitle: `Generated case ${index}`,
-              retryIndex: 0, status: "failed", outcome: "unexpected", traceSha1: `generated-${index}`,
+              folder,
+              title: `Generated case ${index}`,
+              testTitle: `Generated case ${index}`,
+              retryIndex: 0,
+              status: "failed",
+              outcome: "unexpected",
+              traceSha1: `generated-${index}`,
             });
           }
           manifest.count = manifest.failures.length;
@@ -319,7 +362,10 @@ require("node:child_process").spawn = (_executable, args, options) => {
           JSON.stringify(manifest),
         );
         if (!process.env.ARTIFACT_TEST_REAL_ANALYZER)
-          fs.writeFileSync(path.join(runDir, "grouped-analysis.md"), "# Synthetic grouped analysis");
+          fs.writeFileSync(
+            path.join(runDir, "grouped-analysis.md"),
+            "# Synthetic grouped analysis",
+          );
       } else if (command === "digest") {
         const folder = "same-test-title__retry0";
         fs.mkdirSync(path.join(runDir, folder));
@@ -366,7 +412,7 @@ if (process.env.ARTIFACT_TEST_PREPARATION_EVENTS) {
       const send = worker.send.bind(worker);
       worker.send = (message, ...rest) => {
         if (fs.existsSync(path.join(root, "hold-extraction"))) {
-          const resume = value => {
+          const resume = (value) => {
             if (!value.resumeExtraction) return;
             process.removeListener("message", resume);
             send(message, ...rest);
@@ -389,7 +435,9 @@ fs.readFileSync = (filename, ...args) => {
     String(filename) === path.join(reportRoot, "index.html") &&
     fs.existsSync(path.join(root, "scan-read-fail"))
   )
-    throw Object.assign(new Error("Synthetic report read failure"), { code: "EACCES" });
+    throw Object.assign(new Error("Synthetic report read failure"), {
+      code: "EACCES",
+    });
   return originalReadFile(filename, ...args);
 };
 const originalAsyncStat = fs.promises.stat;
@@ -408,9 +456,11 @@ const moved = (source, destination) => {
 };
 fs.statSync = (filename, ...args) => {
   const stat = originalStat(filename, ...args);
-  const birthtime = String(filename) === reportRoot && fs.existsSync(path.join(root, "replaced-report"))
-    ? new Date(stat.birthtimeMs + 86400000)
-    : movedBirthtimes.get(filename);
+  const birthtime =
+    String(filename) === reportRoot &&
+    fs.existsSync(path.join(root, "replaced-report"))
+      ? new Date(stat.birthtimeMs + 86400000)
+      : movedBirthtimes.get(filename);
   if (birthtime) Object.assign(stat, { birthtime, birthtimeMs: +birthtime });
   return stat;
 };
@@ -422,11 +472,33 @@ fs.promises.stat = async (filename, ...args) => {
 };
 fs.renameSync = (source, destination) => {
   if (
+    path.basename(source).startsWith("run-") &&
+    path.basename(path.dirname(path.dirname(source))) === "analysis-imports"
+  ) {
+    for (const marker of ["import-lock-transient", "import-lock-permanent"]) {
+      const file = path.join(root, marker);
+      if (!fs.existsSync(file)) continue;
+      const attempts = Number(fs.readFileSync(file, "utf8"));
+      fs.writeFileSync(file, String(attempts + 1));
+      if (marker === "import-lock-permanent" || attempts < 2)
+        throw Object.assign(new Error("Synthetic temporary import lock"), {
+          code: "EPERM",
+        });
+    }
+  }
+  if (
+    path.basename(source).startsWith("previous-") &&
+    fs.existsSync(path.join(root, "import-rollback-fail"))
+  )
+    throw new Error("Synthetic import rollback failure");
+  if (
     fs.existsSync(path.join(root, "cross-drive")) &&
     path.dirname(source) === config.currentPath &&
     path.dirname(destination) === config.archivePath
   )
-    throw Object.assign(new Error("Synthetic cross-drive move"), { code: "EXDEV" });
+    throw Object.assign(new Error("Synthetic cross-drive move"), {
+      code: "EXDEV",
+    });
   originalRename(source, destination);
   moved(source, destination);
 };
@@ -435,6 +507,26 @@ fs.cpSync = (source, destination, options) => {
   moved(source, destination);
 };
 const originalUpdateReportId = store.updateReportId;
+const originalReplaceAnalysis = store.replaceAnalysisRun;
+store.replaceAnalysisRun = (...args) => {
+  for (const marker of ["import-db-fail", "import-crash"]) {
+    const file = path.join(root, marker);
+    if (!fs.existsSync(file)) continue;
+    fs.unlinkSync(file);
+    if (marker === "import-crash") process.exit(86);
+    throw new Error("Synthetic import registration failure");
+  }
+  return originalReplaceAnalysis(...args);
+};
+const originalAsyncRemove = fs.promises.rm;
+fs.promises.rm = async (filename, ...args) => {
+  if (
+    String(filename).includes("analysis-imports") &&
+    fs.existsSync(path.join(root, "import-cleanup-fail"))
+  )
+    throw new Error("Synthetic import cleanup failure");
+  return originalAsyncRemove(filename, ...args);
+};
 store.updateReportId = (...args) => {
   const failure = path.join(root, "move-db-fail");
   if (fs.existsSync(failure)) {

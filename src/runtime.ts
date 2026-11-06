@@ -1,8 +1,5 @@
 import { Request, Response } from "express";
-import {
-  AppConfig,
-  getConfig
-} from "./db";
+import { AppConfig, getConfig } from "./db";
 
 // Global AppConfig cache for fast synchronous access in middlewares
 export let appConfig: AppConfig = getConfig();
@@ -21,8 +18,10 @@ export const activeFailureAnalyses = new Set<string>();
 export const activeDigests = new Set<string>();
 
 export const activeExtractions = new Set<string>();
+export const activeImports = new Set<string>();
 
 export const reportIsBusy = (uuid: string): boolean =>
+  activeImports.has(uuid) ||
   activeExtractions.has(uuid) ||
   activeFailureAnalyses.has(uuid) ||
   [...activeDigests].some((key) => key.startsWith(uuid + ":"));
@@ -37,7 +36,7 @@ export const subscribeLogs = (req: Request, res: Response): void => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
-    Connection: "keep-alive"
+    Connection: "keep-alive",
   });
   res.flushHeaders();
   sseClients.add(res);

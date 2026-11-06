@@ -1,29 +1,49 @@
 import type { Express } from "express";
 import { Request, Response } from "express";
 import fs from "fs";
-import MarkdownIt from "markdown-it";
 import path from "path";
-import {
-  GROUPED_ANALYSIS_FILENAME
-} from "@andrii_kremlovskyi/playwright-failure-analyzer";
-import {
-  getAllAnalysisRuns
-} from "./db";
-import {
-  contentVersion
-} from "./report-artifacts";
+import { GROUPED_ANALYSIS_FILENAME } from "@andrii_kremlovskyi/playwright-failure-analyzer";
+import { getAllAnalysisRuns } from "./db";
+import { contentVersion } from "./report-artifacts";
 import { AGENT_API_SCHEMA_VERSION } from "./report-catalog";
 import { appConfig, refreshConfigCache, reportIsBusy } from "./runtime";
-import { resolveGroupedAnalysisFile, resolveVaultFile } from "./vault-files";
-
-const md = new MarkdownIt({ html: true, linkify: true, typographer: true });
+import {
+  resolveGroupedAnalysisFile,
+  resolveVaultFile,
+  resolveLegacyRun,
+} from "./vault-files";
+import { saveFinal } from "./analysis-storage";
+import { pendingImports } from "./analysis-import";
+import {
+  registerFinalRoutes,
+  listRegisteredFinals,
+} from "./final-analysis-routes";
+import {
+  analysisLinkWarnings,
+  analysisSourceUrl,
+  renderAnalysisMarkdown,
+} from "./analysis-markdown";
 
 const renderVaultPage = (
   filename: string,
   rawContent: string,
-  saveUrl: string
+  saveUrl: string,
+  sourceFile?: string,
 ): string => {
-  const rendered = md.render(rawContent);
+  filename = filename.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ]!,
+  );
+  const sourceUrl = sourceFile
+    ? analysisSourceUrl(appConfig, sourceFile)
+    : undefined;
+  const rendered = renderAnalysisMarkdown(rawContent, sourceUrl);
+  const unavailableLinks = sourceFile
+    ? analysisLinkWarnings(path.dirname(sourceFile), rawContent).length
+    : 0;
   const escapedRaw = rawContent
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -120,6 +140,7 @@ const renderVaultPage = (
     </div>
   </div>
   <main>
+    ${unavailableLinks || !sourceUrl ? '<p role="status">Some evidence links may be unavailable. Producer paths are unchanged; deleted or archived raw evidence is not retained with the final.</p>' : ""}
     <article id="view-container" class="vault-content">${rendered}</article>
     <div id="edit-container" class="vault-content hidden">
       <textarea id="editor" class="vault-editor">${escapedRaw}</textarea>
@@ -186,48 +207,15 @@ const renderVaultPage = (
 };
 
 export function registerVaultRoutes(app: Express): void {
-
+  registerFinalRoutes(app, renderVaultPage);
   app.get("/api/vault/list", (req: Request, res: Response): any => {
     refreshConfigCache();
     try {
-      const files: { filename: string; mtime: string }[] = [];
-      // Scan vaultPath (current reports)
-      if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
-        const entries = fs.readdirSync(appConfig.vaultPath, {
-          withFileTypes: true
-        });
-        for (const e of entries) {
-          if (e.isFile() && e.name.endsWith(".md")) {
-            const filePath = path.join(appConfig.vaultPath, e.name);
-            const stat = fs.statSync(filePath);
-            files.push({
-              filename: e.name.replace(/\.md$/, ""),
-              mtime: stat.mtime.toISOString()
-            });
-          }
-        }
-      }
-      // Scan archivePath/analysis/ (archived reports)
-      if (appConfig.archivePath) {
-        const analysisDir = path.join(appConfig.archivePath, "analysis");
-        if (fs.existsSync(analysisDir)) {
-          const entries = fs.readdirSync(analysisDir, { withFileTypes: true });
-          for (const e of entries) {
-            if (e.isFile() && e.name.endsWith(".md")) {
-              const filePath = path.join(analysisDir, e.name);
-              const stat = fs.statSync(filePath);
-              files.push({
-                filename: e.name.replace(/\.md$/, ""),
-                mtime: stat.mtime.toISOString()
-              });
-            }
-          }
-        }
-      }
+      const { files, issues } = listRegisteredFinals();
       files.sort(
-        (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
+        (a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime(),
       );
-      return res.json({ files });
+      return res.json({ files, issues });
     } catch (error: any) {
       console.error("Vault list error:", error.message);
       return res.status(500).json({ error: "Failed to list vault files" });
@@ -238,7 +226,8 @@ export function registerVaultRoutes(app: Express): void {
     refreshConfigCache();
     const filename = req.params.filename as string;
     const resolved = resolveVaultFile(filename);
-    if (!resolved) return res.status(404).json({ error: "Vault file not found" });
+    if (!resolved)
+      return res.status(404).json({ error: "Vault file not found" });
     try {
       const content = fs.readFileSync(resolved, "utf-8");
       res.type("text/markdown").send(content);
@@ -255,50 +244,29 @@ export function registerVaultRoutes(app: Express): void {
     if (typeof content !== "string")
       return res.status(400).json({ error: "content is required" });
 
-    // Try to resolve existing file first (covers both vaultPath and archivePath/analysis/)
-    const existing = resolveVaultFile(safeName.replace(/\.md$/, ""));
-    if (req.body.expectedVersion !== undefined) {
-      if (
-        !existing ||
-        contentVersion(fs.readFileSync(existing, "utf8")) !==
-        req.body.expectedVersion
-      )
-        return res.status(409).json({
-          error: "This analysis was changed or deleted. Reload before saving."
-        });
-    }
-    const owningRun = getAllAnalysisRuns().find(
-      (run) => run.runName === safeName.replace(/\.md$/, "")
-    );
-    if (owningRun && reportIsBusy(owningRun.reportId))
+    const owningRun = resolveLegacyRun(safeName);
+    if (
+      owningRun &&
+      (reportIsBusy(owningRun.reportId) ||
+        pendingImports(appConfig, owningRun.reportId).length)
+    )
       return res.status(409).json({
-        error: "Wait for this report's active operation before saving."
+        error: "Wait for this report's active operation before saving.",
       });
-    if (existing) {
-      try {
-        fs.writeFileSync(existing, content, "utf-8");
-        return res.json({ success: true });
-      } catch (error: any) {
-        console.error("Vault save error:", error.message);
-        return res.status(500).json({ error: "Failed to save vault file" });
-      }
-    }
-
-    // New file — write to vaultPath
-    if (!appConfig.vaultPath)
-      return res.status(400).json({ error: "Vault path not configured" });
-    const resolved = path.resolve(appConfig.vaultPath, safeName + ".md");
-    const base = path.resolve(appConfig.vaultPath);
-    if (!resolved.startsWith(base + path.sep) && resolved !== base) {
-      return res.status(400).json({ error: "Invalid file path" });
-    }
-    try {
-      fs.writeFileSync(resolved, content, "utf-8");
-      return res.json({ success: true });
-    } catch (error: any) {
-      console.error("Vault save error:", error.message);
-      return res.status(500).json({ error: "Failed to save vault file" });
-    }
+    if (!owningRun)
+      return res
+        .status(req.body.expectedVersion === undefined ? 404 : 409)
+        .json({
+          error:
+            "Analysis was removed or is not registered. Select it in Report Info before saving.",
+        });
+    const destination = saveFinal(
+      appConfig,
+      owningRun,
+      content,
+      req.body.expectedVersion,
+    );
+    return res.json({ success: true, path: destination });
   });
 
   app.get("/vault/:filename", (req: Request, res: Response): any => {
@@ -311,7 +279,8 @@ export function registerVaultRoutes(app: Express): void {
       const html = renderVaultPage(
         filename,
         content,
-        `/api/vault/${encodeURIComponent(filename)}`
+        `/api/vault/${encodeURIComponent(filename)}`,
+        resolved,
       );
       res.type("text/html").send(html);
     } catch (error: any) {
@@ -329,12 +298,20 @@ export function registerVaultRoutes(app: Express): void {
       return res.status(400).send("reportId and runName are required");
     try {
       const resolved = resolveGroupedAnalysisFile(reportId, runName);
-      if (!resolved) return res.status(404).send("Grouped analysis file not found");
+      if (!resolved)
+        return res.status(404).send("Grouped analysis file not found");
       const content = fs.readFileSync(resolved, "utf-8");
       const saveUrl = `/api/analysis-run/grouped-analysis?reportId=${encodeURIComponent(reportId)}&runName=${encodeURIComponent(runName)}`;
       res
         .type("text/html")
-        .send(renderVaultPage(GROUPED_ANALYSIS_FILENAME, content, saveUrl));
+        .send(
+          renderVaultPage(
+            GROUPED_ANALYSIS_FILENAME,
+            content,
+            saveUrl,
+            resolved,
+          ),
+        );
     } catch (error) {
       console.error("Grouped analysis render error:", error);
       res.status(500).send("Failed to render grouped analysis file");
@@ -359,11 +336,13 @@ export function registerVaultRoutes(app: Express): void {
       try {
         const resolved = resolveGroupedAnalysisFile(reportId, runName);
         if (!resolved)
-          return res.status(404).json({ error: "Grouped analysis file not found" });
+          return res
+            .status(404)
+            .json({ error: "Grouped analysis file not found" });
         if (
           req.body.expectedVersion !== undefined &&
           contentVersion(fs.readFileSync(resolved, "utf8")) !==
-          req.body.expectedVersion
+            req.body.expectedVersion
         )
           return res
             .status(409)
@@ -376,46 +355,19 @@ export function registerVaultRoutes(app: Express): void {
           .status(500)
           .json({ error: "Failed to save grouped analysis file" });
       }
-    }
+    },
   );
 
   // Agent vault endpoints
   app.get("/api/agent/vault/list", (req: Request, res: Response): any => {
     refreshConfigCache();
     try {
-      const files: { filename: string; mtime: string }[] = [];
-      if (appConfig.vaultPath && fs.existsSync(appConfig.vaultPath)) {
-        const entries = fs.readdirSync(appConfig.vaultPath, {
-          withFileTypes: true
-        });
-        for (const e of entries) {
-          if (e.isFile() && e.name.endsWith(".md")) {
-            const filePath = path.join(appConfig.vaultPath, e.name);
-            const stat = fs.statSync(filePath);
-            files.push({
-              filename: e.name.replace(/\.md$/, ""),
-              mtime: stat.mtime.toISOString()
-            });
-          }
-        }
-      }
-      if (appConfig.archivePath) {
-        const analysisDir = path.join(appConfig.archivePath, "analysis");
-        if (fs.existsSync(analysisDir)) {
-          const entries = fs.readdirSync(analysisDir, { withFileTypes: true });
-          for (const e of entries) {
-            if (e.isFile() && e.name.endsWith(".md")) {
-              const filePath = path.join(analysisDir, e.name);
-              const stat = fs.statSync(filePath);
-              files.push({
-                filename: e.name.replace(/\.md$/, ""),
-                mtime: stat.mtime.toISOString()
-              });
-            }
-          }
-        }
-      }
-      return res.json({ schemaVersion: AGENT_API_SCHEMA_VERSION, files });
+      const { files, issues } = listRegisteredFinals();
+      return res.json({
+        schemaVersion: AGENT_API_SCHEMA_VERSION,
+        files,
+        issues,
+      });
     } catch (error: any) {
       return res.status(500).json({ error: "Failed to list vault files" });
     }
@@ -425,7 +377,8 @@ export function registerVaultRoutes(app: Express): void {
     refreshConfigCache();
     const filename = req.params.filename as string;
     const resolved = resolveVaultFile(filename);
-    if (!resolved) return res.status(404).json({ error: "Vault file not found" });
+    if (!resolved)
+      return res.status(404).json({ error: "Vault file not found" });
     try {
       const content = fs.readFileSync(resolved, "utf-8");
       res.type("text/markdown").send(content);

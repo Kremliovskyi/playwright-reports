@@ -1,3 +1,4 @@
+// prettier-ignore
 async (page) => {
   const verify = (condition, message) => {
     if (!condition) throw new Error(message);
@@ -22,11 +23,12 @@ async (page) => {
     await dialog.waitFor();
   };
   await page.setViewportSize({ width: 1440, height: 1000 });
-  const original = await info("fixture-report");
+  let original = await info("fixture-report");
   await row("fixture-report")
     .getByRole("button", { name: "Report Info" })
     .click();
   await page.locator("#report-info-runs .report-info-run").waitFor();
+  original = await info("fixture-report");
   verify(
     (await page.locator("#report-info-runs .report-info-run").count()) === 1,
     "Single report must have one Analysis card",
@@ -116,12 +118,13 @@ async (page) => {
     "Replacement must retain exactly one new analysis",
   );
   await page.locator("#failures-modal .modal-header button").click();
-  const duplicateBefore = await info("duplicate-report");
+  let duplicateBefore = await info("duplicate-report");
   await row("duplicate-report")
     .getByRole("button", { name: "Report Info" })
     .click();
   await page.getByRole("button", { name: "Review analysis data" }).click();
   await dialog.waitFor();
+  duplicateBefore = await info("duplicate-report");
   verify(
     await dialog
       .getByRole("button", { name: "Delete Selected Duplicates" })

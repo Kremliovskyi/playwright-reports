@@ -53,7 +53,25 @@ export interface AnalysisRun {
   runDir: string;
   runName: string;
   createdAt: string;
+  finalAnalysisPath: string;
+  groupedAnalysisPath: string;
+  importedAt: string;
+  storageVersion: number;
 }
+
+export type NewAnalysisRun = Omit<
+  AnalysisRun,
+  "finalAnalysisPath" | "groupedAnalysisPath" | "importedAt" | "storageVersion"
+> &
+  Partial<
+    Pick<
+      AnalysisRun,
+      | "finalAnalysisPath"
+      | "groupedAnalysisPath"
+      | "importedAt"
+      | "storageVersion"
+    >
+  >;
 
 export interface Digest {
   id: string;
@@ -143,9 +161,13 @@ if (!reportColumns.some((c) => c.name === "uuid")) {
   db.exec("ALTER TABLE reports ADD COLUMN uuid TEXT NOT NULL DEFAULT ''");
 }
 if (!reportColumns.some((c) => c.name === "folderBirthtime")) {
-  db.exec("ALTER TABLE reports ADD COLUMN folderBirthtime TEXT NOT NULL DEFAULT ''");
+  db.exec(
+    "ALTER TABLE reports ADD COLUMN folderBirthtime TEXT NOT NULL DEFAULT ''",
+  );
 }
-db.exec("UPDATE reports SET folderBirthtime = dateCreated WHERE folderBirthtime = ''");
+db.exec(
+  "UPDATE reports SET folderBirthtime = dateCreated WHERE folderBirthtime = ''",
+);
 for (const row of db
   .prepare("SELECT id FROM reports WHERE uuid = ''")
   .all() as { id: string }[]) {
@@ -233,6 +255,23 @@ if (analysisRunsIndexes.some((idx) => idx.origin === "u")) {
 db.exec(
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_analysis_runs_runDir ON analysis_runs(runDir) WHERE runDir <> ''",
 );
+const analysisColumns = db
+  .prepare("PRAGMA table_info(analysis_runs)")
+  .all() as { name: string }[];
+for (const column of [
+  "finalAnalysisPath",
+  "groupedAnalysisPath",
+  "importedAt",
+]) {
+  if (!analysisColumns.some((item) => item.name === column))
+    db.exec(
+      `ALTER TABLE analysis_runs ADD COLUMN ${column} TEXT NOT NULL DEFAULT ''`,
+    );
+}
+if (!analysisColumns.some((item) => item.name === "storageVersion"))
+  db.exec(
+    "ALTER TABLE analysis_runs ADD COLUMN storageVersion INTEGER NOT NULL DEFAULT 0",
+  );
 
 // Migration: add digests table (one report -> many trace digests under currentPath/tmp)
 db.exec(`
@@ -391,8 +430,7 @@ export const upsertReport = (
 
 export const getReport = (id: string): ReportRecord | undefined => {
   return db.prepare("SELECT * FROM reports WHERE id = ?").get(id) as
-    | ReportRecord
-    | undefined;
+    ReportRecord | undefined;
 };
 
 export const getAllReports = (): ReportRecord[] => {
@@ -401,8 +439,7 @@ export const getAllReports = (): ReportRecord[] => {
 
 export const getReportByUuid = (uuid: string): ReportRecord | undefined => {
   return db.prepare("SELECT * FROM reports WHERE uuid = ?").get(uuid) as
-    | ReportRecord
-    | undefined;
+    ReportRecord | undefined;
 };
 
 export const updateReportMetadata = (id: string, metadata: string): void => {
@@ -419,13 +456,13 @@ export const updateReportId = (
   newPath: string,
   folderBirthtime: string,
 ): void => {
-  const result = db.prepare("UPDATE reports SET id = ?, reportPath = ?, folderBirthtime = ? WHERE id = ?").run(
-    newId,
-    newPath,
-    folderBirthtime,
-    oldId,
-  );
-  if (result.changes !== 1) throw new Error("Report identity changed during the move.");
+  const result = db
+    .prepare(
+      "UPDATE reports SET id = ?, reportPath = ?, folderBirthtime = ? WHERE id = ?",
+    )
+    .run(newId, newPath, folderBirthtime, oldId);
+  if (result.changes !== 1)
+    throw new Error("Report identity changed during the move.");
 };
 
 // Drop analysis_runs whose reportId no longer maps to any report uuid (orphans from recycled names).
@@ -436,7 +473,24 @@ export const pruneOrphanAnalysisRuns = (): void => {
 };
 
 // --- Analysis Run Operations ---
-export const addAnalysisRun = (run: AnalysisRun): void => {
+const insertAnalysisRun = (run: NewAnalysisRun): void => {
+  db.prepare(
+    `INSERT INTO analysis_runs (id, reportId, runDir, runName, createdAt, finalAnalysisPath, groupedAnalysisPath, importedAt, storageVersion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    run.id,
+    run.reportId,
+    run.runDir,
+    run.runName,
+    run.createdAt,
+    run.finalAnalysisPath || "",
+    run.groupedAnalysisPath || "",
+    run.importedAt || "",
+    run.storageVersion ?? 1,
+  );
+};
+
+export const addAnalysisRun = (run: NewAnalysisRun): void => {
   db.transaction(() => {
     if (
       db
@@ -446,17 +500,14 @@ export const addAnalysisRun = (run: AnalysisRun): void => {
       throw new Error(
         "This report already has an analysis. Confirmation is required to replace it.",
       );
-    db.prepare(
-      `INSERT INTO analysis_runs (id, reportId, runDir, runName, createdAt)
-       VALUES (?, ?, ?, ?, ?)`,
-    ).run(run.id, run.reportId, run.runDir, run.runName, run.createdAt);
+    insertAnalysisRun(run);
   }).immediate();
 };
 
 export const getAnalysisRuns = (reportId: string): AnalysisRun[] => {
   return db
     .prepare(
-      "SELECT * FROM analysis_runs WHERE reportId = ? ORDER BY createdAt DESC",
+      "SELECT * FROM analysis_runs WHERE reportId = ? ORDER BY COALESCE(NULLIF(createdAt, ''), importedAt) DESC",
     )
     .all(reportId) as AnalysisRun[];
 };
@@ -465,6 +516,38 @@ export const getAllAnalysisRuns = (): AnalysisRun[] => {
   return db
     .prepare("SELECT * FROM analysis_runs ORDER BY createdAt DESC")
     .all() as AnalysisRun[];
+};
+
+export const replaceAnalysisRun = (
+  run: NewAnalysisRun,
+  expectedIds: string[],
+): void => {
+  db.transaction(() => {
+    const current = getAnalysisRuns(run.reportId)
+      .map((item) => item.id)
+      .sort();
+    if (JSON.stringify(current) !== JSON.stringify([...expectedIds].sort()))
+      throw new Error("Analysis records changed. Inspect the import again.");
+    db.prepare("DELETE FROM analysis_runs WHERE reportId = ?").run(
+      run.reportId,
+    );
+    insertAnalysisRun(run);
+  }).immediate();
+};
+
+export const updateAnalysisArtifacts = (
+  run: Pick<
+    AnalysisRun,
+    "id" | "runDir" | "finalAnalysisPath" | "groupedAnalysisPath"
+  >,
+): void => {
+  const result = db
+    .prepare(
+      "UPDATE analysis_runs SET runDir = ?, finalAnalysisPath = ?, groupedAnalysisPath = ?, storageVersion = 1 WHERE id = ?",
+    )
+    .run(run.runDir, run.finalAnalysisPath, run.groupedAnalysisPath, run.id);
+  if (result.changes !== 1)
+    throw new Error("Analysis record no longer exists.");
 };
 
 export const deleteAnalysisRunsByReport = (reportId: string): void => {
@@ -488,7 +571,7 @@ export const clearAnalysisRunDir = (
   runName: string,
 ): void => {
   db.prepare(
-    "UPDATE analysis_runs SET runDir = '' WHERE reportId = ? AND runName = ?",
+    "UPDATE analysis_runs SET runDir = '', groupedAnalysisPath = '' WHERE reportId = ? AND runName = ?",
   ).run(reportId, runName);
 };
 

@@ -11,10 +11,20 @@ import {
   pruneOrphanDigests,
   ReportRecord,
   searchReports,
-  upsertReport
+  upsertReport,
 } from "./db";
-import { getBasePathForScope, parseDashboardReportPath, purgeReportRuns, ReportScope } from "./report-storage";
-import { appConfig, invalidateReportSize, refreshConfigCache, reportIsBusy } from "./runtime";
+import {
+  getBasePathForScope,
+  parseDashboardReportPath,
+  purgeReportRuns,
+  ReportScope,
+} from "./report-storage";
+import {
+  appConfig,
+  invalidateReportSize,
+  refreshConfigCache,
+  reportIsBusy,
+} from "./runtime";
 import { getReportAnalysisFiles } from "./vault-files";
 
 interface ReportInfo {
@@ -34,11 +44,7 @@ interface ScanWarning {
 }
 
 type AgentAnalysisType =
-  | "failures"
-  | "summary"
-  | "network"
-  | "dom"
-  | "timeline";
+  "failures" | "summary" | "network" | "dom" | "timeline";
 
 interface AgentReportDescriptor {
   reportRef: string;
@@ -53,6 +59,7 @@ interface AgentReportDescriptor {
   reportDataPath: string | null;
   reportIndexPath: string | null;
   analysisFiles: string[];
+  analysisIssues: string[];
   exists: {
     reportRoot: boolean;
     dataDir: boolean;
@@ -65,7 +72,7 @@ export const AGENT_API_SCHEMA_VERSION = 1;
 const getConfigStatus = () => ({
   hasCurrent: !!appConfig.currentPath,
   hasArchive: !!appConfig.archivePath,
-  hasProject: !!appConfig.projectPath
+  hasProject: !!appConfig.projectPath,
 });
 
 const toReportInfo = (record: ReportRecord): ReportInfo => ({
@@ -75,7 +82,7 @@ const toReportInfo = (record: ReportRecord): ReportInfo => ({
   path: record.reportPath,
   createdAt: new Date(record.dateCreated),
   modifiedAt: new Date(record.dateCreated),
-  metadata: record.metadata
+  metadata: record.metadata,
 });
 
 export const getQueryString = (value: unknown): string | undefined => {
@@ -125,7 +132,7 @@ const decodeReportRef = (reportRef: string): string | null => {
 };
 
 const toAgentReportDescriptor = (
-  record: ReportRecord
+  record: ReportRecord,
 ): AgentReportDescriptor => {
   const parsed = parseDashboardReportPath(record.reportPath);
   const basePath = parsed ? getBasePathForScope(parsed.scope) : null;
@@ -137,6 +144,7 @@ const toAgentReportDescriptor = (
   const reportIndexPath = reportRootPath
     ? path.join(reportRootPath, "index.html")
     : null;
+  const analysis = getReportAnalysisFiles(record.id);
 
   return {
     reportRef: encodeReportRef(record.reportPath),
@@ -150,12 +158,13 @@ const toAgentReportDescriptor = (
     reportRootPath,
     reportDataPath,
     reportIndexPath,
-    analysisFiles: getReportAnalysisFiles(record.id).map((f) => f.runName),
+    analysisFiles: analysis.files.map((f) => f.runName),
+    analysisIssues: analysis.issues,
     exists: {
       reportRoot: Boolean(reportRootPath && fs.existsSync(reportRootPath)),
       dataDir: Boolean(reportDataPath && fs.existsSync(reportDataPath)),
-      indexHtml: Boolean(reportIndexPath && fs.existsSync(reportIndexPath))
-    }
+      indexHtml: Boolean(reportIndexPath && fs.existsSync(reportIndexPath)),
+    },
   };
 };
 
@@ -172,7 +181,7 @@ const getReportFromRef = (reportRef: string): ReportRecord | null => {
 };
 
 const getPreparedReportDescriptor = (
-  reportRef: string
+  reportRef: string,
 ): AgentReportDescriptor => {
   const record = getReportFromRef(reportRef);
   if (!record) {
@@ -182,7 +191,7 @@ const getPreparedReportDescriptor = (
   const descriptor = toAgentReportDescriptor(record);
   if (!descriptor.reportRootPath || !descriptor.reportDataPath) {
     throw new Error(
-      "Report could not be prepared because its storage path is not configured"
+      "Report could not be prepared because its storage path is not configured",
     );
   }
 
@@ -201,11 +210,11 @@ const getPreparedReportDescriptor = (
 const scanDirectory = (
   dirPath: string,
   prefix: string,
-  warnings: ScanWarning[] = []
+  warnings: ScanWarning[] = [],
 ): ReportInfo[] => {
   if (!dirPath) return [];
-  const previous = getAllReports().filter(record =>
-    record.reportPath.startsWith(`/reports/${prefix}/`)
+  const previous = getAllReports().filter((record) =>
+    record.reportPath.startsWith(`/reports/${prefix}/`),
   );
   const warn = (code: ScanWarning["code"], target: string, message: string) => {
     warnings.push({ code, path: target, message });
@@ -216,7 +225,11 @@ const scanDirectory = (
   try {
     entries = fs.readdirSync(dirPath, { withFileTypes: true });
   } catch (error) {
-    warn("REPORT_SCAN_FAILED", dirPath, `Could not scan report directory: ${String(error)}. Existing reports were preserved.`);
+    warn(
+      "REPORT_SCAN_FAILED",
+      dirPath,
+      `Could not scan report directory: ${String(error)}. Existing reports were preserved.`,
+    );
     return previous.map(toReportInfo);
   }
 
@@ -227,8 +240,11 @@ const scanDirectory = (
       const reportPath = `/reports/${prefix}/${dirent.name}/index.html`;
       const existing = getReport(dirent.name);
       if (existing && existing.reportPath !== reportPath) {
-        warn("REPORT_NAME_CONFLICT", folderPath,
-          `Another report already uses the name "${dirent.name}". Rename one folder outside the dashboard, then refresh. The indexed report and its artifacts were preserved.`);
+        warn(
+          "REPORT_NAME_CONFLICT",
+          folderPath,
+          `Another report already uses the name "${dirent.name}". Rename one folder outside the dashboard, then refresh. The indexed report and its artifacts were preserved.`,
+        );
         return null;
       }
 
@@ -239,14 +255,18 @@ const scanDirectory = (
         const indexPath = path.join(folderPath, "index.html");
         const hasIndex = fs.existsSync(indexPath);
         if (!hasIndex) {
-          if (existing) throw new Error("Report index.html is temporarily missing");
+          if (existing)
+            throw new Error("Report index.html is temporarily missing");
           return null;
         }
 
         // Deep inspection: verify it's actually a Playwright report
         const indexContent = fs.readFileSync(indexPath, "utf8");
         if (!indexContent.includes("<title>Playwright Test Report</title>")) {
-          if (existing) throw new Error("Report index.html is incomplete or no longer a recognizable report");
+          if (existing)
+            throw new Error(
+              "Report index.html is incomplete or no longer a recognizable report",
+            );
           return null;
         }
 
@@ -267,7 +287,8 @@ const scanDirectory = (
           if (existing?.uuid) purgeReportRuns(existing.uuid);
           invalidateReportSize(dirent.name);
         }
-        const dateCreated = existing?.uuid === uuid ? existing.dateCreated : birthIso;
+        const dateCreated =
+          existing?.uuid === uuid ? existing.dateCreated : birthIso;
 
         // Upsert into DB (preserves metadata via ON CONFLICT)
         upsertReport({
@@ -276,7 +297,7 @@ const scanDirectory = (
           dateCreated,
           folderBirthtime: birthIso,
           metadata,
-          reportPath
+          reportPath,
         });
 
         return {
@@ -286,22 +307,26 @@ const scanDirectory = (
           path: reportPath,
           createdAt: new Date(dateCreated),
           modifiedAt: stat.mtime,
-          metadata
+          metadata,
         };
       } catch (err) {
-        warn("REPORT_SCAN_FAILED", folderPath, `Could not inspect report: ${String(err)}. Existing data was preserved.`);
+        warn(
+          "REPORT_SCAN_FAILED",
+          folderPath,
+          `Could not inspect report: ${String(err)}. Existing data was preserved.`,
+        );
         return existing ? toReportInfo(existing) : null;
       }
     })
     .filter((item): item is ReportInfo => item !== null)
     .sort(
       (a, b) =>
-        new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime()
+        new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime(),
     );
 
   // Clean up stale DB entries: remove records for reports no longer on disk
   // Only absence from a successful directory listing proves that a folder disappeared.
-  const diskIds = new Set(entries.map(entry => entry.name));
+  const diskIds = new Set(entries.map((entry) => entry.name));
   const allDbReports = getAllReports();
   for (const dbReport of allDbReports) {
     // Only clean up records that belong to this prefix (check reportPath)
@@ -323,7 +348,6 @@ const scanDirectory = (
 };
 
 export function registerReportCatalog(app: Express): void {
-
   // API Endpoint to get the list of available reports
   app.get("/api/reports", (req, res) => {
     const warnings: ScanWarning[] = [];
@@ -335,7 +359,7 @@ export function registerReportCatalog(app: Express): void {
         ? scanDirectory(appConfig.archivePath, "archive", warnings)
         : [],
       configStatus: getConfigStatus(),
-      warnings
+      warnings,
     });
   });
 
@@ -350,7 +374,7 @@ export function registerReportCatalog(app: Express): void {
         query,
         selectedDates,
         rangeStart,
-        rangeEnd
+        rangeEnd,
       });
 
       const current = matchingReports
@@ -363,7 +387,7 @@ export function registerReportCatalog(app: Express): void {
       return res.json({
         current,
         archive,
-        configStatus: getConfigStatus()
+        configStatus: getConfigStatus(),
       });
     } catch (error: any) {
       console.error("Search error:", error);
@@ -388,12 +412,12 @@ export function registerReportCatalog(app: Express): void {
         query,
         selectedDates,
         rangeStart,
-        rangeEnd
+        rangeEnd,
       });
 
       if (scope) {
         matches = matches.filter((report) =>
-          report.reportPath.startsWith(`/reports/${scope}/`)
+          report.reportPath.startsWith(`/reports/${scope}/`),
         );
       }
 
@@ -407,12 +431,12 @@ export function registerReportCatalog(app: Express): void {
         schemaVersion: AGENT_API_SCHEMA_VERSION,
         command: "search-reports",
         totalCount: reports.length,
-        reports
+        reports,
       });
     } catch (error: any) {
       console.error("Agent search error:", error);
       return res.status(400).json({
-        error: error.message || "Failed to search reports for agent workflow"
+        error: error.message || "Failed to search reports for agent workflow",
       });
     }
   });
@@ -434,13 +458,13 @@ export function registerReportCatalog(app: Express): void {
         report,
         analysisTarget: {
           reportRootPath: report.reportRootPath,
-          reportDataPath: report.reportDataPath
-        }
+          reportDataPath: report.reportDataPath,
+        },
       });
     } catch (error: any) {
       console.error("Agent prepare error:", error);
       return res.status(404).json({
-        error: error.message || "Failed to prepare report for analysis"
+        error: error.message || "Failed to prepare report for analysis",
       });
     }
   });

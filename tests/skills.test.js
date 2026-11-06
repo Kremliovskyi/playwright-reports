@@ -20,17 +20,20 @@ test("skill installer copies packaged templates, keeps local edits and supports 
     const templates = path.resolve(__dirname, "../templates/skills");
     assert.deepEqual(
       payload.skills.map((skill) => skill.name),
-      (await fs.readdir(templates)).sort()
+      (await fs.readdir(templates)).sort(),
     );
     for (const skill of payload.skills) {
       assert.equal(skill.status, "installed");
       const content = await fs.readFile(skill.skillPath, "utf8");
       assert.equal(
         content,
-        await fs.readFile(path.join(templates, skill.name, "SKILL.md"), "utf8")
+        await fs.readFile(path.join(templates, skill.name, "SKILL.md"), "utf8"),
       );
-      assert.ok(content.startsWith(`---\nname: ${skill.name}\ndescription: `));
-      assert.ok(content.includes("\n---\n"));
+      const normalized = content.replace(/\r\n/g, "\n");
+      assert.ok(
+        normalized.startsWith(`---\nname: ${skill.name}\ndescription: `),
+      );
+      assert.ok(normalized.includes("\n---\n"));
     }
     const destination = payload.skills[0].skillPath;
     await fs.writeFile(destination, "local edits");
@@ -38,8 +41,8 @@ test("skill installer copies packaged templates, keeps local edits and supports 
     assert.equal(repeated.status, 0, repeated.stderr);
     assert.ok(
       JSON.parse(repeated.stdout).skills.every(
-        (skill) => skill.status === "skipped"
-      )
+        (skill) => skill.status === "skipped",
+      ),
     );
     assert.equal(await fs.readFile(destination, "utf8"), "local edits");
     const forced = run("init-skills", target, "--force", "--format", "text");
@@ -55,7 +58,7 @@ test("installer rejects invalid commands and options", () => {
   for (const args of [
     ["unknown"],
     ["init-skills", "--format", "yaml"],
-    ["init-skills", "--unknown"]
+    ["init-skills", "--unknown"],
   ]) {
     const result = run(...args);
     assert.equal(result.status, 1);
@@ -73,8 +76,8 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
       ...process.env,
       ARTIFACT_TEST_ROOT: root,
       ARTIFACT_TEST_SEED: "browser",
-      PLAYWRIGHT_REPORTS_DB_PATH: path.join(root, "app.db")
-    }
+      PLAYWRIGHT_REPORTS_DB_PATH: path.join(root, "app.db"),
+    },
   });
   context.after(async () => {
     const exit = once(child, "exit");
@@ -92,36 +95,36 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
   const prepare = await fetch(
     url +
       "/api/agent/reports/prepare?" +
-      new URLSearchParams({ reportRef: report.reportRef })
+      new URLSearchParams({ reportRef: report.reportRef }),
   );
   assert.equal(prepare.status, 200);
   const prepared = await prepare.json();
   assert.equal(prepared.report.uuid, report.uuid);
   assert.equal(
     prepared.analysisTarget.reportRootPath,
-    path.join(root, "current/fixture-report")
+    path.join(root, "current/fixture-report"),
   );
   assert.ok(
-    (await fs.stat(prepared.analysisTarget.reportDataPath)).isDirectory()
+    (await fs.stat(prepared.analysisTarget.reportDataPath)).isDirectory(),
   );
   const list = await (await fetch(url + "/api/agent/vault/list")).json();
   assert.ok(
-    list.files.some((file) => file.filename === report.analysisFiles[0])
+    list.files.some((file) => file.filename === report.analysisFiles[0]),
   );
   const note = await fetch(
-    url + "/api/agent/vault/" + encodeURIComponent(report.analysisFiles[0])
+    url + "/api/agent/vault/" + encodeURIComponent(report.analysisFiles[0]),
   );
   assert.equal(note.status, 200);
   assert.equal(await note.text(), "Preserve fixture-report-analysis-0");
   assert.equal((await fetch(url + "/api/agent/vault/missing")).status, 404);
   assert.equal(
     (await fetch(url + "/api/agent/reports/prepare?reportRef=missing")).status,
-    404
+    404,
   );
   assert.equal(
     (await fetch(url + "/api/agent/reports/search?rangeStart=2026-02-30"))
       .status,
-    400
+    400,
   );
   assert.equal(
     (
@@ -129,7 +132,7 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
         await fetch(url + "/api/agent/reports/search?query=no-matches")
       ).json()
     ).totalCount,
-    0
+    0,
   );
   assert.equal(
     (
@@ -137,7 +140,7 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
         await fetch(url + "/api/agent/reports/search?query=Synthetic&limit=1")
       ).json()
     ).reports.length,
-    1
+    1,
   );
   assert.equal(
     (
@@ -145,7 +148,7 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
         await fetch(url + "/api/agent/reports/search?scope=archive")
       ).json()
     ).reports.length,
-    0
+    0,
   );
   const Database = require("better-sqlite3");
   const database = new Database(path.join(root, "app.db"), { readonly: true });
@@ -153,17 +156,17 @@ test("reports skill discovers, prepares and reads vault notes through an isolate
     assert.equal(
       database.prepare("SELECT count(*) AS count FROM analysis_runs").get()
         .count,
-      3
+      3,
     );
     assert.equal(
       database.prepare("SELECT count(*) AS count FROM digests").get().count,
-      0
+      0,
     );
   } finally {
     database.close();
   }
   await assert.rejects(fs.stat(path.join(root, "commands.log")), {
-    code: "ENOENT"
+    code: "ENOENT",
   });
 });
 
@@ -171,20 +174,20 @@ test(
   "real report skill handoff and trace command matrix preserve all source files",
   {
     skip: !process.env.PW_REPORTS_SKILL_REPORT,
-    timeout: 240000
+    timeout: 240000,
   },
   async (context) => {
     const { createHash } = require("node:crypto");
     const {
       parseTrendReport,
-      resolveTrendAttempt
+      resolveTrendAttempt,
     } = require("../dist/report-trends");
     const reportRoot = path.resolve(process.env.PW_REPORTS_SKILL_REPORT);
     const readerCli =
       process.env.PW_REPORTS_READER_CLI ||
       require.resolve("@andrii_kremlovskyi/playwright-traces-reader/dist/cli.js");
     const scratch = await fs.mkdtemp(
-      path.join(os.tmpdir(), "reports-real-skill-")
+      path.join(os.tmpdir(), "reports-real-skill-"),
     );
     const fingerprint = async () => {
       const hash = createHash("sha256");
@@ -197,8 +200,8 @@ test(
             stat.mode,
             stat.size,
             stat.mtimeMs,
-            stat.ctimeMs
-          ])
+            stat.ctimeMs,
+          ]),
         );
         if (stat.isDirectory()) {
           for (const name of (await fs.readdir(target)).sort())
@@ -218,7 +221,7 @@ test(
         assert.equal(
           await fingerprint(),
           before,
-          "The source report must remain unchanged"
+          "The source report must remain unchanged",
         );
       } finally {
         await fs.rm(scratch, { recursive: true, force: true });
@@ -229,7 +232,7 @@ test(
       const result = spawnSync(process.execPath, [readerCli, ...args], {
         encoding: "utf8",
         maxBuffer: 64 * 1024 * 1024,
-        timeout: 120000
+        timeout: 120000,
       });
       assert.equal(result.status, 0, `${args[0]}: ${result.stderr}`);
       const payload = JSON.parse(result.stdout);
@@ -246,20 +249,20 @@ test(
       timestamp: "",
       timeSource: "catalog",
       version: "",
-      scope: "current"
+      scope: "current",
     };
     const html = await fs.readFile(path.join(reportRoot, "index.html"), "utf8");
     const observations = parseTrendReport(html, report).flatMap(
-      (series) => series.observations
+      (series) => series.observations,
     );
     assert.ok(observations.length > 0);
     for (const status of ["passed", "failed"]) {
       const observation = observations.find((candidate) =>
-        candidate.attempts.some((attempt) => attempt.status === status)
+        candidate.attempts.some((attempt) => attempt.status === status),
       );
       assert.ok(observation, `Fixture must include a ${status} attempt`);
       const attempt = observation.attempts.find(
-        (candidate) => candidate.status === status
+        (candidate) => candidate.status === status,
       );
       const resolved = await resolveTrendAttempt(
         html,
@@ -267,7 +270,7 @@ test(
         reportRoot,
         observation.testId,
         report.version,
-        attempt.index
+        attempt.index,
       );
       assert.equal(resolved.traceAvailability, "available");
       const tracePath = resolved.traces[0].tracePath;
@@ -280,16 +283,16 @@ test(
         tracePath,
         path.join(scratch, status),
         "--report",
-        reportRoot
+        reportRoot,
       );
       assert.equal(digest.status, status);
       const digestRoot = path.join(digest.runDir, digest.folder);
       const tree = JSON.parse(
-        await fs.readFile(path.join(digestRoot, "digest.json"), "utf8")
+        await fs.readFile(path.join(digestRoot, "digest.json"), "utf8"),
       );
       assert.ok(tree.steps.length > 0);
       assert.ok(
-        (await fs.stat(path.join(digestRoot, "network.ndjson"))).isFile()
+        (await fs.stat(path.join(digestRoot, "network.ndjson"))).isFile(),
       );
       if (status === "passed") continue;
       reader("slow-steps", tracePath, "--limit", "5");
@@ -300,7 +303,7 @@ test(
         "--source",
         "all",
         "--limit",
-        "3"
+        "3",
       );
       assert.ok(network.entries.length > 0);
       reader("request", tracePath, String(network.entries[0].id));
@@ -313,7 +316,7 @@ test(
         tracePath,
         String(attachments.attachments[0].id),
         "--output",
-        path.join(scratch, "attachment")
+        path.join(scratch, "attachment"),
       );
       const domPath = path.join(scratch, "dom.json");
       reader(
@@ -324,7 +327,7 @@ test(
         "--limit",
         "3",
         "--output",
-        domPath
+        domPath,
       );
       const dom = JSON.parse(await fs.readFile(domPath, "utf8"));
       assert.ok(dom.snapshots.length > 0);
@@ -333,12 +336,12 @@ test(
         "screenshots",
         tracePath,
         "--out-dir",
-        path.join(scratch, "screenshots")
+        path.join(scratch, "screenshots"),
       );
       assert.ok(screenshots.screenshots.length > 0);
     }
     context.diagnostic(
-      `${observations.length} tests; passed/failed handoff; commands: ${[...executed].join(", ")}; source fingerprint checked`
+      `${observations.length} tests; passed/failed handoff; commands: ${[...executed].join(", ")}; source fingerprint checked`,
     );
-  }
+  },
 );

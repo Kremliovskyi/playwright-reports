@@ -8,7 +8,7 @@ The dashboard exposes a local-first API for discovering reports and resolving th
 
 ### `GET /api/agent/reports/search`
 
-Searches the persisted report index and returns descriptors with an opaque `reportRef` and a stable per-instance `uuid`. References are path-based and may change after a rename/archive; UUIDs survive those moves. Each descriptor also contains `analysisFiles`, an array of available `run-<timestamp>` vault note names.
+Searches the persisted report index and returns descriptors with an opaque `reportRef` and a stable per-instance `uuid`. References are path-based and may change after a rename/archive; UUIDs survive those moves. Each descriptor contains `analysisFiles` (available final-analysis run names) and `analysisIssues` (unavailable/conflicting registered finals).
 
 Parameters: `query` (case-insensitive metadata tokens, all required), `scope=current|archive`, `rangeStart`,
 `rangeEnd`, `selectedDates` (comma-separated dates), and `limit`. Dates use UTC
@@ -22,7 +22,7 @@ including a date in `query`. Unknown `/api` endpoints return a JSON HTTP 404.
 The array shape is unchanged. Reconciled reports have at most one retained analysis; legacy duplicates stay accessible until their removal is explicitly confirmed in **Report Info**. Upgrade does not remove single existing analyses or change their links.
 
 `analysisFiles` and vault endpoints expose final notes only. A grouped-only archive
-is retained separately under `analysis/grouped-analysis/` and is accessible through
+is retained under `analysis/<reportUuid>/<runName>/grouped-analysis.md` and is accessible through
 the dashboard's Info dialog, not these final-note APIs. Report creation dates remain
 the original catalog dates across rename/archive; filesystem identity tracking is separate.
 
@@ -32,10 +32,22 @@ Resolves a selected report descriptor into local analysis-ready values such as t
 
 Treat `reportRef` as opaque. Do not construct report filesystem paths from it.
 
-## Vault access
+## Final-analysis access and import
 
-- `GET /api/agent/vault/list` lists available Markdown analysis notes.
-- `GET /api/agent/vault/:filename` returns one note as raw Markdown.
+- `GET /api/agent/vault/list` lists registered finals with `reportId`, `reportUuid`, `runName`, compatibility `filename`, `mtime`, and scoped raw `url`; review its `issues` too.
+- `GET /api/analysis-run/final?reportId=...&runName=...` returns raw Markdown.
+- `GET /final-analysis?reportId=...&runName=...` opens the rendered editor.
+- `PUT /api/analysis-run/final?reportId=...&runName=...` creates/updates the final. Send `content` and, for an existing file, `expectedVersion` (SHA-256 of current UTF-8 content). Final writes are atomic and JSON bodies are bounded to 16 MiB.
+- `/api/agent/vault/:filename`, `/api/vault/:filename/raw`, `/vault/:filename` and the legacy PUT alias work only for an unambiguous registered run. They never create arbitrary vault files.
+- `POST /api/analysis/reconcile` with `reportId` and `reportUuid` detects externally written finals and copies unambiguous legacy notes without modifying originals.
+- `GET /api/analysis/legacy` lists old configured-vault Markdown for explicit review.
+- `POST /api/analysis/import/preview`: `{reportId, reportUuid, sourcePath}`; returns provenance, artifacts, warnings, source `version`, destination and current `inventory`.
+- `POST /api/analysis/import`: the same identity/path plus `sourceVersion`, `analysisVersion`, optional `replaceRunId`, and `confirmUnverified`. Use versions from preview; replacement requires explicit approval.
+- `GET /api/analysis/import/recovery?reportId=...` lists interrupted transactions.
+- `POST /api/analysis/import/recover`: `{reportId, reportUuid, transaction}`; explicitly restores pre-commit storage or finishes committed cleanup.
+
+Imports accept server-local directories for current reports, copy the source and
+make no AI calls. Do not invoke mutation endpoints without user approval.
 
 ## Installed Skills
 

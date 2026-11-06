@@ -3,81 +3,118 @@ import { Request, Response } from "express";
 import fs from "fs";
 import path from "path";
 import {
-  clearAnalysisRunDir,
   deleteAnalysisRunsByReport,
   deleteReportRecord,
   getAllAnalysisRuns,
   getAnalysisRuns,
   getReport,
-  updateReportMetadata
+  updateReportMetadata,
+  updateAnalysisArtifacts,
 } from "./db";
 import {
   archivedGroupedAnalysisPath,
   ArtifactError,
-  preserveArchiveAnalyses
+  preserveArchiveAnalyses,
+  managedAnalysisPaths,
 } from "./report-artifacts";
-import { assertCurrentReportSource, assertReportInstance, isWithin, moveReportFolder, parseDashboardReportPath, purgeReportDigests } from "./report-storage";
-import { activeExtractions, appConfig, broadcastJson, invalidateReportSize, refreshConfigCache, reportIsBusy } from "./runtime";
+import {
+  assertCurrentReportSource,
+  assertReportInstance,
+  isWithin,
+  moveReportFolder,
+  parseDashboardReportPath,
+  purgeReportDigests,
+} from "./report-storage";
+import {
+  activeExtractions,
+  appConfig,
+  broadcastJson,
+  invalidateReportSize,
+  refreshConfigCache,
+  reportIsBusy,
+} from "./runtime";
 import { withReportPreparation } from "./report-preparation";
 import { extractReportTraces } from "./trace-extraction";
 import { resolveVaultFile } from "./vault-files";
+import {
+  reconcileReportAnalyses,
+  assertExclusiveAnalysis,
+} from "./analysis-storage";
 
 export function registerReportRoutes(app: Express): void {
-
-  app.post("/api/extract", async (req: Request, res: Response): Promise<any> => {
-    refreshConfigCache();
-    const { reportPath } = req.body;
-    if (typeof reportPath !== "string" || !reportPath)
-      return res.status(400).json({ error: "reportPath is required" });
-    const parsed = parseDashboardReportPath(reportPath);
-    const report = parsed && getReport(parsed.folderName);
-    if (!report || report.reportPath !== reportPath)
-      return res.status(404).json({ error: "Report not found. Refresh before trying again." });
-    if (reportIsBusy(report.uuid))
-      return res.status(409).json({
-        code: "REPORT_ARTIFACTS_BUSY",
-        error: "Wait for this report's extraction, analysis or digest to finish."
-      });
-    activeExtractions.add(report.uuid);
-    try {
-      const assertCurrent = () => {
-        if (getReport(report.id)?.uuid !== report.uuid)
-          throw new ArtifactError("REPORT_CHANGED", "The report changed while waiting for extraction.");
-        return assertReportInstance(report, req.body.reportUuid, reportPath);
-      };
-      assertCurrent();
-      broadcastJson("trace-extraction", { reportUuid: report.uuid, phase: "queued" });
-      const result = await withReportPreparation(async () => {
-        const dataDir = path.join(assertCurrent(), "data");
-        if (!fs.existsSync(dataDir))
-          return {
-            success: true,
-            extractedCount: 0,
-            message: "No data folder found, nothing to extract."
-          };
-        const extractedCount = await extractReportTraces(dataDir, {
-          beforePublish: assertCurrent,
-          onProgress: (progress) => broadcastJson("trace-extraction", {
-            reportUuid: report.uuid,
-            phase: "progress",
-            ...progress
-          })
+  app.post(
+    "/api/extract",
+    async (req: Request, res: Response): Promise<any> => {
+      refreshConfigCache();
+      const { reportPath } = req.body;
+      if (typeof reportPath !== "string" || !reportPath)
+        return res.status(400).json({ error: "reportPath is required" });
+      const parsed = parseDashboardReportPath(reportPath);
+      const report = parsed && getReport(parsed.folderName);
+      if (!report || report.reportPath !== reportPath)
+        return res
+          .status(404)
+          .json({ error: "Report not found. Refresh before trying again." });
+      if (reportIsBusy(report.uuid))
+        return res.status(409).json({
+          code: "REPORT_ARTIFACTS_BUSY",
+          error:
+            "Wait for this report's extraction, analysis or digest to finish.",
         });
-        return { success: true, extractedCount };
-      });
-      res.json(result);
-    } catch (error) {
-      console.error("Extraction error:", error);
-      if (error instanceof ArtifactError)
-        return res.status(409).json({ code: error.code, error: error.message });
-      res
-        .status(500)
-        .json({ error: "Failed to extract trace files: " + (error instanceof Error ? error.message : String(error)) });
-    } finally {
-      invalidateReportSize(report.id);
-      activeExtractions.delete(report.uuid);
-    }
-  });
+      activeExtractions.add(report.uuid);
+      try {
+        const assertCurrent = () => {
+          if (getReport(report.id)?.uuid !== report.uuid)
+            throw new ArtifactError(
+              "REPORT_CHANGED",
+              "The report changed while waiting for extraction.",
+            );
+          return assertReportInstance(report, req.body.reportUuid, reportPath);
+        };
+        assertCurrent();
+        broadcastJson("trace-extraction", {
+          reportUuid: report.uuid,
+          phase: "queued",
+        });
+        const result = await withReportPreparation(async () => {
+          const dataDir = path.join(assertCurrent(), "data");
+          if (!fs.existsSync(dataDir))
+            return {
+              success: true,
+              extractedCount: 0,
+              message: "No data folder found, nothing to extract.",
+            };
+          const extractedCount = await extractReportTraces(dataDir, {
+            beforePublish: assertCurrent,
+            onProgress: (progress) =>
+              broadcastJson("trace-extraction", {
+                reportUuid: report.uuid,
+                phase: "progress",
+                ...progress,
+              }),
+          });
+          return { success: true, extractedCount };
+        });
+        res.json(result);
+      } catch (error) {
+        console.error("Extraction error:", error);
+        if (error instanceof ArtifactError)
+          return res
+            .status(409)
+            .json({ code: error.code, error: error.message });
+        res
+          .status(500)
+          .json({
+            error:
+              "Failed to extract trace files: " +
+              (error instanceof Error ? error.message : String(error)),
+          });
+      } finally {
+        invalidateReportSize(report.id);
+        activeExtractions.delete(report.uuid);
+      }
+    },
+  );
 
   app.post("/api/archive", (req: Request, res: Response): any => {
     refreshConfigCache();
@@ -88,7 +125,7 @@ export function registerReportRoutes(app: Express): void {
     if (!appConfig.archivePath)
       return res.status(400).json({
         error:
-          "Archive directory is not configured! Please open Preferences and set an archive path first."
+          "Archive directory is not configured! Please open Preferences and set an archive path first.",
       });
 
     try {
@@ -115,29 +152,60 @@ export function registerReportRoutes(app: Express): void {
       const sourcePhysicalFolder = path.join(appConfig.currentPath, folderName);
 
       if (!fs.existsSync(sourcePhysicalFolder)) {
-        return res.status(404).json({ error: "Report folder not found on disk" });
+        return res
+          .status(404)
+          .json({ error: "Report folder not found on disk" });
       }
 
       const report = getReport(folderName);
       if (!report || report.reportPath !== reportPath)
-        return res.status(404).json({ error: "Report not found in the report index." });
+        return res
+          .status(404)
+          .json({ error: "Report not found in the report index." });
       assertCurrentReportSource(report);
       let timestamp = Date.now();
       let uniqueArchivedName: string;
       do {
         uniqueArchivedName = `playwright-report-${timestamp++}`;
-      } while (getReport(uniqueArchivedName) || fs.existsSync(path.join(appConfig.archivePath, uniqueArchivedName)));
+      } while (
+        getReport(uniqueArchivedName) ||
+        fs.existsSync(path.join(appConfig.archivePath, uniqueArchivedName))
+      );
       const reportUuid = report.uuid;
-      const archivedRuns = getAnalysisRuns(reportUuid);
+      const migration = reconcileReportAnalyses(appConfig, report.id);
+      if (migration.issues.length)
+        throw new ArtifactError(
+          "ANALYSIS_REVIEW_REQUIRED",
+          migration.issues.join("\n"),
+        );
+      const archivedRuns = migration.runs;
       const preserved = preserveArchiveAnalyses(
         appConfig,
         archivedRuns,
-        getAllAnalysisRuns().filter((run) => run.reportId !== reportUuid)
+        getAllAnalysisRuns().filter((run) => run.reportId !== reportUuid),
       );
       try {
-        moveReportFolder(report, uniqueArchivedName, appConfig.archivePath, "archive");
+        for (const run of archivedRuns) {
+          const artifact = preserved.artifacts.find(
+            (item) => item.runId === run.id,
+          );
+          updateAnalysisArtifacts({
+            ...run,
+            finalAnalysisPath:
+              artifact?.kind === "final" ? artifact.destination : "",
+            groupedAnalysisPath:
+              artifact?.kind === "grouped" ? artifact.destination : "",
+          });
+        }
+        moveReportFolder(
+          report,
+          uniqueArchivedName,
+          appConfig.archivePath,
+          "archive",
+        );
       } catch (error) {
         try {
+          for (const run of archivedRuns) updateAnalysisArtifacts(run);
           preserved.rollback();
         } catch (rollbackError) {
           throw new Error(`${String(error)}\n${String(rollbackError)}`);
@@ -147,11 +215,17 @@ export function registerReportRoutes(app: Express): void {
 
       // Preservation is complete. Cleanup cannot undo the archived report.
       for (const artifact of preserved.artifacts) {
-        if (artifact.kind === "final" && path.resolve(artifact.source) !== path.resolve(artifact.destination)) {
+        if (
+          artifact.kind === "final" &&
+          path.resolve(artifact.source) !== path.resolve(artifact.destination)
+        ) {
           try {
             fs.unlinkSync(artifact.source);
           } catch (error) {
-            console.warn("Failed to remove the archived note's source copy:", error);
+            console.warn(
+              "Failed to remove the archived note's source copy:",
+              error,
+            );
           }
         }
       }
@@ -168,10 +242,13 @@ export function registerReportRoutes(app: Express): void {
           } catch (rmErr) {
             console.warn(
               "Failed to remove output directory during archive:",
-              rmErr
+              rmErr,
             );
           }
-          clearAnalysisRunDir(reportUuid, run.runName);
+          const saved = getAnalysisRuns(reportUuid).find(
+            (item) => item.id === run.id,
+          )!;
+          updateAnalysisArtifacts({ ...saved, runDir: "" });
         }
 
         purgeReportDigests(reportUuid);
@@ -197,7 +274,9 @@ export function registerReportRoutes(app: Express): void {
     try {
       // Determine which base directory this is from (current vs archive)
       const isArchive = reportPath.startsWith("/reports/archive/");
-      const basePath = isArchive ? appConfig.archivePath : appConfig.currentPath;
+      const basePath = isArchive
+        ? appConfig.archivePath
+        : appConfig.currentPath;
 
       if (!basePath) {
         return res.status(400).json({ error: "Base directory not configured" });
@@ -214,52 +293,29 @@ export function registerReportRoutes(app: Express): void {
       const targetPhysicalFolder = path.join(basePath, folderName);
 
       if (!fs.existsSync(targetPhysicalFolder)) {
-        return res.status(404).json({ error: "Report folder not found on disk" });
+        return res
+          .status(404)
+          .json({ error: "Report folder not found on disk" });
       }
 
       const reportUuid = getReport(folderName)?.uuid || "";
-      const runs = getAnalysisRuns(reportUuid);
-      const otherRuns = getAllAnalysisRuns().filter((run) => run.reportId !== reportUuid);
-      const groupedFiles = runs.flatMap((run) => {
-        const grouped = archivedGroupedAnalysisPath(appConfig, run.runName);
-        if (!grouped || !fs.existsSync(grouped)) return [];
-        if (otherRuns.some((other) => other.runName === run.runName))
-          throw new ArtifactError("SHARED_ARTIFACT", `Another report references grouped analysis ${run.runName}.`);
-        return [grouped];
-      });
-      for (const grouped of new Set(groupedFiles)) fs.unlinkSync(grouped);
+      const migration = reconcileReportAnalyses(appConfig, folderName);
+      if (migration.issues.length)
+        throw new ArtifactError(
+          "ANALYSIS_REVIEW_REQUIRED",
+          migration.issues.join("\n"),
+        );
+      const runs = migration.runs;
+      for (const run of runs) assertExclusiveAnalysis(appConfig, run);
+      const otherRuns = getAllAnalysisRuns().filter(
+        (run) => run.reportId !== reportUuid,
+      );
+      const analysisPaths = managedAnalysisPaths(appConfig, runs);
+      for (const artifact of analysisPaths)
+        fs.rmSync(artifact, { recursive: true, force: true });
 
       // Delete the directory and its contents
       fs.rmSync(targetPhysicalFolder, { recursive: true, force: true });
-
-      // Delete associated analysis (vault) files and ephemeral output directories for every
-      // persisted run of this report.
-      for (const run of runs) {
-        const runFile = resolveVaultFile(run.runName);
-        if (runFile) {
-          try {
-            fs.unlinkSync(runFile);
-          } catch {
-            /* already gone */
-          }
-        }
-        // Best-effort removal of the ephemeral output dir; guarded to stay within currentPath.
-        if (
-          run.runDir &&
-          appConfig.currentPath &&
-          isWithin(appConfig.currentPath, run.runDir)
-        ) {
-          try {
-            if (fs.existsSync(run.runDir))
-              fs.rmSync(run.runDir, { recursive: true, force: true });
-          } catch (rmErr) {
-            console.warn(
-              "Failed to remove output directory during delete:",
-              rmErr
-            );
-          }
-        }
-      }
 
       // Remove DB record
       deleteReportRecord(folderName);
@@ -279,7 +335,8 @@ export function registerReportRoutes(app: Express): void {
   // Update report metadata endpoint
   app.post("/api/report-metadata", (req: Request, res: Response): any => {
     const { reportId, metadata } = req.body;
-    if (!reportId) return res.status(400).json({ error: "reportId is required" });
+    if (!reportId)
+      return res.status(400).json({ error: "reportId is required" });
     if (metadata === undefined)
       return res.status(400).json({ error: "metadata is required" });
 
@@ -302,7 +359,8 @@ export function registerReportRoutes(app: Express): void {
   app.post("/api/report-rename", (req: Request, res: Response): any => {
     refreshConfigCache();
     const { reportId, newName } = req.body;
-    if (!reportId) return res.status(400).json({ error: "reportId is required" });
+    if (!reportId)
+      return res.status(400).json({ error: "reportId is required" });
     if (!newName || typeof newName !== "string")
       return res.status(400).json({ error: "newName is required" });
 
@@ -342,13 +400,20 @@ export function registerReportRoutes(app: Express): void {
         return res.status(400).json({ error: "Invalid new name" });
 
       if (!fs.existsSync(oldFolder))
-        return res.status(404).json({ error: "Report folder not found on disk" });
+        return res
+          .status(404)
+          .json({ error: "Report folder not found on disk" });
       if (fs.existsSync(newFolder))
         return res
           .status(409)
           .json({ error: `A report named "${trimmed}" already exists` });
 
-      const newReportPath = moveReportFolder(existing, trimmed, appConfig.currentPath, "current");
+      const newReportPath = moveReportFolder(
+        existing,
+        trimmed,
+        appConfig.currentPath,
+        "current",
+      );
 
       res.json({ success: true, newId: trimmed, newPath: newReportPath });
     } catch (error: any) {

@@ -1,11 +1,18 @@
 namespace Preferences {
   export function create(deps: {
     checkRunnerOpen: () => Promise<boolean>;
-    showErrorDialog: (title: string, error: unknown, options?: { closeLabel?: string }) => void;
+    showErrorDialog: (
+      title: string,
+      error: unknown,
+      options?: { closeLabel?: string },
+    ) => void;
     setCopilotModelFieldValue: (role: "small" | "big", value: string) => void;
   }): void {
-    const { checkRunnerOpen, showErrorDialog, setCopilotModelFieldValue } = deps;
-    const settingsBtn = document.getElementById("settings-btn") as HTMLButtonElement;
+    const { checkRunnerOpen, showErrorDialog, setCopilotModelFieldValue } =
+      deps;
+    const settingsBtn = document.getElementById(
+      "settings-btn",
+    ) as HTMLButtonElement;
     const settingsModal = document.getElementById(
       "settings-modal",
     ) as HTMLElement;
@@ -27,9 +34,6 @@ namespace Preferences {
     ) as HTMLInputElement;
     const projectPathInput = document.getElementById(
       "project-path-input",
-    ) as HTMLInputElement;
-    const vaultPathInput = document.getElementById(
-      "vault-path-input",
     ) as HTMLInputElement;
     const browserstackUsernameInput = document.getElementById(
       "browserstack-username-input",
@@ -71,11 +75,14 @@ namespace Preferences {
       try {
         const response = await fetch("/api/config");
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Failed to load preferences");
+        if (!response.ok)
+          throw new Error(data.error || "Failed to load preferences");
         currentPathInput.value = data.currentPath || "";
         archivePathInput.value = data.archivePath || "";
         projectPathInput.value = data.projectPath || "";
-        vaultPathInput.value = data.vaultPath || "";
+        document
+          .getElementById("legacy-analysis-review")
+          ?.classList.toggle("hidden", !data.legacyAnalysisReview);
         browserstackUsernameInput.value = data.browserstackUsername || "";
         browserstackKeyInput.value = data.browserstackAccessKey || "";
         copilotTokenInput.value = data.copilotToken || "";
@@ -84,7 +91,8 @@ namespace Preferences {
         saveModalBtn.disabled = false;
       } catch (err) {
         console.error("Failed to load config:", err);
-        modalError.textContent = err instanceof Error ? err.message : String(err);
+        modalError.textContent =
+          err instanceof Error ? err.message : String(err);
         modalError.classList.remove("hidden");
       }
     };
@@ -115,7 +123,6 @@ namespace Preferences {
       const currentPath = currentPathInput.value.trim();
       const archivePath = archivePathInput.value.trim();
       const projectPath = projectPathInput.value.trim();
-      const vaultPath = vaultPathInput.value.trim();
       const browserstackUsername = browserstackUsernameInput.value.trim();
       const browserstackAccessKey = browserstackKeyInput.value.trim();
       const copilotToken = copilotTokenInput.value.trim();
@@ -128,7 +135,6 @@ namespace Preferences {
           currentPath,
           archivePath,
           projectPath,
-          vaultPath,
           browserstackUsername,
           browserstackAccessKey,
           copilotToken,
@@ -143,7 +149,5 @@ namespace Preferences {
         saveModalBtn.textContent = "Save changes and reload";
       }
     });
-
-
   }
 }

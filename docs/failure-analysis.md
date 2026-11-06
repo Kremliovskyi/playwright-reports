@@ -6,8 +6,8 @@ Failure analysis turns the failed attempts in a current report into compact, age
 
 The engine comes from the published
 [`@andrii_kremlovskyi/playwright-failure-analyzer`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-failure-analyzer)
-package (pinned to 0.1.2). The dashboard retains report ownership, confirmation,
-queued preparation, progress, and vault integration; it does not keep a second
+package (`^0.1.4`, locked to 0.1.4). The dashboard retains report ownership, confirmation,
+queued preparation, progress, and final-analysis storage; it does not keep a second
 copy of the analysis engine.
 
 ## Before you begin
@@ -27,10 +27,11 @@ data may be sent to Copilot. Only analyze reports approved for that service.
 
 Each report retains one analysis output set. When an analysis already exists, **Analyze Failures** opens a warning with **Delete & Analyze** and **Cancel**. Confirming permanently removes the previous output and its saved vault note before generation starts. If the new run fails, the previous analysis cannot be restored. Cancel, Escape, and closing the warning leave existing files unchanged. Invalid configuration or unavailable Copilot access is checked before deletion.
 
-The dashboard runs the installed [`@andrii_kremlovskyi/playwright-traces-reader`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-traces-reader) `failures` command and writes output below the Current Reports Directory:
+The dashboard calls the package's shared `analyzeFailures` pipeline, including
+queued trace preparation, and writes below the Current Reports Directory:
 
 ```text
-<currentPath>/tmp/analysis-<reportUuid>/run-<timestamp>-<reportUuid>/
+<currentPath>/tmp/analysis-<reportUuid>/run-<UTC timestamp>-<random suffix>/
 ```
 
 Existing analysis paths remain unchanged until an explicitly confirmed rerun. Manual trace digests are stored separately and are never deleted by analysis replacement.
@@ -43,9 +44,10 @@ grouping. A zero trace count is not proof of a clean report. Partial artifacts
 remain inspectable. A failed AI stage or zero successful evidence records with
 failed attempts is shown as a red **Failure Analysis Failed** result. Partial
 results and warnings are amber; only clean completion is green.
-The dashboard's prepared-run integration retains its existing
-artifact layout; the standalone CLI additionally writes `analysis-result.json`
-and a count-only `summary.md` for CI.
+The dashboard and standalone CLI now write the same bundle, including
+`analysis-result.json` and a count-only `summary.md`. Controlled preparation
+failure also retains a registered diagnostic result for Report Info, even when
+no valid manifest exists. HTTP errors and partial completion remain explicit.
 
 ## Concurrent requests and trace extraction
 
@@ -79,8 +81,10 @@ Concurrent readers publish completed cache entries atomically. The reader accept
 Every failed attempt, including each retry, receives a separate folder. A generated run has this general layout:
 
 ```text
-run-<timestamp>/
+run-<UTC timestamp>-<random suffix>/
 |-- index.json
+|-- analysis-result.json
+|-- summary.md
 |-- grouped-analysis.md
 |-- <sanitized-test-title>__retry0/
 |   |-- evidence.json
@@ -103,15 +107,74 @@ run-<timestamp>/
 
 `index.json` is the run manifest. It lists the failed attempts and maps each entry to its output folder. Retry folders are independent records because different attempts of the same test can fail at different steps.
 
+The manifest remains schema v2 and per-attempt evidence remains schema v4.
+Result schema v2 records the basename as `runId`, its ISO UTC `createdAt`, source
+kind `playwright-reports`, and the report UUID/name. The dashboard does not infer
+environment/region from arbitrary report labels; consumers may use consistent
+test metadata or request clarification. Creation time is not the test date.
+
+The canonical basename is, for example, `run-2026-11-06T15-04-05-123Z-a1B2c3`.
+Neither CI transport wrappers nor the dashboard UUID suffix belong in it.
+Existing random-only or timestamp-plus-UUID names are not migrated or renamed.
+Older dashboard bundles may lack result metadata; their completion state is
+unknown until established from available evidence, not assumed successful.
+
+For downloaded bundles, use the supplied grouped file's local parent manifest.
+Absolute paths in headers/JSON are producer-machine provenance, not required
+local locations. Keep relative evidence paths intact. A detached grouped report
+requires its exact matching local root; do not auto-select a sibling.
+
+Final comparison notes use `final-analysis.md` inside the selected run directory.
+They are consumer-owned; do not rewrite analyzer metadata to add them. The team
+knowledge base remains optional context, not a storage destination.
+
+### Import a downloaded analysis
+
+1. Download/unzip the HTML report and analysis artifact on the dashboard machine.
+   Add the HTML report to Current Reports normally.
+2. Open that report's **Info > Import output directory**, paste the absolute run
+   directory (or a wrapper with exactly one immediate run child), then **Inspect**.
+3. Review provenance, dates, sizes, grouped/final detection and warnings. If trace
+   metadata cannot verify the association, explicitly confirm it. Contradictory
+   trace/retry identities are rejected, not bypassed by that confirmation.
+4. Choose **Import**, or explicitly confirm **Replace analysis**. The server
+   copies into `<currentPath>/tmp/analysis-<reportUuid>/<runName>` and registers
+   it. The original download is never moved or deleted.
+
+Only current reports accept imports. Canonical and supported legacy bundle names
+are retained. An in-bundle legacy `<runName>.md` is normalized to
+`final-analysis.md` only in the copy; two competing final files require review.
+Unknown legacy analysis dates stay **Unknown**, separate from import time.
+Imports make no AI calls, preserve empty directories, verify copied/source hashes,
+reject links/traversal, and are bounded to 100,000 filesystem entries, 10 GiB,
+128 directory levels and 16 MiB per JSON metadata or root analysis Markdown file. Free disk space is checked
+before copying. Identical source bundles already registered are a no-op.
+Windows access/sharing errors during import renames receive bounded retries;
+persistent failures use the same rollback/recovery flow as other import failures.
+
+Relative evidence links in the final/grouped viewers resolve against their managed
+bundle, not the viewer's API URL. Import flags missing local and producer-path
+links without rewriting source Markdown or fetching external websites. Viewers
+warn when evidence links are unavailable, including after raw-output deletion.
+
+Reopen Info after writing a final externally to refresh its DB reference. Write
+into the registered copy if it should appear in the dashboard; editing Downloads
+does not update a previously imported copy. Import progress appears in Info.
+Interrupted replacements retain a transaction journal and backups. Info offers
+**Recover interrupted import**: restore the previous analysis if DB registration
+did not commit, or finish backup cleanup if it did. Other mutations are blocked
+until recovery succeeds; externally changed recovery files require manual review.
+
 The console and network error files are created only when the trace contains that type of evidence. Before Hooks and skipped entries can appear in the manifest, but they are not treated as analyzable test failures and do not receive an AI analysis record.
 
 ## End-to-end data flow
 
 ```mermaid
 flowchart TD
-	USER["User clicks Analyze Failures"] --> API["POST /api/failures<br/>server.ts"]
+	USER["User clicks Analyze Failures"] --> API["POST /api/failures"]
 
-	API --> QUEUE["Shared preparation queue"]
+	API --> ENGINE["Shared analyzer pipeline<br/>canonical identity + result/summary"]
+	ENGINE --> QUEUE["Shared preparation queue"]
 	QUEUE --> CLI["Trace reader CLI<br/>node cli.js failures REPORT OUTPUT --format json --workers 4"]
 	CLI --> RUN["Generated run directory"]
 	RUN --> MANIFEST["index.json<br/>attempt manifest"]
@@ -241,23 +304,23 @@ Depending on the available trace data, each failure folder can contain:
 
 The retained analysis is stored against the report's stable identity and appears under **Analysis** in the report's **Info** dialog. Partial results remain inspectable when AI analysis or grouping fails; the completion dialog reports the warning. Current analyses have these components; archive may retain grouped Markdown separately as described below:
 
-- **Output directory:** The ephemeral run directory containing `index.json`, `grouped-analysis.md`, per-attempt folders, `evidence.json`, `ai-analysis.md`, and the raw evidence. From the Info dialog, you can copy its path, open `index.json` or the grouped analysis, or delete the entire output directory.
-- **Analysis file:** An optional, longer-lived `<runName>.md` note mapped from the configured vault. You can copy its path, open the rendered Markdown page, or delete the file independently of the output directory.
+- **Output directory:** The ephemeral run directory containing the manifest, result/summary, conditional grouped analysis, per-attempt folders, and raw evidence. From the Info dialog, you can copy its path, open the manifest or grouped analysis when present, or delete the entire output directory.
+- **Analysis file:** Optional `final-analysis.md` inside the run, with explicit DB references after reconciliation/import. Copy, open, edit or delete it independently. Scoped final links remain unambiguous when different reports have the same run name; arbitrary unregistered Markdown files are not listed.
 
 The artifacts follow this lifecycle:
 
 - **Report rename:** The analysis runs remain attached because they are keyed by the report's stable internal identity rather than its folder name. The server updates the separate filesystem identity timestamp after the move; the original dashboard creation date and date filters stay unchanged.
-- **Delete output directory:** The generated `tmp/run-*` directory and all files inside it, including `grouped-analysis.md`, are removed. The run entry and any mapped vault analysis file remain available in the Info dialog.
-- **Delete analysis file:** The vault Markdown file is removed. The generated output directory and any preserved archived grouped file remain available. The run entry is removed only when no output or grouped artifact remains.
-- **Archive report:** A final vault note is preserved at `<archivePath>/analysis/<runName>.md` when available. Otherwise, grouped analysis is preserved at `<archivePath>/analysis/grouped-analysis/<runName>.md`. Preservation must succeed before the report is moved or its ephemeral output is deleted. The mapping remains attached; archived grouped fallback supports copy/open/edit in Info but is not a final vault/agent note. Directory creation and cross-drive copying are automatic; conflicts or copy errors are surfaced without deleting the source analysis.
-- **Delete report:** The output directories, mapped analysis files, and database run records associated with that report are removed.
+- **Delete output directory:** First preserve/register the final at `<currentPath>/analysis/<reportUuid>/<runName>/final-analysis.md`, then remove the raw output including grouped analysis. Preservation failure prevents deletion.
+- **Delete analysis file:** The mapped final Markdown file is removed. The generated output directory and any preserved archived grouped file remain available. The run entry is removed only when no output or grouped artifact remains.
+- **Archive report:** Preserve `<archivePath>/analysis/<reportUuid>/<runName>/final-analysis.md` when present, otherwise `grouped-analysis.md` in that directory. The full raw bundle is not archived. Preservation must succeed before the report move/cleanup; failures retain the source and restore references. Grouped fallback remains distinct from final notes.
+- **Delete report:** Remove its managed outputs, retained/archive files and DB records, never the original Downloads bundle or original legacy vault/sibling notes.
 - **Report removed or replaced outside the dashboard:** The next directory scan removes run records belonging to the missing report instance and prevents them from being attached to a new report that reuses the same folder name.
 
 Deleting an output directory does not change the Playwright report folder itself; analysis output lives under the Current Reports Directory's separate `tmp` folder.
 
 ### Existing reports and duplicate history
 
-Upgrading does not delete, regenerate, relocate, or rewrite existing analysis files. Reports with one analysis keep their paths, saved notes, and links, including archived reports. One output directory plus its grouped analysis, per-attempt evidence, and optional vault note is one analysis, not duplicate data.
+Schema upgrade preserves records and adds explicit artifact references. Reopening Info reconciles an unambiguous current legacy final by copying it into managed canonical storage, leaving its original untouched. Existing flat archive files remain readable without bulk moves. Missing, conflicting or shared artifacts require review. Deleting a migrated canonical final does not rediscover its preserved legacy original. Unregistered old vault notes remain visible through the Preferences legacy-review link.
 
 When older reports contain multiple outputs or competing saved analysis notes, **Info** displays **Review analysis data**. The confirmation lists the exact paths to keep and delete and requires an explicit keeper selection. Only confirmed surplus artifacts are removed. The only remaining output or saved note cannot be selected for duplicate removal. Cancel preserves every artifact and mapping.
 

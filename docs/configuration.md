@@ -16,7 +16,12 @@ Use absolute paths for each directory.
 | Current Reports Directory  | Folder where the Playwright project writes new HTML reports, such as `playwright-report`                   |
 | Archived Reports Directory | Folder where historical reports should be stored                                                           |
 | Playwright Project Path    | Project root recursively scanned for Playwright and BrowserStack config files; required by the test runner |
-| Obsidian Vault Path        | Optional directory containing Markdown analysis files                                                      |
+
+Final analyses live in their output directories; no Vault Path setting is needed.
+After Delete output, the final is retained under
+`<currentPath>/analysis/<reportUuid>/<runName>/final-analysis.md`.
+An old vault setting is kept internally only to locate legacy notes. Preferences
+offers a legacy-review link when it exists; originals are not deleted or moved.
 
 ## BrowserStack
 

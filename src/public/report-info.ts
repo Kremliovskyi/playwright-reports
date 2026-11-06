@@ -3,6 +3,7 @@ namespace ReportInfoPanel {
   export interface ReportInfoRun {
     runName: string;
     createdAt: string;
+    importedAt?: string;
     runDir: string;
     runDirExists: boolean;
     analysisFile: string;
@@ -18,6 +19,7 @@ namespace ReportInfoPanel {
     reportUuid: string;
     folder: string;
     folderExists: boolean;
+    canImport: boolean;
     runs: ReportInfoRun[];
     digests: ReportInfoDigest[];
     analysisInventory: AnalysisInventory;
@@ -52,7 +54,6 @@ namespace ReportInfoPanel {
     digestUrl: string | null;
   }
 
-
   export function create(deps: {
     fetchReports: (options: { showLoading: boolean }) => Promise<unknown>;
     formatDate: (date: string) => string;
@@ -60,7 +61,13 @@ namespace ReportInfoPanel {
     showAnalysisContextMenu: (x: number, y: number, path: string) => void;
     openConfirm: ReturnType<typeof DashboardConfirm.create>;
   }) {
-    const { fetchReports, formatDate, showErrorDialog, showAnalysisContextMenu, openConfirm } = deps;
+    const {
+      fetchReports,
+      formatDate,
+      showErrorDialog,
+      showAnalysisContextMenu,
+      openConfirm,
+    } = deps;
     const reportInfoModal = document.getElementById(
       "report-info-modal",
     ) as HTMLElement;
@@ -85,6 +92,254 @@ namespace ReportInfoPanel {
 
     let reportInfoCurrentReportId = "";
     let reportInfoCurrentUuid = "";
+    const importControls = document.createElement("section");
+    importControls.className = "form-group";
+    importControls.innerHTML = `
+      <button type="button" class="btn" automation-id="analysis-import-open">Import output directory</button>
+      <button type="button" class="btn hidden" automation-id="analysis-import-recover">Recover interrupted import</button>
+      <div class="hidden" data-import-form>
+        <label for="analysis-import-path">Directory on the dashboard machine</label>
+        <input id="analysis-import-path" automation-id="analysis-import-path" class="path-input full-width"
+          placeholder="Absolute run directory or GitHub extraction wrapper" />
+        <button type="button" class="btn" automation-id="analysis-import-inspect">Inspect</button>
+        <pre data-import-preview automation-id="analysis-import-preview" style="white-space: pre-wrap; overflow-wrap: anywhere"></pre>
+        <label class="hidden" data-import-confirm>
+          <input type="checkbox" automation-id="analysis-import-unverified" />
+          I confirm that this analysis belongs to the selected report despite insufficient matching metadata.
+        </label>
+        <button type="button" class="btn hidden" automation-id="analysis-import-commit">Import</button>
+      </div>
+      <p data-import-status automation-id="analysis-import-status" class="form-hint" role="status"></p>`;
+    reportInfoRuns.before(importControls);
+    const importOpen = importControls.querySelector<HTMLButtonElement>(
+      '[automation-id="analysis-import-open"]',
+    )!;
+    const importRecover = importControls.querySelector<HTMLButtonElement>(
+      '[automation-id="analysis-import-recover"]',
+    )!;
+    const importForm =
+      importControls.querySelector<HTMLElement>("[data-import-form]")!;
+    const importPath = importControls.querySelector<HTMLInputElement>(
+      "#analysis-import-path",
+    )!;
+    const importInspect = importControls.querySelector<HTMLButtonElement>(
+      '[automation-id="analysis-import-inspect"]',
+    )!;
+    const importCommit = importControls.querySelector<HTMLButtonElement>(
+      '[automation-id="analysis-import-commit"]',
+    )!;
+    const importConfirm = importControls.querySelector<HTMLElement>(
+      "[data-import-confirm]",
+    )!;
+    const importUnverified = importControls.querySelector<HTMLInputElement>(
+      'input[type="checkbox"]',
+    )!;
+    const importPreview = importControls.querySelector<HTMLElement>(
+      "[data-import-preview]",
+    )!;
+    const importStatus = importControls.querySelector<HTMLElement>(
+      "[data-import-status]",
+    )!;
+    let preview: {
+      source: string;
+      version: string;
+      reportUuid: string;
+      runName: string;
+      grouped: boolean;
+      finalName: string;
+      verified: boolean;
+      fileCount: number;
+      bytes: number;
+      destination: string;
+      warnings: string[];
+      inventory: AnalysisInventory;
+      createdAt: string;
+    } | null = null;
+    let importing = false;
+    let recoveries: { transaction: string; committed: boolean }[] = [];
+    importRecover.addEventListener("click", async () => {
+      const reportId = reportInfoCurrentReportId;
+      const reportUuid = reportInfoCurrentUuid;
+      const transaction = recoveries[0];
+      if (
+        !transaction ||
+        !(await openConfirm({
+          title: "Recover interrupted import",
+          message: transaction.committed
+            ? "Keep the committed import and finish cleaning its old backups?"
+            : "Restore the previous analysis and discard the interrupted copy?",
+          path: transaction.transaction,
+        }))
+      )
+        return;
+      if (
+        reportId !== reportInfoCurrentReportId ||
+        reportUuid !== reportInfoCurrentUuid
+      )
+        return;
+      importRecover.disabled = true;
+      try {
+        const response = await fetch("/api/analysis/import/recover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reportId,
+            reportUuid,
+            transaction: transaction.transaction,
+          }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Recovery failed");
+        importStatus.textContent = "Recovery complete.";
+        await refreshAfterRunChange();
+      } catch (error) {
+        importStatus.textContent =
+          error instanceof Error ? error.message : String(error);
+      } finally {
+        importRecover.disabled = false;
+      }
+    });
+    importOpen.addEventListener("click", () =>
+      importForm.classList.toggle("hidden"),
+    );
+    importPath.addEventListener("input", () => {
+      preview = null;
+      importCommit.classList.add("hidden");
+    });
+    importInspect.addEventListener("click", async () => {
+      const reportId = reportInfoCurrentReportId;
+      const reportUuid = reportInfoCurrentUuid;
+      const sourcePath = importPath.value;
+      preview = null;
+      importCommit.classList.add("hidden");
+      importInspect.disabled = true;
+      importStatus.textContent =
+        "Inspecting the directory and report association...";
+      try {
+        const response = await fetch("/api/analysis/import/preview", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reportId, reportUuid, sourcePath }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Inspection failed");
+        if (
+          reportId !== reportInfoCurrentReportId ||
+          reportUuid !== reportInfoCurrentUuid ||
+          sourcePath !== importPath.value
+        )
+          return;
+        preview = data;
+        importPreview.textContent = [
+          `Run: ${data.runName}`,
+          `Source: ${data.source}`,
+          `Destination: ${data.destination}`,
+          `Created: ${data.createdAt || "Unknown"}`,
+          `${data.fileCount} files / ${formatBytes(data.bytes)}`,
+          `Grouped: ${data.grouped ? "found" : "not present"}`,
+          `Final: ${data.finalName || "not present"}`,
+          `Association: ${data.verified ? "verified by trace/retry identities" : "UNVERIFIED"}`,
+          `Provenance: ${JSON.stringify(data.sourceMetadata)}`,
+          ...data.warnings,
+        ].join("\n");
+        importUnverified.checked = false;
+        importConfirm.classList.toggle("hidden", data.verified);
+        importCommit.textContent = data.inventory.entries.length
+          ? "Replace analysis"
+          : "Import";
+        importCommit.disabled = data.inventory.needsReview;
+        importCommit.classList.remove("hidden");
+        importStatus.textContent = data.inventory.needsReview
+          ? "Resolve the current analysis review before importing."
+          : "Inspection complete. No files have been changed.";
+      } catch (error) {
+        if (reportId === reportInfoCurrentReportId)
+          importStatus.textContent =
+            error instanceof Error ? error.message : String(error);
+      } finally {
+        importInspect.disabled = false;
+      }
+    });
+    importCommit.addEventListener("click", async () => {
+      if (!preview || importing) return;
+      if (!preview.verified && !importUnverified.checked) {
+        importStatus.textContent =
+          "Confirm the unverified association before importing.";
+        return;
+      }
+      const selected = preview;
+      const reportId = reportInfoCurrentReportId;
+      if (
+        selected.inventory.entries.length &&
+        !(await openConfirm({
+          title: "Replace analysis",
+          message:
+            "This replaces the current analysis, including its final. The imported source directory remains unchanged.",
+          path: selected.inventory.entries
+            .flatMap((entry) => [
+              ...(entry.output ? [entry.output.path] : []),
+              ...entry.notes.map((note) => note.path),
+            ])
+            .join("\n"),
+        }))
+      )
+        return;
+      if (
+        reportId !== reportInfoCurrentReportId ||
+        selected.reportUuid !== reportInfoCurrentUuid
+      )
+        return;
+      importing = true;
+      importPath.disabled = true;
+      importInspect.disabled = importCommit.disabled = true;
+      importStatus.textContent =
+        "Copying and validating analysis. No AI calls are made.";
+      const progress = new EventSource("/api/logs");
+      progress.addEventListener("analysis-import", (event: MessageEvent) => {
+        const data = JSON.parse(event.data);
+        if (
+          data.reportUuid === selected.reportUuid &&
+          reportInfoCurrentReportId === reportId
+        )
+          importStatus.textContent = `Copying files: ${data.completed}/${data.total}`;
+      });
+      try {
+        const response = await fetch("/api/analysis/import", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reportId,
+            reportUuid: selected.reportUuid,
+            sourcePath: selected.source,
+            sourceVersion: selected.version,
+            analysisVersion: selected.inventory.version,
+            replaceRunId: selected.inventory.entries[0]?.id,
+            confirmUnverified: importUnverified.checked,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Import failed");
+        if (reportId !== reportInfoCurrentReportId) return;
+        importStatus.textContent = data.unchanged
+          ? "This bundle is already imported."
+          : "Import complete. Original source preserved.";
+        importForm.classList.add("hidden");
+        preview = null;
+        await refreshAfterRunChange();
+      } catch (error) {
+        if (reportId === reportInfoCurrentReportId) {
+          importStatus.textContent =
+            error instanceof Error ? error.message : String(error);
+          await loadReportInfo(reportId);
+        }
+      } finally {
+        progress.close();
+        importing = false;
+        importPath.disabled = false;
+        importInspect.disabled = importCommit.disabled = false;
+        importOpen.disabled = importOpen.title !== "" || recoveries.length > 0;
+      }
+    });
     // Report-folder sizes are cached client-side; they only change on extract/archive/rename, none of
     // which happen while the dialog is open, so a cached value stays valid across reopens.
     const reportSizeCache = new Map<string, number>();
@@ -142,7 +397,7 @@ namespace ReportInfoPanel {
       const deleteBtn =
         kind === "grouped"
           ? ""
-          : `<button class="report-info-path-action danger" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>`;
+          : `<button class="report-info-path-action danger" automation-id="analysis-delete-${kind}" type="button" data-action="delete-${kind}" data-run="${safeRun}" data-path="${safePath}" title="Delete">${trashIcon}</button>`;
       return `
         <div class="report-info-path-row">
           <span class="report-info-path-label">${label}</span>
@@ -157,21 +412,33 @@ namespace ReportInfoPanel {
 
     const renderReportInfo = (info: ReportInfoResponse): void => {
       reportInfoName.textContent = info.reportId;
+      importOpen.disabled =
+        !info.canImport || importing || recoveries.length > 0;
+      importOpen.title = info.canImport
+        ? ""
+        : "Import is available only for current reports.";
+      if (!info.canImport) importForm.classList.add("hidden");
       const review = document.getElementById("report-info-review")!;
       review.replaceChildren();
       review.classList.toggle("hidden", !info.analysisInventory?.needsReview);
       if (info.analysisInventory?.needsReview) {
         const message = document.createElement("p");
-        message.textContent = info.analysisInventory.duplicated
-          ? "Duplicate analysis data found. No files have been deleted."
-          : "Existing analysis records need review. All files have been preserved.";
+        message.textContent =
+          (info.analysisInventory.duplicated
+            ? "Duplicate analysis data found. No files have been deleted."
+            : "Existing analysis records need review. All files have been preserved.") +
+          "\n" +
+          info.analysisInventory.issues.join("\n");
         const button = document.createElement("button");
         button.className = "btn";
         button.textContent = "Review analysis data";
         button.addEventListener(
           "click",
           () =>
-            void reviewAnalysisDuplicates(info.reportId, info.analysisInventory),
+            void reviewAnalysisDuplicates(
+              info.reportId,
+              info.analysisInventory,
+            ),
         );
         review.append(message, button);
       }
@@ -213,7 +480,7 @@ namespace ReportInfoPanel {
         <div class="report-info-run">
           <div class="report-info-run-head">
             <span class="report-info-run-name">${escHtml(run.runName)}</span>
-            <span class="report-info-run-date">${escHtml(formatDate(run.createdAt))}</span>
+            <span class="report-info-run-date">${escHtml(run.createdAt ? formatDate(run.createdAt) : "Analysis date unknown")}${run.importedAt ? ` (imported ${escHtml(formatDate(run.importedAt))})` : ""}</span>
           </div>
           ${outputRow}
           ${groupedRow}
@@ -264,6 +531,23 @@ namespace ReportInfoPanel {
 
     const loadReportInfo = async (reportId: string): Promise<void> => {
       try {
+        const reconciliation = await fetch("/api/analysis/reconcile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reportId,
+            ...(reportInfoCurrentUuid
+              ? { reportUuid: reportInfoCurrentUuid }
+              : {}),
+          }),
+        });
+        if (!reconciliation.ok) {
+          const result = await reconciliation.json();
+          importStatus.textContent =
+            result.error ||
+            result.issues?.join("\n") ||
+            "Analysis requires review.";
+        }
         const response = await fetch(
           "/api/report-info?reportId=" + encodeURIComponent(reportId),
         );
@@ -272,6 +556,18 @@ namespace ReportInfoPanel {
           throw new Error(data.error || "Failed to load report info");
         if (reportInfoCurrentReportId !== reportId) return; // a newer dialog took over
         reportInfoCurrentUuid = data.reportUuid;
+        const recoveryResponse = await fetch(
+          "/api/analysis/import/recovery?reportId=" +
+            encodeURIComponent(reportId),
+        );
+        const recoveryData = await recoveryResponse.json();
+        if (!recoveryResponse.ok)
+          throw new Error(
+            recoveryData.error || "Recovery status could not be loaded",
+          );
+        if (reportInfoCurrentReportId !== reportId) return;
+        recoveries = recoveryData.transactions;
+        importRecover.classList.toggle("hidden", recoveries.length === 0);
         renderReportInfo(data as ReportInfoResponse);
       } catch (err) {
         console.error("Report info load error:", err);
@@ -287,7 +583,9 @@ namespace ReportInfoPanel {
     // (potentially multi-GB) recursive disk scan. The result is cached for instant reopens.
     const loadReportSize = async (reportId: string): Promise<void> => {
       if (reportSizeCache.has(reportId)) {
-        reportInfoSize.textContent = formatBytes(reportSizeCache.get(reportId)!);
+        reportInfoSize.textContent = formatBytes(
+          reportSizeCache.get(reportId)!,
+        );
         return;
       }
       reportInfoSize.textContent = "Calculating…";
@@ -315,9 +613,17 @@ namespace ReportInfoPanel {
     const openReportInfoModal = (reportId: string): void => {
       reportInfoCurrentReportId = reportId;
       reportInfoCurrentUuid = "";
+      preview = null;
+      recoveries = [];
+      importRecover.classList.add("hidden");
+      importOpen.disabled = true;
+      importForm.classList.add("hidden");
+      importCommit.classList.add("hidden");
+      importStatus.textContent = "";
       reportInfoName.textContent = reportId;
       reportInfoSize.textContent = "Calculating…";
-      reportInfoRuns.innerHTML = '<div class="report-info-empty">Loading…</div>';
+      reportInfoRuns.innerHTML =
+        '<div class="report-info-empty">Loading…</div>';
       reportInfoDigests.innerHTML =
         '<div class="report-info-empty">Loading…</div>';
       reportInfoModal.classList.remove("hidden");
@@ -327,7 +633,10 @@ namespace ReportInfoPanel {
 
     const closeReportInfoModal = () => reportInfoModal.classList.add("hidden");
     closeReportInfoModalBtn.addEventListener("click", closeReportInfoModal);
-    closeReportInfoModalFooterBtn.addEventListener("click", closeReportInfoModal);
+    closeReportInfoModalFooterBtn.addEventListener(
+      "click",
+      closeReportInfoModal,
+    );
 
     const reviewAnalysisDuplicates = async (
       reportId: string,
@@ -402,7 +711,7 @@ namespace ReportInfoPanel {
       const ok = await openConfirm({
         title: isOutput ? "Delete output directory" : "Delete analysis file",
         message: isOutput
-          ? "This permanently deletes the output directory from disk. The analysis file stays mapped to this report."
+          ? "The final is copied to managed retained storage before deleting output. Raw evidence and grouped output are deleted. If no final exists, no analysis is retained."
           : "This permanently deletes the analysis file from disk.",
         path: "",
       });
@@ -536,10 +845,14 @@ namespace ReportInfoPanel {
       );
     });
 
-
     return {
-      reportSizeCache, loadReportInfo, openReportInfoModal, reviewAnalysisDuplicates,
-      get currentReportId() { return reportInfoCurrentReportId; }
+      reportSizeCache,
+      loadReportInfo,
+      openReportInfoModal,
+      reviewAnalysisDuplicates,
+      get currentReportId() {
+        return reportInfoCurrentReportId;
+      },
     };
   }
 }

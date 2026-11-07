@@ -139,6 +139,48 @@ test("import registers grouped and final, scoped reads are safe, and deleting ou
   assert.equal(digest(source), original);
 });
 
+for (const [grouped, final] of [[false, true], [true, false], [false, false]]) {
+  test(`import accepts optional artifacts: grouped=${grouped}, final=${final}`, async (t) => {
+    const { hub, source } = await sourceFixture(t, final);
+    if (!grouped) fs.unlinkSync(path.join(source, "grouped-analysis.md"));
+    const original = digest(source);
+    const preview = await inspect(hub, source);
+    assert.equal(preview.grouped, grouped);
+    assert.equal(preview.finalName, final ? "final-analysis.md" : "");
+    const imported = await hub.request("/api/analysis/import", commitBody(preview));
+    assert.equal(imported.status, 200, JSON.stringify(imported.data));
+    const run = (await info(hub)).data.runs[0];
+    assert.equal(run.groupedAnalysisExists, grouped);
+    assert.equal(run.analysisFileExists, final);
+    assert.ok(fs.statSync(path.join(run.runDir, "index.json")).isFile());
+    assert.equal(digest(source), original);
+  });
+}
+
+test("import always requires an index.json file, including diagnostic-only bundles", async (t) => {
+  const { hub, source } = await sourceFixture(t);
+  const before = (await info(hub)).data.runs;
+  fs.unlinkSync(path.join(source, "index.json"));
+  const resultPath = path.join(source, "analysis-result.json");
+  const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+  for (const status of ["complete", "failed", "cancelled"]) {
+    fs.writeFileSync(resultPath, JSON.stringify({ ...result, status }));
+    const rejected = await hub.request("/api/analysis/import/preview", {
+      ...target, sourcePath: source,
+    });
+    assert.equal(rejected.status, 409);
+    assert.equal(rejected.data.code, "INVALID_BUNDLE");
+    assert.match(rejected.data.error, /requires an index\.json file/);
+  }
+  fs.mkdirSync(path.join(source, "index.json"));
+  const directory = await hub.request("/api/analysis/import/preview", {
+    ...target, sourcePath: source,
+  });
+  assert.equal(directory.data.code, "INVALID_BUNDLE");
+  assert.match(directory.data.error, /requires an index\.json file/);
+  assert.deepEqual((await info(hub)).data.runs, before);
+});
+
 for (const final of [true, false]) {
   test(`archive imports preserve ${final ? "final" : "grouped fallback"} and leave Downloads untouched`, async (t) => {
     const { hub, source, runName } = await sourceFixture(t, final);
@@ -682,18 +724,17 @@ test("matching trace metadata verifies association and relative links resolve in
     `<template id="playwrightReportBase64">data:application/zip;base64,${report.toBuffer().toString("base64")}</template>`,
   );
   const relative = manifest.failures[0].folder + "/evidence.json";
-  fs.appendFileSync(
-    path.join(source, "final-analysis.md"),
-    `\n[Evidence](${relative})\n[Missing](absent.md)\n[Anchor](#details)\n`,
-  );
+  for (const name of ["final-analysis.md", "grouped-analysis.md", "summary.md"])
+    fs.appendFileSync(
+      path.join(source, name),
+      `\n[Evidence](${relative})\n[Missing](absent.md)\n[Anchor](#details)\n` +
+        "[Producer](/producer/evidence.json)\n[Outside](../outside.md)\n" +
+        "![Missing screenshot](missing.png)\n[Malformed](%ZZ.md)\n",
+    );
   const original = digest(source);
   const preview = await inspect(hub, source);
   assert.equal(preview.verified, true);
-  assert.ok(
-    preview.warnings.some((warning) =>
-      warning.includes("Missing bundle-relative link: absent.md"),
-    ),
-  );
+  assert.ok(!preview.warnings.some((warning) => /link/i.test(warning)));
   const imported = await hub.request("/api/analysis/import", {
     ...commitBody(preview),
     confirmUnverified: false,
@@ -701,6 +742,9 @@ test("matching trace metadata verifies association and relative links resolve in
   assert.equal(imported.status, 200, JSON.stringify(imported.data));
   const run = (await info(hub)).data.runs[0];
   const html = await (await fetch(hub.url + run.vaultUrl)).text();
+  const groupedHtml = await (await fetch(hub.url + run.groupedAnalysisUrl)).text();
+  for (const page of [html, groupedHtml])
+    assert.ok(!page.includes("Some evidence links may be unavailable"));
   const link = new URL(
     relative,
     `${hub.url}/reports/current/tmp/analysis-${target.reportUuid}/${runName}/final-analysis.md`,
@@ -719,7 +763,7 @@ test("matching trace metadata verifies association and relative links resolve in
     200,
   );
   assert.ok(
-    (await (await fetch(hub.url + run.vaultUrl)).text()).includes(
+    !(await (await fetch(hub.url + run.vaultUrl)).text()).includes(
       "Some evidence links may be unavailable",
     ),
   );

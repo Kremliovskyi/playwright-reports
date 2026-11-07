@@ -19,7 +19,6 @@ import {
   listRegisteredFinals,
 } from "./final-analysis-routes";
 import {
-  analysisLinkWarnings,
   analysisSourceUrl,
   renderAnalysisMarkdown,
 } from "./analysis-markdown";
@@ -41,9 +40,6 @@ const renderVaultPage = (
     ? analysisSourceUrl(appConfig, sourceFile)
     : undefined;
   const rendered = renderAnalysisMarkdown(rawContent, sourceUrl);
-  const unavailableLinks = sourceFile
-    ? analysisLinkWarnings(path.dirname(sourceFile), rawContent).length
-    : 0;
   const escapedRaw = rawContent
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -140,7 +136,6 @@ const renderVaultPage = (
     </div>
   </div>
   <main>
-    ${unavailableLinks || !sourceUrl ? '<p role="status">Some evidence links may be unavailable. Producer paths are unchanged; deleted or archived raw evidence is not retained with the final.</p>' : ""}
     <article id="view-container" class="vault-content">${rendered}</article>
     <div id="edit-container" class="vault-content hidden">
       <textarea id="editor" class="vault-editor">${escapedRaw}</textarea>

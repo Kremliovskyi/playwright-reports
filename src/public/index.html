@@ -630,10 +630,6 @@
               />
             </div>
 
-            <p class="form-hint">
-              Final analyses are stored inside their output directories.
-              Deleting output preserves the final in managed analysis storage.
-            </p>
             <p id="legacy-analysis-review" class="form-hint hidden">
               Legacy analysis originals are preserved.
               <a
@@ -1350,6 +1346,51 @@
           >
             Dismiss
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis Import Modal -->
+    <div
+      id="analysis-import-modal"
+      automation-id="analysis-import-dialog"
+      class="modal-backdrop hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="analysis-import-title"
+      aria-describedby="analysis-import-description"
+    >
+      <div class="modal-content" style="max-width: 760px">
+        <div class="modal-header">
+          <h2 id="analysis-import-title">Import output directory</h2>
+          <button type="button" class="icon-btn" data-import-close aria-label="Close import dialog">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="modal-body modal-body-padded">
+          <p id="analysis-import-description" class="form-hint">
+            Select an output directory containing index.json.
+            grouped-analysis.md and final-analysis.md are optional.
+          </p>
+          <div class="form-group">
+            <label for="analysis-import-path">Directory on the dashboard machine</label>
+            <input id="analysis-import-path" automation-id="analysis-import-path" class="path-input full-width"
+              placeholder="Absolute run directory or GitHub extraction wrapper" />
+          </div>
+          <button type="button" class="btn" automation-id="analysis-import-inspect">Inspect</button>
+          <pre data-import-preview automation-id="analysis-import-preview" style="white-space: pre-wrap; overflow-wrap: anywhere"></pre>
+          <label class="hidden" data-import-confirm>
+            <input type="checkbox" automation-id="analysis-import-unverified" />
+            I confirm that this analysis belongs to the selected report despite insufficient matching metadata.
+          </label>
+          <div data-import-status-slot></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" data-import-close automation-id="analysis-import-cancel">Cancel</button>
+          <button type="button" class="btn primary-btn hidden" automation-id="analysis-import-commit">Import</button>
         </div>
       </div>
     </div>

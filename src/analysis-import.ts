@@ -3,7 +3,6 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { finished } from "node:stream/promises";
 import { setTimeout as delay } from "node:timers/promises";
-import { analysisLinkWarnings } from "./analysis-markdown";
 import type { Express, Request, Response } from "express";
 import { getReportMetadata } from "@andrii_kremlovskyi/playwright-traces-reader";
 import {
@@ -224,6 +223,12 @@ export async function inspectImport(
       "The run directory name is not portable.",
     );
   const snapshot = await fingerprint(source, signal);
+  const manifestPath = path.join(source, "index.json");
+  if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile())
+    throw new ArtifactError(
+      "INVALID_BUNDLE",
+      "An analysis bundle requires an index.json file.",
+    );
   const resultFile = path.join(source, "analysis-result.json");
   const result = fs.existsSync(resultFile) ? readJson(resultFile) : undefined;
   let createdAt = "";
@@ -284,6 +289,12 @@ export async function inspectImport(
       if (artifacts[key] === undefined && key !== "result" && key !== "summary")
         continue;
       if (
+        key === "groupedAnalysis" &&
+        artifacts[key] === filename &&
+        !fs.existsSync(path.join(source, filename))
+      )
+        continue;
+      if (
         artifacts[key] !== filename ||
         !fs.statSync(validateRelative(source, artifacts[key])).isFile()
       )
@@ -330,41 +341,30 @@ export async function inspectImport(
         "Analysis creation date is unknown; import time is recorded separately.",
       );
   }
-  let manifest: FailureManifest | undefined;
-  const manifestPath = path.join(source, "index.json");
-  if (fs.existsSync(manifestPath)) {
-    const data = readJson(manifestPath);
-    if (data.schemaVersion !== 2)
-      throw new ArtifactError("INVALID_BUNDLE", "Unsupported manifest schema.");
-    try {
-      manifest = validateManifest(data, source);
-    } catch (error) {
-      throw new ArtifactError(
-        "INVALID_BUNDLE",
-        `Invalid manifest: ${String(error)}`,
-      );
-    }
-    for (const entry of manifest.failures.filter(isAnalyzableEntry)) {
-      const evidenceFile = path.join(source, entry.folder, "evidence.json");
-      if (!fs.existsSync(evidenceFile)) {
-        warnings.push(`Evidence unavailable: ${entry.folder}`);
-        continue;
-      }
-      if (readJson(evidenceFile).schemaVersion !== 4)
-        throw new ArtifactError(
-          "INVALID_BUNDLE",
-          `Unsupported evidence schema: ${entry.folder}`,
-        );
-    }
-  } else if (
-    !result ||
-    !["failed", "cancelled"].includes(String(result.status))
-  ) {
+  const data = readJson(manifestPath);
+  if (data.schemaVersion !== 2)
+    throw new ArtifactError("INVALID_BUNDLE", "Unsupported manifest schema.");
+  let manifest: FailureManifest;
+  try {
+    manifest = validateManifest(data, source);
+  } catch (error) {
     throw new ArtifactError(
       "INVALID_BUNDLE",
-      "A prepared bundle requires index.json.",
+      `Invalid manifest: ${String(error)}`,
     );
-  } else warnings.push("Diagnostic-only bundle: no prepared manifest.");
+  }
+  for (const entry of manifest.failures.filter(isAnalyzableEntry)) {
+    const evidenceFile = path.join(source, entry.folder, "evidence.json");
+    if (!fs.existsSync(evidenceFile)) {
+      warnings.push(`Evidence unavailable: ${entry.folder}`);
+      continue;
+    }
+    if (readJson(evidenceFile).schemaVersion !== 4)
+      throw new ArtifactError(
+        "INVALID_BUNDLE",
+        `Unsupported evidence schema: ${entry.folder}`,
+      );
+  }
   const grouped = fs.existsSync(path.join(source, "grouped-analysis.md"));
   const canonical = fs.existsSync(path.join(source, FINAL_ANALYSIS_FILENAME));
   const legacy = fs.existsSync(path.join(source, runName + ".md"));
@@ -393,13 +393,6 @@ export async function inspectImport(
         "IMPORT_LIMIT",
         `Analysis Markdown exceeds 16 MiB: ${name}`,
       );
-    else
-      warnings.push(
-        ...analysisLinkWarnings(
-          source,
-          fs.readFileSync(path.join(source, name), "utf8"),
-        ),
-      );
   const metadata = await getReportMetadata(
     assertReportInstance(report, report.uuid, report.reportPath),
   );
@@ -416,7 +409,7 @@ export async function inspectImport(
             if (!traces.has(name)) traces.set(name, new Set());
             traces.get(name)!.add(index);
           }
-  const attempts = manifest?.failures.filter(isAnalyzableEntry) || [];
+  const attempts = manifest.failures.filter(isAnalyzableEntry);
   if (
     traces.size &&
     attempts.some(

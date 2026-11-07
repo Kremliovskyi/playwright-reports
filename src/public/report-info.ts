@@ -95,20 +95,8 @@ namespace ReportInfoPanel {
     const importControls = document.createElement("section");
     importControls.className = "form-group";
     importControls.innerHTML = `
-      <button type="button" class="btn" automation-id="analysis-import-open">Import output directory</button>
+      <button type="button" class="btn" automation-id="analysis-import-open" aria-haspopup="dialog" aria-controls="analysis-import-modal">Import output directory</button>
       <button type="button" class="btn hidden" automation-id="analysis-import-recover">Recover interrupted import</button>
-      <div class="hidden" data-import-form>
-        <label for="analysis-import-path">Directory on the dashboard machine</label>
-        <input id="analysis-import-path" automation-id="analysis-import-path" class="path-input full-width"
-          placeholder="Absolute run directory or GitHub extraction wrapper" />
-        <button type="button" class="btn" automation-id="analysis-import-inspect">Inspect</button>
-        <pre data-import-preview automation-id="analysis-import-preview" style="white-space: pre-wrap; overflow-wrap: anywhere"></pre>
-        <label class="hidden" data-import-confirm>
-          <input type="checkbox" automation-id="analysis-import-unverified" />
-          I confirm that this analysis belongs to the selected report despite insufficient matching metadata.
-        </label>
-        <button type="button" class="btn hidden" automation-id="analysis-import-commit">Import</button>
-      </div>
       <p data-import-status automation-id="analysis-import-status" class="form-hint" role="status"></p>`;
     reportInfoRuns.before(importControls);
     const importOpen = importControls.querySelector<HTMLButtonElement>(
@@ -117,24 +105,28 @@ namespace ReportInfoPanel {
     const importRecover = importControls.querySelector<HTMLButtonElement>(
       '[automation-id="analysis-import-recover"]',
     )!;
-    const importForm =
-      importControls.querySelector<HTMLElement>("[data-import-form]")!;
-    const importPath = importControls.querySelector<HTMLInputElement>(
+    const importModal = document.getElementById("analysis-import-modal")!;
+    const importCloseButtons =
+      importModal.querySelectorAll<HTMLButtonElement>("[data-import-close]");
+    const importStatusSlot = importModal.querySelector<HTMLElement>(
+      "[data-import-status-slot]",
+    )!;
+    const importPath = importModal.querySelector<HTMLInputElement>(
       "#analysis-import-path",
     )!;
-    const importInspect = importControls.querySelector<HTMLButtonElement>(
+    const importInspect = importModal.querySelector<HTMLButtonElement>(
       '[automation-id="analysis-import-inspect"]',
     )!;
-    const importCommit = importControls.querySelector<HTMLButtonElement>(
+    const importCommit = importModal.querySelector<HTMLButtonElement>(
       '[automation-id="analysis-import-commit"]',
     )!;
-    const importConfirm = importControls.querySelector<HTMLElement>(
+    const importConfirm = importModal.querySelector<HTMLElement>(
       "[data-import-confirm]",
     )!;
-    const importUnverified = importControls.querySelector<HTMLInputElement>(
+    const importUnverified = importModal.querySelector<HTMLInputElement>(
       'input[type="checkbox"]',
     )!;
-    const importPreview = importControls.querySelector<HTMLElement>(
+    const importPreview = importModal.querySelector<HTMLElement>(
       "[data-import-preview]",
     )!;
     const importStatus = importControls.querySelector<HTMLElement>(
@@ -156,7 +148,56 @@ namespace ReportInfoPanel {
       createdAt: string;
     } | null = null;
     let importing = false;
+    let inspectionId = 0;
     let recoveries: { transaction: string; committed: boolean }[] = [];
+    const resetImportPreview = () => {
+      inspectionId++;
+      preview = null;
+      importPreview.textContent = "";
+      importConfirm.classList.add("hidden");
+      importUnverified.checked = false;
+      importCommit.classList.add("hidden");
+      importInspect.disabled = false;
+    };
+    const closeImportDialog = () => {
+      if (importing) return;
+      importModal.classList.add("hidden");
+      reportInfoModal.inert = false;
+      importControls.append(importStatus);
+      resetImportPreview();
+      importOpen.focus();
+    };
+    importCloseButtons.forEach((button) =>
+      button.addEventListener("click", closeImportDialog),
+    );
+    importModal.addEventListener("click", (event) => {
+      if (event.target === importModal) closeImportDialog();
+    });
+    importModal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeImportDialog();
+      }
+      if (event.key === "Tab") {
+        const elements = Array.from(
+          importModal.querySelectorAll<HTMLElement>(
+            "button:not(:disabled), input:not(:disabled)",
+          ),
+        ).filter((element) => element.offsetParent !== null);
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        }
+        if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+        if (!elements.length) event.preventDefault();
+      }
+    });
     importRecover.addEventListener("click", async () => {
       const reportId = reportInfoCurrentReportId;
       const reportUuid = reportInfoCurrentUuid;
@@ -199,19 +240,24 @@ namespace ReportInfoPanel {
         importRecover.disabled = false;
       }
     });
-    importOpen.addEventListener("click", () =>
-      importForm.classList.toggle("hidden"),
-    );
+    importOpen.addEventListener("click", () => {
+      resetImportPreview();
+      importStatus.textContent = "";
+      importStatusSlot.append(importStatus);
+      importModal.classList.remove("hidden");
+      reportInfoModal.inert = true;
+      importPath.focus();
+    });
     importPath.addEventListener("input", () => {
-      preview = null;
-      importCommit.classList.add("hidden");
+      resetImportPreview();
+      importStatus.textContent = "";
     });
     importInspect.addEventListener("click", async () => {
       const reportId = reportInfoCurrentReportId;
       const reportUuid = reportInfoCurrentUuid;
       const sourcePath = importPath.value;
-      preview = null;
-      importCommit.classList.add("hidden");
+      resetImportPreview();
+      const currentInspection = inspectionId;
       importInspect.disabled = true;
       importStatus.textContent =
         "Inspecting the directory and report association...";
@@ -226,7 +272,8 @@ namespace ReportInfoPanel {
         if (
           reportId !== reportInfoCurrentReportId ||
           reportUuid !== reportInfoCurrentUuid ||
-          sourcePath !== importPath.value
+          sourcePath !== importPath.value ||
+          currentInspection !== inspectionId
         )
           return;
         preview = data;
@@ -236,6 +283,7 @@ namespace ReportInfoPanel {
           `Destination: ${data.destination}`,
           `Created: ${data.createdAt || "Unknown"}`,
           `${data.fileCount} files / ${formatBytes(data.bytes)}`,
+          "Index: index.json found",
           `Grouped: ${data.grouped ? "found" : "not present"}`,
           `Final: ${data.finalName || "not present"}`,
           `Association: ${data.verified ? "verified by trace/retry identities" : "UNVERIFIED"}`,
@@ -253,11 +301,15 @@ namespace ReportInfoPanel {
           ? "Resolve the current analysis review before importing."
           : "Inspection complete. No files have been changed.";
       } catch (error) {
-        if (reportId === reportInfoCurrentReportId)
+        if (
+          reportId === reportInfoCurrentReportId &&
+          currentInspection === inspectionId
+        )
           importStatus.textContent =
             error instanceof Error ? error.message : String(error);
       } finally {
-        importInspect.disabled = false;
+        if (currentInspection === inspectionId)
+          importInspect.disabled = false;
       }
     });
     importCommit.addEventListener("click", async () => {
@@ -290,7 +342,9 @@ namespace ReportInfoPanel {
       )
         return;
       importing = true;
+      importCloseButtons.forEach((button) => (button.disabled = true));
       importPath.disabled = true;
+      importUnverified.disabled = true;
       importInspect.disabled = importCommit.disabled = true;
       importStatus.textContent =
         "Copying and validating analysis. No AI calls are made.";
@@ -303,6 +357,7 @@ namespace ReportInfoPanel {
         )
           importStatus.textContent = `Copying files: ${data.completed}/${data.total}`;
       });
+      let completed = false;
       try {
         const response = await fetch("/api/analysis/import", {
           method: "POST",
@@ -323,7 +378,7 @@ namespace ReportInfoPanel {
         importStatus.textContent = data.unchanged
           ? "This bundle is already imported."
           : "Import complete. Original source preserved.";
-        importForm.classList.add("hidden");
+        completed = true;
         preview = null;
         await refreshAfterRunChange();
       } catch (error) {
@@ -335,9 +390,12 @@ namespace ReportInfoPanel {
       } finally {
         progress.close();
         importing = false;
+        importCloseButtons.forEach((button) => (button.disabled = false));
         importPath.disabled = false;
+        importUnverified.disabled = false;
         importInspect.disabled = importCommit.disabled = false;
         importOpen.disabled = importOpen.title !== "" || recoveries.length > 0;
+        if (completed) closeImportDialog();
       }
     });
     // Report-folder sizes are cached client-side; they only change on extract/archive/rename, none of
@@ -417,7 +475,8 @@ namespace ReportInfoPanel {
       importOpen.title = info.canImport
         ? ""
         : "Import is available only for current reports.";
-      if (!info.canImport) importForm.classList.add("hidden");
+      if (!info.canImport && !importModal.classList.contains("hidden"))
+        closeImportDialog();
       const review = document.getElementById("report-info-review")!;
       review.replaceChildren();
       review.classList.toggle("hidden", !info.analysisInventory?.needsReview);
@@ -613,12 +672,14 @@ namespace ReportInfoPanel {
     const openReportInfoModal = (reportId: string): void => {
       reportInfoCurrentReportId = reportId;
       reportInfoCurrentUuid = "";
-      preview = null;
+      resetImportPreview();
       recoveries = [];
       importRecover.classList.add("hidden");
       importOpen.disabled = true;
-      importForm.classList.add("hidden");
-      importCommit.classList.add("hidden");
+      importModal.classList.add("hidden");
+      reportInfoModal.inert = false;
+      importControls.append(importStatus);
+      importPath.value = "";
       importStatus.textContent = "";
       reportInfoName.textContent = reportId;
       reportInfoSize.textContent = "Calculating…";

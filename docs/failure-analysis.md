@@ -132,8 +132,10 @@ knowledge base remains optional context, not a storage destination.
 
 1. Download/unzip the HTML report and analysis artifact on the dashboard machine.
    Add the HTML report to Current Reports normally.
-2. Open that report's **Info > Import output directory**, paste the absolute run
-   directory (or a wrapper with exactly one immediate run child), then **Inspect**.
+2. Open that report's **Info > Import output directory** dialog, paste the absolute
+   run directory (or a wrapper with exactly one immediate run child), then **Inspect**.
+   `index.json` is required; `grouped-analysis.md` and `final-analysis.md` are
+   optional and their presence is shown in the preview.
 3. Review provenance, dates, sizes, grouped/final detection and warnings. If trace
    metadata cannot verify the association, explicitly confirm it. Contradictory
    trace/retry identities are rejected, not bypassed by that confirmation.
@@ -153,13 +155,16 @@ Windows access/sharing errors during import renames receive bounded retries;
 persistent failures use the same rollback/recovery flow as other import failures.
 
 Relative evidence links in the final/grouped viewers resolve against their managed
-bundle, not the viewer's API URL. Import flags missing local and producer-path
-links without rewriting source Markdown or fetching external websites. Viewers
-warn when evidence links are unavailable, including after raw-output deletion.
+bundle, not the viewer's API URL. Import and viewing do not validate Markdown link
+targets, rewrite source Markdown, or fetch external websites to check links.
+No evidence-link warning banner is shown. JSON/schema, report-association and
+filesystem safety checks still apply; symbolic and hard links are not allowed.
 
 Reopen Info after writing a final externally to refresh its DB reference. Write
 into the registered copy if it should appear in the dashboard; editing Downloads
-does not update a previously imported copy. Import progress appears in Info.
+does not update a previously imported copy. Progress appears in the import dialog;
+completion appears in Info. Cancel, Escape or the backdrop closes the dialog
+before importing; closing is disabled while the import is in progress.
 Interrupted replacements retain a transaction journal and backups. Info offers
 **Recover interrupted import**: restore the previous analysis if DB registration
 did not commit, or finish backup cleanup if it did. Other mutations are blocked

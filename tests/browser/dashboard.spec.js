@@ -9,12 +9,25 @@ for (const [scenario, seed] of [
   ["artifact", "browser"],
   ["runner-titles", ""],
   ["trends", "trends"],
+  ["analysis-import", ""],
 ]) {
   test(`${scenario} browser workflow`, async ({ browser }) => {
     const cleanup = [];
-    const hub = await startHub({ after: fn => cleanup.push(fn) }, seed);
+    const hub = await startHub({ after: fn => cleanup.push(fn) }, seed,
+      scenario === "analysis-import" ? { ARTIFACT_TEST_REAL_ANALYZER: "1" } : {});
     let context;
     try {
+      let url = hub.url;
+      if (scenario === "analysis-import") {
+        const generated = await hub.request("/api/failures", {
+          reportPath: "/reports/current/fixture-report/index.html",
+        });
+        expect(generated.status, JSON.stringify(generated.data)).toBe(200);
+        const source = path.join(hub.root, "Downloads with spaces", generated.data.analysisResult.runId);
+        fs.cpSync(generated.data.runDir, source, { recursive: true });
+        fs.writeFileSync(path.join(source, "final-analysis.md"), "# Final review\n\n[Missing](absent.md)");
+        url += "/?source=" + encodeURIComponent(source);
+      }
       context = await browser.newContext();
       const page = await context.newPage();
       fs.mkdirSync(path.join(__dirname, "../.browser-results"), { recursive: true });
@@ -22,7 +35,7 @@ for (const [scenario, seed] of [
         const url = new URL(route.request().url());
         return url.origin === hub.url ? route.continue() : route.abort();
       });
-      await page.goto(hub.url);
+      await page.goto(url);
       await expect(page.locator("#current-tbody .report-row").first()).toBeVisible();
       const run = vm.runInThisContext(
         fs.readFileSync(path.join(__dirname, `../${scenario}-browser.js`), "utf8"),

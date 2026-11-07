@@ -6,7 +6,7 @@ Failure analysis turns the failed attempts in a current report into compact, age
 
 The engine comes from the published
 [`@andrii_kremlovskyi/playwright-failure-analyzer`](https://www.npmjs.com/package/@andrii_kremlovskyi/playwright-failure-analyzer)
-package (`^0.1.4`, locked to 0.1.4). The dashboard retains report ownership, confirmation,
+package (`^0.1.5`, locked to 0.1.5). The dashboard retains report ownership, confirmation,
 queued preparation, progress, and final-analysis storage; it does not keep a second
 copy of the analysis engine.
 

@@ -40,7 +40,8 @@ test("dashboard persists the canonical published bundle while keeping report own
   );
   assert.deepEqual(result, response.data.analysisResult);
   assert.equal(result.schemaVersion, 2);
-  assert.equal(result.versions.analyzer, "0.1.4");
+  assert.equal(result.versions.analyzer, "0.1.5");
+  assert.equal(result.versions.sdk, "1.0.29");
   assert.equal(result.runId, path.basename(result.runDir));
   assert.equal(
     result.runId.slice(4, -7),

@@ -30,7 +30,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@andrii_kremlovskyi/playwright-failure-analyzer": "^0.1.4",
+    "@andrii_kremlovskyi/playwright-failure-analyzer": "^0.1.5",
     "@andrii_kremlovskyi/playwright-traces-reader": "^4.2.8",
     "@types/better-sqlite3": "^7.6.13",
     "@xterm/addon-fit": "^0.11.0",
@@ -64,6 +64,6 @@
   },
   "allowScripts": {
     "better-sqlite3@12.11.1": true,
-    "koffi@3.3.7": true
+    "koffi@3.3.4": true
   }
 }

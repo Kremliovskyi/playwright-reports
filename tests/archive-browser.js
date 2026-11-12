@@ -303,10 +303,27 @@ async (page) => {
     );
     await page.locator("#cancel-archive-limit-btn").click();
 
-    for (const [limit, archived, deleted] of [[25, 24, 0], [25, 25, 5], [1, 3, 3]]) {
-      await reset(archived, 3, limit);
-      await openSingle();
-      await confirmSingle();
+    for (const [limit, archived, deleted, incoming = 1] of [
+      [25, 24, 0],
+      [25, 25, 5],
+      [19, 19, 4],
+      [10, 10, 2],
+      [7, 7, 1],
+      [5, 5, 1],
+      [1, 1, 1],
+      [1, 3, 3],
+      [5, 4, 2, 3],
+      [10, 14, 7, 3],
+    ]) {
+      await reset(archived, incoming, limit);
+      if (incoming === 1) {
+        await openSingle();
+        await confirmSingle();
+      } else {
+        await page.locator('.select-all-btn[data-target="current"]').click();
+        await openBulk();
+        await dialog.getByRole("button", { name: `Archive ${incoming} Reports`, exact: true }).click();
+      }
       if (deleted) {
         await page.locator("#archive-limit-modal").waitFor();
         verify(
@@ -315,14 +332,18 @@ async (page) => {
           "Cleanup must display the configured limit",
         );
         verify(mutations.length === 0, "Changing the limit must not delete reports without confirmation");
+        verify(
+          (await page.locator("#confirm-archive-limit-btn").innerText()) === `Yes, delete ${deleted}`,
+          "Cleanup must offer the proportional buffer or enough space for incoming reports, whichever is larger",
+        );
         await page.locator("#confirm-archive-limit-btn").click();
       }
       await row(0).waitFor({ state: "hidden" });
       verify(
-        mutations.length === deleted + 1 &&
-          mutations.at(-1).pathname === "/api/archive" &&
-          catalog.archive.length === archived - deleted + 1,
-        "Single archiving must use the configured capacity and preserve cleanup behavior",
+        mutations.length === deleted + incoming &&
+          mutations.slice(deleted).every(mutation => mutation.pathname === "/api/archive") &&
+          catalog.archive.length === archived - deleted + incoming,
+        "Single and bulk archiving must respect capacity with proportional cleanup",
       );
       verify(
         mutations.slice(0, deleted).every((mutation, index) =>

@@ -26,9 +26,6 @@ interface TableContext {
   bulkMenuPanel: HTMLElement;
 }
 
-// Minimum number of oldest reports to prune when making room (breathing room).
-const MIN_PRUNE = 5;
-
 document.addEventListener("DOMContentLoaded", () => {
   // DOM Elements
   const currentSection = document.getElementById(
@@ -1193,10 +1190,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const archivedCount = archive.length;
     if (archivedCount + incoming <= archiveLimit) return true;
 
-    // Delete enough oldest reports to stay within the limit, with a breathing-room floor.
+    // Keep a 25% breathing-room buffer, bounded to one through five reports.
+    const pruneBuffer = Math.min(5, Math.max(1, Math.floor(archiveLimit / 4)));
     const deleteCount = Math.min(
       archivedCount,
-      Math.max(MIN_PRUNE, archivedCount + incoming - archiveLimit),
+      Math.max(pruneBuffer, archivedCount + incoming - archiveLimit),
     );
     // Server returns the archive newest-first, so the oldest are at the end.
     const oldestPaths = archive

@@ -100,7 +100,8 @@ The archived report's **Info** dialog retains copy/open/edit access under **Grou
 The archive limit defaults to 20 reports. Change **Archived report limit** in **Preferences > General** to any positive whole number.
 
 - When an archive operation would exceed the limit, a dialog offers to delete the oldest archived reports first.
-- The cleanup removes at least five reports when possible, and always enough to fit the incoming reports.
+- The suggested cleanup buffer is 25% of the configured limit, rounded down, with a minimum of one and a maximum of five reports (for example: limits of 5, 10, and 20 suggest deleting 1, 2, and 5 reports).
+- Cleanup always removes enough to fit the incoming reports, even if that exceeds the buffer, and never more reports than are currently archived.
 - Canceling leaves all reports untouched.
 - Selecting more reports than the configured limit for one archive operation is blocked.
 - Lowering the limit does not immediately delete existing reports; capacity is checked the next time you archive.

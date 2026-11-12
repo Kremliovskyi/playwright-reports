@@ -54,7 +54,7 @@ test("General preferences validates and persists the archived report limit", asy
   const hub = await startHub({ after: fn => cleanup.push(fn) });
   let context;
   try {
-    context = await browser.newContext();
+    context = await browser.newContext({ colorScheme: "light" });
     await context.route("**/*", route =>
       new URL(route.request().url()).origin === hub.url ? route.continue() : route.abort(),
     );
@@ -76,6 +76,7 @@ test("General preferences validates and persists the archived report limit", asy
     await openGeneral();
     await expect(modal.locator(".modal-tab")).toHaveText(["Paths", "BrowserStack", "Copilot", "General"]);
     await expect(limit).toHaveValue("20");
+    await expect(limit).toHaveCSS("color-scheme", "dark");
     await expect(modal.locator('[data-tab-content="copilot"]')).toBeHidden();
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 900 });

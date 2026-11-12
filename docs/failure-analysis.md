@@ -325,7 +325,7 @@ Deleting an output directory does not change the Playwright report folder itself
 
 ### Existing reports and duplicate history
 
-Schema upgrade preserves records and adds explicit artifact references. Reopening Info reconciles an unambiguous current legacy final by copying it into managed canonical storage, leaving its original untouched. Existing flat archive files remain readable without bulk moves. Missing, conflicting or shared artifacts require review. Deleting a migrated canonical final does not rediscover its preserved legacy original. Unregistered old vault notes remain visible through the Preferences legacy-review link.
+Schema upgrade preserves records and adds explicit artifact references. Reopening Info reconciles an unambiguous current legacy final by copying it into managed canonical storage, leaving its original untouched. Existing flat archive files remain readable without bulk moves. Missing, conflicting or shared artifacts require review. Deleting a migrated canonical final does not rediscover its preserved legacy original. Unregistered old vault notes remain visible through `GET /api/analysis/legacy`.
 
 When older reports contain multiple outputs or competing saved analysis notes, **Info** displays **Review analysis data**. The confirmation lists the exact paths to keep and delete and requires an explicit keeper selection. Only confirmed surplus artifacts are removed. The only remaining output or saved note cannot be selected for duplicate removal. Cancel preserves every artifact and mapping.
 

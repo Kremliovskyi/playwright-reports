@@ -84,9 +84,6 @@ namespace Preferences {
         archivePathInput.value = data.archivePath || "";
         archiveLimitInput.value = String(data.archiveLimit);
         projectPathInput.value = data.projectPath || "";
-        document
-          .getElementById("legacy-analysis-review")
-          ?.classList.toggle("hidden", !data.legacyAnalysisReview);
         browserstackUsernameInput.value = data.browserstackUsername || "";
         browserstackKeyInput.value = data.browserstackAccessKey || "";
         copilotTokenInput.value = data.copilotToken || "";

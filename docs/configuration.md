@@ -20,8 +20,8 @@ Use absolute paths for each directory.
 Final analyses live in their output directories; no Vault Path setting is needed.
 After Delete output, the final is retained under
 `<currentPath>/analysis/<reportUuid>/<runName>/final-analysis.md`.
-An old vault setting is kept internally only to locate legacy notes. Preferences
-offers a legacy-review link when it exists; originals are not deleted or moved.
+An old vault setting is kept internally only to locate legacy notes; originals
+are not deleted or moved.
 
 ## BrowserStack
 

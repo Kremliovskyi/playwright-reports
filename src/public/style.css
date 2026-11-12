@@ -426,6 +426,10 @@ p {
   box-sizing: border-box;
 }
 
+.path-input[type="number"] {
+  color-scheme: dark;
+}
+
 .path-input:focus {
   outline: none;
   border-color: var(--primary);

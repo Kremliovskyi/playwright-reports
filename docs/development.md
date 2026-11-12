@@ -19,9 +19,16 @@ The foreground command rebuilds and runs the server without PM2. Stop it with
 Ctrl+C. For the persistent application, keep using `npm start`, `npm run restart`
 and the other [PM2 commands](getting-started.md).
 
-The two TypeScript configurations compile server and browser code separately.
+The two TypeScript build configurations compile server and browser code separately.
 [copy-assets.js](../copy-assets.js) copies required HTML/CSS and locked xterm
 assets/licenses; missing required assets fail the build. There is no bundler.
+
+[src/public/tsconfig.json](../src/public/tsconfig.json) lets VS Code discover the
+browser project, including shared global namespaces such as `Api`. It extends
+[tsconfig.client.json](../tsconfig.client.json) with emission disabled; the
+existing build commands remain unchanged.
+The client uses modern `bundler` module resolution for type checking rather than
+the deprecated `node`/`node10` mode. This does not bundle or change the browser scripts.
 
 ## Tests remain local
 

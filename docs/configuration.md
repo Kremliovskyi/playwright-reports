@@ -49,6 +49,14 @@ Select two model roles in the same tab:
 
 Click either model field to open the shared model picker. Selecting a model saves that field immediately; the two roles are independent and may use the same model. Missing or unavailable selections are not replaced automatically.
 
+## General
+
+The **General** tab follows **Copilot** and contains dashboard behavior settings.
+
+- **Archived report limit**: Maximum number of archived reports to keep. Defaults to **20**; enter a positive whole number.
+- When a single or bulk archive operation would exceed the limit, the dashboard asks before deleting older reports to make room.
+- Lowering the limit does not immediately delete existing reports. The new limit is checked the next time you archive.
+
 Close any open test runner before changing Preferences. Click **Save changes and reload** after editing the settings. If a runner is open, the dashboard shows a warning and leaves the unsaved form intact. After a successful save, the dashboard reloads and scans the configured directories for valid reports.
 
 Configuration, presets, and report metadata are stored in the local SQLite database `app.db`.

@@ -49,6 +49,70 @@ for (const [scenario, seed] of [
   });
 }
 
+test("General preferences validates and persists the archived report limit", async ({ browser }) => {
+  const cleanup = [];
+  const hub = await startHub({ after: fn => cleanup.push(fn) });
+  let context;
+  try {
+    context = await browser.newContext();
+    await context.route("**/*", route =>
+      new URL(route.request().url()).origin === hub.url ? route.continue() : route.abort(),
+    );
+    const page = await context.newPage();
+    let saves = 0;
+    page.on("request", request => {
+      if (new URL(request.url()).pathname === "/api/config" && request.method() === "POST")
+        saves++;
+    });
+    await page.goto(hub.url);
+    const modal = page.locator("#settings-modal");
+    const save = modal.getByRole("button", { name: "Save changes and reload", exact: true });
+    const limit = modal.getByLabel("Archived report limit", { exact: true });
+    const openGeneral = async () => {
+      await page.locator("#settings-btn").click();
+      await expect(save).toBeEnabled();
+      await modal.getByRole("button", { name: "General", exact: true }).click();
+    };
+    await openGeneral();
+    await expect(modal.locator(".modal-tab")).toHaveText(["Paths", "BrowserStack", "Copilot", "General"]);
+    await expect(limit).toHaveValue("20");
+    await expect(modal.locator('[data-tab-content="copilot"]')).toBeHidden();
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(modal.getByRole("button", { name: "General", exact: true })).toBeVisible();
+      await expect(limit).toBeVisible();
+      expect(await modal.locator(".modal-content").evaluate(element =>
+        element.scrollWidth <= element.clientWidth &&
+        element.getBoundingClientRect().right <= window.innerWidth,
+      )).toBe(true);
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    for (const value of ["", "0", "-1", "1.5"]) {
+      await limit.fill(value);
+      await save.click();
+      await expect(modal.locator("#modal-error")).toHaveText("Archived report limit must be a positive whole number.");
+      await expect(save).toBeEnabled();
+    }
+    expect(saves).toBe(0);
+    await limit.fill("37");
+    await modal.getByRole("button", { name: "Cancel", exact: true }).click();
+    await openGeneral();
+    await expect(limit).toHaveValue("20");
+    for (const value of ["37", "1"]) {
+      await limit.fill(value);
+      await Promise.all([page.waitForEvent("load"), save.click()]);
+      await expect(modal).toBeHidden();
+      expect((await hub.request("/api/config", undefined, "GET")).data.archiveLimit).toBe(Number(value));
+      await openGeneral();
+      await expect(limit).toHaveValue(value);
+    }
+    expect(saves).toBe(2);
+  } finally {
+    await context?.close();
+    for (const dispose of cleanup.reverse()) await dispose();
+  }
+});
+
 test("failure analysis distinguishes failed, partial and successful outcomes", async ({ browser }) => {
   const cleanup = [];
   const hub = await startHub({ after: fn => cleanup.push(fn) });

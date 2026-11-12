@@ -13,6 +13,8 @@ async (page) => {
   let catalog;
   let mutations;
   let catalogReads;
+  let archiveLimit = 20;
+  let configUnavailable = false;
   const errors = [];
   const onError = (error) => errors.push(error.message);
   const routeApi = async (route) => {
@@ -23,7 +25,9 @@ async (page) => {
       return;
     }
     if (request.method() === "GET" && pathname === "/api/config") {
-      await route.fulfill({ json: { projectPath: "" } });
+      await route.fulfill(configUnavailable
+        ? { status: 503, json: { error: "Preferences unavailable" } }
+        : { json: { projectPath: "", archiveLimit } });
       return;
     }
     if (request.method() === "GET" && pathname === "/api/copilot-status") {
@@ -68,7 +72,8 @@ async (page) => {
       json: { error: "Unexpected test API request" },
     });
   };
-  const reset = async (archived = 0, current = 3) => {
+  const reset = async (archived = 0, current = 3, limit = 20) => {
+    archiveLimit = limit;
     catalog = {
       current: Array.from({ length: current }, (_, index) =>
         report(`current-${index}`, "current"),
@@ -297,6 +302,67 @@ async (page) => {
       "Oversized selections must remain blocked",
     );
     await page.locator("#cancel-archive-limit-btn").click();
+
+    for (const [limit, archived, deleted] of [[25, 24, 0], [25, 25, 5], [1, 3, 3]]) {
+      await reset(archived, 3, limit);
+      await openSingle();
+      await confirmSingle();
+      if (deleted) {
+        await page.locator("#archive-limit-modal").waitFor();
+        verify(
+          (await page.locator("#archive-limit-modal-message").innerText())
+            .includes(`maximum of ${limit} reports`),
+          "Cleanup must display the configured limit",
+        );
+        verify(mutations.length === 0, "Changing the limit must not delete reports without confirmation");
+        await page.locator("#confirm-archive-limit-btn").click();
+      }
+      await row(0).waitFor({ state: "hidden" });
+      verify(
+        mutations.length === deleted + 1 &&
+          mutations.at(-1).pathname === "/api/archive" &&
+          catalog.archive.length === archived - deleted + 1,
+        "Single archiving must use the configured capacity and preserve cleanup behavior",
+      );
+      verify(
+        mutations.slice(0, deleted).every((mutation, index) =>
+          mutation.pathname === "/api/delete" &&
+          mutation.reportPath === `/reports/archive/archived-${archived - deleted + index}/index.html`,
+        ),
+        "Capacity cleanup must delete only the oldest archived reports",
+      );
+    }
+
+    await reset(0, 21, 25);
+    await page.locator('.select-all-btn[data-target="current"]').click();
+    await openBulk();
+    await dialog.getByRole("button", { name: "Archive 21 Reports", exact: true }).click();
+    await row(0).waitFor({ state: "hidden" });
+    verify(
+      mutations.length === 21 &&
+        mutations.every(mutation => mutation.pathname === "/api/archive") &&
+        catalog.archive.length === 21,
+      "Increasing the limit must allow bulk archiving beyond the old cap",
+    );
+
+    await reset(0, 3, 2);
+    await page.locator('.select-all-btn[data-target="current"]').click();
+    await openBulk();
+    await dialog.getByRole("button", { name: "Archive 3 Reports", exact: true }).click();
+    await page.locator("#archive-limit-modal").waitFor();
+    verify(
+      mutations.length === 0 &&
+        (await page.locator("#archive-limit-modal-message").innerText()).includes("at most 2 reports"),
+      "Oversized selections must be blocked using the configured limit",
+    );
+    await page.locator("#cancel-archive-limit-btn").click();
+
+    await reset();
+    configUnavailable = true;
+    await openSingle();
+    await confirmSingle();
+    await page.getByText("Failed to check archive limit", { exact: true }).waitFor();
+    verify(mutations.length === 0, "Unavailable preferences must block archive mutations");
     verify(errors.length === 0, errors.join("\n"));
     return {
       dismissalPreservesReports: true,

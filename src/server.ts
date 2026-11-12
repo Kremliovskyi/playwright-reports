@@ -221,6 +221,7 @@ app.post("/api/config", (req: Request, res: Response): any => {
   const {
     currentPath,
     archivePath,
+    archiveLimit,
     projectPath,
     browserstackUsername,
     browserstackAccessKey,
@@ -232,6 +233,11 @@ app.post("/api/config", (req: Request, res: Response): any => {
   } = req.body;
 
   try {
+    if (
+      archiveLimit !== undefined &&
+      (!Number.isSafeInteger(archiveLimit) || archiveLimit < 1)
+    )
+      throw new Error("Archived report limit must be a positive whole number.");
     if (currentPath !== undefined && currentPath !== null)
       validatePath(currentPath);
     if (archivePath !== undefined && archivePath !== null)
@@ -249,6 +255,8 @@ app.post("/api/config", (req: Request, res: Response): any => {
         currentPath !== undefined ? currentPath.trim() : appConfig.currentPath,
       archivePath:
         archivePath !== undefined ? archivePath.trim() : appConfig.archivePath,
+      archiveLimit:
+        archiveLimit !== undefined ? archiveLimit : appConfig.archiveLimit,
       projectPath:
         projectPath !== undefined ? projectPath.trim() : appConfig.projectPath,
       vaultPath: appConfig.vaultPath,

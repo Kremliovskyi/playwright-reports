@@ -32,6 +32,9 @@ namespace Preferences {
     const archivePathInput = document.getElementById(
       "archive-path-input",
     ) as HTMLInputElement;
+    const archiveLimitInput = document.getElementById(
+      "archive-limit-input",
+    ) as HTMLInputElement;
     const projectPathInput = document.getElementById(
       "project-path-input",
     ) as HTMLInputElement;
@@ -79,6 +82,7 @@ namespace Preferences {
           throw new Error(data.error || "Failed to load preferences");
         currentPathInput.value = data.currentPath || "";
         archivePathInput.value = data.archivePath || "";
+        archiveLimitInput.value = String(data.archiveLimit);
         projectPathInput.value = data.projectPath || "";
         document
           .getElementById("legacy-analysis-review")
@@ -122,6 +126,7 @@ namespace Preferences {
 
       const currentPath = currentPathInput.value.trim();
       const archivePath = archivePathInput.value.trim();
+      const archiveLimit = archiveLimitInput.valueAsNumber;
       const projectPath = projectPathInput.value.trim();
       const browserstackUsername = browserstackUsernameInput.value.trim();
       const browserstackAccessKey = browserstackKeyInput.value.trim();
@@ -131,9 +136,12 @@ namespace Preferences {
       saveModalBtn.textContent = "Saving...";
 
       try {
+        if (!Number.isSafeInteger(archiveLimit) || archiveLimit < 1)
+          throw new Error("Archived report limit must be a positive whole number.");
         await Api.save("/api/config", {
           currentPath,
           archivePath,
+          archiveLimit,
           projectPath,
           browserstackUsername,
           browserstackAccessKey,

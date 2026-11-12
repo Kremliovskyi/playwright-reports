@@ -7,6 +7,7 @@ export interface AppConfig {
   id: string;
   currentPath: string;
   archivePath: string;
+  archiveLimit: number;
   projectPath: string;
   vaultPath: string;
   browserstackUsername: string;
@@ -109,6 +110,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   id: "default",
   currentPath: "",
   archivePath: "",
+  archiveLimit: 20,
   projectPath: "",
   vaultPath: "",
   browserstackUsername: "",
@@ -181,6 +183,11 @@ for (const row of db
 const configColumns = db.prepare("PRAGMA table_info(config)").all() as {
   name: string;
 }[];
+if (!configColumns.some((c) => c.name === "archiveLimit")) {
+  db.exec(
+    "ALTER TABLE config ADD COLUMN archiveLimit INTEGER NOT NULL DEFAULT 20",
+  );
+}
 if (!configColumns.some((c) => c.name === "vaultPath")) {
   db.exec("ALTER TABLE config ADD COLUMN vaultPath TEXT NOT NULL DEFAULT ''");
 }
@@ -344,6 +351,7 @@ export const getConfig = (): AppConfig => {
     id: row.id,
     currentPath: row.currentPath,
     archivePath: row.archivePath,
+    archiveLimit: row.archiveLimit,
     projectPath: row.projectPath,
     vaultPath: row.vaultPath || "",
     browserstackUsername: row.browserstackUsername || "",
@@ -361,10 +369,11 @@ export const getConfig = (): AppConfig => {
 
 export const updateConfig = (config: AppConfig): void => {
   db.prepare(
-    "UPDATE config SET currentPath = ?, archivePath = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, copilotToken = ?, copilotModel = ?, copilotBigModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?",
+    "UPDATE config SET currentPath = ?, archivePath = ?, archiveLimit = ?, projectPath = ?, vaultPath = ?, browserstackUsername = ?, browserstackAccessKey = ?, copilotToken = ?, copilotModel = ?, copilotBigModel = ?, runnerOptions = ?, selectedProjects = ? WHERE id = ?",
   ).run(
     config.currentPath,
     config.archivePath,
+    config.archiveLimit,
     config.projectPath,
     config.vaultPath,
     config.browserstackUsername,

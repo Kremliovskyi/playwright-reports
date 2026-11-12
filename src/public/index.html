@@ -583,6 +583,7 @@
               BrowserStack
             </button>
             <button class="modal-tab" data-tab="copilot">Copilot</button>
+            <button class="modal-tab" data-tab="general">General</button>
           </div>
 
           <div class="modal-tab-content active" data-tab-content="paths">
@@ -742,6 +743,28 @@
                   <path d="m9 18 6-6-6-6" />
                 </svg>
               </button>
+            </div>
+          </div>
+
+          <div class="modal-tab-content" data-tab-content="general">
+            <div class="form-group">
+              <label for="archive-limit-input">Archived report limit</label>
+              <p id="archive-limit-input-hint" class="form-hint">
+                Maximum number of archived reports to keep (default: 20).
+                When archiving would exceed this limit, you will be asked to
+                delete older reports. Lowering the limit does not delete
+                existing reports.
+              </p>
+              <input
+                type="number"
+                id="archive-limit-input"
+                class="path-input full-width"
+                min="1"
+                max="9007199254740991"
+                step="1"
+                required
+                aria-describedby="archive-limit-input-hint"
+              />
             </div>
           </div>
 

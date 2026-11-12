@@ -26,8 +26,6 @@ interface TableContext {
   bulkMenuPanel: HTMLElement;
 }
 
-// Maximum number of reports allowed in the archive at once.
-const ARCHIVE_LIMIT = 20;
 // Minimum number of oldest reports to prune when making room (breathing room).
 const MIN_PRUNE = 5;
 
@@ -1096,12 +1094,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const runArchivePruneDialog = (
     deleteCount: number,
     totalArchived: number,
+    archiveLimit: number,
     oldestPaths: DashboardModel.ReportTarget[],
   ): Promise<boolean> => {
     return new Promise((resolve) => {
       archiveLimitModalTitle.textContent = "Archive Limit Reached";
       archiveLimitModalMessage.textContent =
-        `The archive holds ${totalArchived} of a maximum of ${ARCHIVE_LIMIT} reports. ` +
+        `The archive holds ${totalArchived} of a maximum of ${archiveLimit} reports. ` +
         `Archiving now would exceed the limit. Delete the ${deleteCount} oldest archived ` +
         `report${deleteCount === 1 ? "" : "s"} to make room?`;
       archiveLimitModalHint.textContent =
@@ -1162,10 +1161,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // limit. Returns true if archiving may proceed (after any needed pruning),
   // false if the user cancelled or the request is not allowed.
   const ensureArchiveCapacity = async (incoming: number): Promise<boolean> => {
+    let archiveLimit: number;
+    try {
+      const config = await Api.json<{ archiveLimit: number }>("/api/config");
+      archiveLimit = config.archiveLimit;
+      if (!Number.isSafeInteger(archiveLimit) || archiveLimit < 1)
+        throw new Error("Archived report limit must be a positive whole number.");
+    } catch (error) {
+      showErrorDialog("Failed to check archive limit", error);
+      return false;
+    }
+
     // Hard cap: a single operation can never exceed the archive limit.
-    if (incoming > ARCHIVE_LIMIT) {
+    if (incoming > archiveLimit) {
       await showArchiveBlockedDialog(
-        `You can archive at most ${ARCHIVE_LIMIT} reports at once, because the archive is limited to ${ARCHIVE_LIMIT} reports. Please select fewer reports.`,
+        `You can archive at most ${archiveLimit} reports at once, because the archive is limited to ${archiveLimit} reports. Please select fewer reports or increase the limit in Preferences > General.`,
       );
       return false;
     }
@@ -1181,19 +1191,21 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const archivedCount = archive.length;
-    if (archivedCount + incoming <= ARCHIVE_LIMIT) return true;
+    if (archivedCount + incoming <= archiveLimit) return true;
 
     // Delete enough oldest reports to stay within the limit, with a breathing-room floor.
     const deleteCount = Math.min(
       archivedCount,
-      Math.max(MIN_PRUNE, archivedCount + incoming - ARCHIVE_LIMIT),
+      Math.max(MIN_PRUNE, archivedCount + incoming - archiveLimit),
     );
     // Server returns the archive newest-first, so the oldest are at the end.
     const oldestPaths = archive
       .slice(archivedCount - deleteCount)
       .map((report) => ({ reportPath: report.path, reportUuid: report.uuid }));
 
-    return await runArchivePruneDialog(deleteCount, archivedCount, oldestPaths);
+    return await runArchivePruneDialog(
+      deleteCount, archivedCount, archiveLimit, oldestPaths,
+    );
   };
 
   const openDeleteModal = (request: DeleteRequest) => {
